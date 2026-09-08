@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
+import { readRoster, writeRoster, upsert, remove as removeChar, newId } from './roster.js';
+import { parseGear, gearInfo, CRAFT } from './gear.js';
 
 /* ============================================================
    ROGUE TRADER : ORIGIN PATH COGITATOR
@@ -579,7 +582,10 @@ const MAGOS_PRESET = {
   name: 'Magos Linus-Theta 7',
   home: 'forge', birthright: 'savant', lure: 'renegade',
   trials: 'calamity', motivation: 'endurance', career: 'explorator',
-  choices: { fw_purpose: 'Intelligence', sv_a: 'Logic as a trained Basic Skill', sv_b: '+3 Intelligence', rn: 'Free-thinker (+3 Int)', cl: 'Hardy' }
+  choices: { fw_purpose: 'Intelligence', sv_a: 'Logic as a trained Basic Skill', sv_b: '+3 Intelligence', rn: 'Free-thinker (+3 Int)', cl: 'Hardy' },
+  // Drop the image at this path in public/ and the preset picks it up; until
+  // then the plate falls back to the initial via the img onError handler.
+  avatar: '/magos-linus-theta-7.jpg'
 };
 
 /* ======================= VOX SYNTHESISER ENGINE ======================= */
@@ -731,137 +737,601 @@ function useVoxEngine() {
 /* ============================== STYLES ============================== */
 
 const CSS = `
-.rt-root{--void:#080b10;--panel:#101620;--panel2:#161d29;--rim:#2c3646;
-  --gold:#c59b27;--gold-lit:#e8cf7a;--parch:#d9d0bd;--dim:#8b8577;
-  --rust:#8c3a1f;--sig:#5fd8c4;
-  background:var(--void);color:var(--parch);min-height:100vh;
-  font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
-  -webkit-font-smoothing:antialiased;}
+/* ===========================================================
+   ROGUE TRADER : ORIGIN PATH COGITATOR — visual layer
+   Modelled on the Owlcat CRPG chrome.
+   Brass bezels frame regions. Green backlit glass is the surface.
+   Rows sit ON the glass. Parchment carries anything you read at
+   length. Amber is focus and selection only. Red is refusal.
+   =========================================================== */
+
+/* the app never set this, so the page rendered with a light 8px gutter */
+html,body{margin:0;padding:0;background:#070a08;}
+
+.rt-root{
+  /* ground */
+  --void:#070a08; --ink:#0a0e0b;
+  /* backlit glass */
+  --panel:#132019; --panel2:#1b2c22; --panel-lit:#22392c; --well:#0a120d;
+  --grid:rgba(143,224,168,.045);
+  /* worked brass */
+  --brass:#8a7442; --brass-lit:#c9a961; --brass-dim:#544728; --brass-deep:#2a2418;
+  /* amber — focus and selection ONLY, never body text */
+  --gold:#e0b955; --gold-lit:#f4dd94;
+  /* phosphor */
+  --green:#8fe0a8; --green-dim:#5f9a74;
+  /* text on glass */
+  --text:#cfdcd2; --bone:#eef4ec; --dim:#8fa596;
+  /* parchment */
+  --parch:#e7dcbe; --parch-hi:#f2e9d1; --parch-ink:#2b2418; --parch-dim:#6b6047;
+  /* refusal */
+  --crimson:#a52a1e; --rust:#c0552a; --bad:#e8998b;
+  /* the machine speaking — plasma cyan, off the ambient green */
+  --vox:#7fe8d8; --vox-deep:#08201d;
+
+  --display:"Cinzel","Trajan Pro","EB Garamond",Palatino,Georgia,serif;
+  --serif:"EB Garamond","Iowan Old Style",Palatino,Georgia,serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+
+  --graph:repeating-linear-gradient(0deg,var(--grid) 0 1px,transparent 1px 24px),
+          repeating-linear-gradient(90deg,var(--grid) 0 1px,transparent 1px 24px);
+
+  background:
+    radial-gradient(115% 70% at 50% -5%,#141b14 0%,transparent 58%),
+    radial-gradient(90% 60% at 50% 105%,#0f1712 0%,transparent 60%),
+    var(--void);
+  background-attachment:fixed;
+  color:var(--text);min-height:100vh;
+  font-family:var(--serif);font-size:16px;line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
 .rt-root *{box-sizing:border-box;}
-.rt-wrap{max-width:760px;margin:0 auto;padding:0 14px 130px;}
+.rt-root ::selection{background:var(--brass);color:var(--bone);}
 
-.rt-head{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#0d121a 60%,rgba(13,18,26,.92));
-  border-bottom:1px solid var(--rim);padding:10px 14px 9px;}
-.rt-head-in{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:10px;}
-.rt-sigil{width:34px;height:34px;flex:none;border:1px solid var(--gold);background:#0b1017;
-  display:grid;place-items:center;color:var(--gold);}
-.rt-title{font-size:15px;letter-spacing:.06em;color:var(--gold-lit);margin:0;line-height:1.15;}
-.rt-sub{font-size:10.5px;color:var(--dim);letter-spacing:.14em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
-.rt-voxbtn{margin-left:auto;flex:none;border:1px solid var(--sig);color:var(--sig);background:#08201d;
-  padding:8px 12px;font-size:12px;letter-spacing:.1em;cursor:pointer;
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
-.rt-voxbtn:active{background:#0c2f2a;}
-.rt-voxbtn.live{border-color:var(--gold);color:#0b0f14;background:var(--gold-lit);}
+/* Atmosphere. Vignette only — above everything, inert to the pointer.
+   ponytail: scanlines were tried here and read as screen damage, not
+   atmosphere. Don't add them back. */
+.rt-root::after{
+  content:"";position:fixed;inset:0;z-index:100;pointer-events:none;
+  background:radial-gradient(135% 90% at 50% 42%,transparent 52%,rgba(0,0,0,.5) 100%);
+}
 
-.rt-steps{display:flex;gap:6px;overflow-x:auto;padding:10px 0 12px;scrollbar-width:none;}
+/* Focus. Amber ring; chamfered controls take an inset ring instead,
+   because clip-path would shear an outline off. */
+.rt-root :focus-visible{outline:2px solid var(--gold);outline-offset:2px;}
+.rt-btn:focus-visible,.rt-opt:focus-visible,.rt-step:focus-visible,
+.rt-speak:focus-visible,.rt-voxbtn:focus-visible,.rt-reroll:focus-visible{
+  outline:none;box-shadow:inset 0 0 0 2px var(--gold);
+}
+
+.rt-wrap{max-width:760px;margin:0 auto;padding:0 14px 132px;position:relative;z-index:1;}
+
+/* ========================= THE BEZEL SCREEN =========================
+   Brass frame, gothic corner caps, rivet rail, and a pane of backlit
+   green glass. Wraps a whole region — never an individual row.
+   ponytail: approximated in CSS. The real frames are art assets; drop
+   them in as border-image when they exist and delete ::before/::after. */
+
+.rt-screen{position:relative;padding:20px 15px 17px;border-radius:5px;
+  background:linear-gradient(180deg,#6a5a36,#3a3120 20%,#272115 80%,#4a3f27);
+  box-shadow:
+    inset 0 0 0 1px rgba(201,169,97,.4),
+    inset 0 0 0 4px rgba(0,0,0,.42),
+    0 8px 26px -10px rgba(0,0,0,.85);}
+/* the glass */
+.rt-screen::before{content:"";position:absolute;inset:9px;border-radius:11px;
+  background:
+    repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 4px),
+    radial-gradient(125% 95% at 50% 4%,#22392b 0%,#152319 46%,#0a130e 100%);
+  box-shadow:
+    inset 0 0 46px rgba(0,0,0,.8),
+    inset 0 1px 0 rgba(160,220,180,.12),
+    0 0 0 1px rgba(0,0,0,.65);}
+/* corner caps + top rivet rail */
+.rt-screen::after{content:"";position:absolute;inset:0;pointer-events:none;
+  border-radius:5px;
+  background:
+    radial-gradient(circle,rgba(201,169,97,.5) 0 1.5px,transparent 2px)
+      center top 4px/22px 4px repeat-x,
+    linear-gradient(135deg,var(--brass) 0 11px,transparent 11px) left top/24px 24px no-repeat,
+    linear-gradient(225deg,var(--brass) 0 11px,transparent 11px) right top/24px 24px no-repeat,
+    linear-gradient(45deg,var(--brass) 0 9px,transparent 9px) left bottom/20px 20px no-repeat,
+    linear-gradient(315deg,var(--brass) 0 9px,transparent 9px) right bottom/20px 20px no-repeat;}
+.rt-screen > *{position:relative;z-index:1;}
+
+/* ------------------------------ HEADER ------------------------------ */
+
+.rt-head{position:sticky;top:0;z-index:20;
+  background:linear-gradient(180deg,#101a14 72%,rgba(16,26,20,.95));
+  border-bottom:1px solid var(--brass-dim);
+  padding:11px 14px 10px;
+  box-shadow:0 10px 26px -18px #000;}
+.rt-head::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--brass-dim) 18%,var(--brass-lit) 50%,var(--brass-dim) 82%,transparent);
+  opacity:.85;}
+.rt-head-in{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:11px;}
+
+.rt-sigil{width:36px;height:36px;flex:none;display:grid;place-items:center;
+  color:var(--brass-lit);
+  background:linear-gradient(160deg,#2a2314,#0d1109);
+  border:1px solid var(--brass);
+  clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);
+  box-shadow:inset 0 0 12px rgba(201,169,97,.18);}
+
+.rt-title{font-family:var(--display);font-size:15.5px;font-weight:700;
+  letter-spacing:.11em;text-transform:uppercase;margin:0;line-height:1.2;
+  color:var(--brass-lit);}
+@supports (-webkit-background-clip:text) or (background-clip:text){
+  .rt-title{background:linear-gradient(178deg,#f0dcae,var(--brass-lit) 45%,#7c6733);
+    -webkit-background-clip:text;background-clip:text;color:transparent;}
+}
+.rt-sub{font-family:var(--mono);font-size:9.5px;color:var(--green-dim);
+  letter-spacing:.2em;margin-top:3px;}
+
+.rt-head-btns{margin-left:auto;flex:none;display:flex;gap:6px;align-items:center;}
+.rt-headbtn{flex:none;font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+  padding:9px 13px;cursor:pointer;
+  border:1px solid var(--brass);color:var(--gold-lit);
+  background:linear-gradient(180deg,#2a2214,#14100a);
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+  transition:filter .14s;}
+.rt-headbtn:hover{filter:brightness(1.3);}
+
+/* the vox is the one cyan thing in the build — it is the machine talking */
+.rt-voxbtn{flex:none;font-family:var(--mono);font-size:11px;
+  letter-spacing:.16em;padding:9px 13px;cursor:pointer;
+  border:1px solid var(--vox);color:var(--vox);
+  background:linear-gradient(180deg,#0f3630,#07201c);
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+  transition:filter .14s;}
+.rt-voxbtn:hover{filter:brightness(1.25);}
+.rt-voxbtn:active{filter:brightness(.9);}
+.rt-voxbtn.live{border-color:var(--gold-lit);color:#161004;
+  background:linear-gradient(180deg,var(--gold-lit),var(--gold));
+  animation:rt-pulse 1.5s ease-in-out infinite;}
+@keyframes rt-pulse{50%{filter:brightness(1.22);}}
+
+/* ---------------------------- STEP RAIL ----------------------------
+   Inactive tabs are recessed glass; the active one lifts into a
+   parchment cartouche, the way the game's tab bars read. */
+
+.rt-steps{display:flex;gap:6px;overflow-x:auto;padding:12px 0 13px;
+  scrollbar-width:none;counter-reset:rtstep;}
 .rt-steps::-webkit-scrollbar{display:none;}
-.rt-step{flex:none;border:1px solid var(--rim);background:var(--panel);color:var(--dim);
-  padding:7px 11px;font-size:12px;white-space:nowrap;cursor:pointer;
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em;}
-.rt-step.done{color:var(--parch);border-color:#3f4c60;}
-.rt-step.on{background:var(--gold);border-color:var(--gold);color:#0b0f14;}
-.rt-step .tick{color:var(--sig);margin-right:5px;}
-.rt-step.on .tick{color:#0b0f14;}
 
-.rt-lead{font-size:13.5px;line-height:1.55;color:var(--dim);margin:2px 0 14px;}
-.rt-h2{font-size:19px;color:var(--gold-lit);margin:0 0 2px;letter-spacing:.02em;}
+.rt-step{flex:none;cursor:pointer;white-space:nowrap;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.05em;
+  padding:8px 12px;color:var(--dim);
+  border:1px solid var(--brass-dim);
+  background:var(--graph),linear-gradient(180deg,var(--panel2),var(--panel));
+  clip-path:polygon(7px 0,100% 0,100% calc(100% - 7px),calc(100% - 7px) 100%,0 100%,0 7px);
+  transition:color .14s,border-color .14s;}
+.rt-step::before{counter-increment:rtstep;content:counter(rtstep,decimal-leading-zero);
+  font-size:9px;letter-spacing:.1em;color:var(--brass);margin-right:7px;}
+.rt-step .tick{display:none;}          /* the counter carries this now */
+.rt-step:hover{color:var(--text);border-color:var(--brass);}
+.rt-step.done{color:var(--text);border-color:var(--brass);}
+.rt-step.done::before{content:"✓";color:var(--green);}
+.rt-step.on{color:var(--parch-ink);border-color:var(--brass-lit);
+  background:linear-gradient(180deg,var(--parch-hi),#d6c8a2);
+  box-shadow:0 0 18px -5px rgba(242,233,209,.45),inset 0 1px 0 rgba(255,255,255,.5);}
+.rt-step.on::before{color:#7d6835;}
 
-.rt-card{border:1px solid var(--rim);background:var(--panel);padding:13px 14px;margin-bottom:9px;
-  cursor:pointer;transition:border-color .12s,background .12s;}
-.rt-card:active{background:var(--panel2);}
-.rt-card.sel{border-color:var(--gold);background:#1a1c17;box-shadow:inset 0 0 0 1px rgba(197,155,39,.25);}
+/* --------------------------- TYPE SETTING --------------------------- */
+
+.rt-h2{font-family:var(--display);font-size:23px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--brass-lit);
+  margin:2px 0 0;line-height:1.2;
+  text-shadow:0 0 26px rgba(201,169,97,.22);}
+.rt-h2::after{content:"";display:block;height:1px;margin-top:9px;
+  background:linear-gradient(90deg,var(--brass),var(--brass-dim) 45%,transparent);}
+.rt-lead{font-size:15px;line-height:1.62;color:var(--dim);margin:11px 0 16px;}
+
+/* ------------------------- OPTION CARDS ON GLASS ------------------------- */
+
+.rt-cards{display:grid;grid-template-columns:1fr;gap:10px;align-items:start;}
+
+/* a card is now a tile resting on the glass, not its own panel */
+.rt-card{position:relative;cursor:pointer;padding:13px 14px;
+  border:1px solid rgba(138,116,66,.45);
+  background:linear-gradient(180deg,rgba(45,72,55,.5),rgba(18,32,24,.55));
+  box-shadow:inset 0 1px 0 rgba(201,169,97,.09);
+  transition:border-color .14s,background .14s,transform .14s;}
+.rt-card:hover{border-color:var(--brass);background:linear-gradient(180deg,rgba(55,88,66,.55),rgba(22,40,29,.6));}
+.rt-card:active{transform:translateY(1px);}
+.rt-card.sel{border-color:var(--gold);
+  background:linear-gradient(180deg,rgba(62,92,68,.6),rgba(26,44,32,.65));
+  box-shadow:inset 0 0 0 1px rgba(224,185,85,.2),0 0 26px -10px rgba(224,185,85,.55);}
+/* four amber corner ticks from one pseudo-element — eight tiny gradients,
+   no extra markup */
+.rt-card.sel::before{content:"";position:absolute;inset:-1px;pointer-events:none;
+  background:
+    linear-gradient(var(--gold),var(--gold)) left    top/15px 1px no-repeat,
+    linear-gradient(var(--gold),var(--gold)) left    top/1px 15px no-repeat,
+    linear-gradient(var(--gold),var(--gold)) right   top/15px 1px no-repeat,
+    linear-gradient(var(--gold),var(--gold)) right   top/1px 15px no-repeat,
+    linear-gradient(var(--gold),var(--gold)) left  bottom/15px 1px no-repeat,
+    linear-gradient(var(--gold),var(--gold)) left  bottom/1px 15px no-repeat,
+    linear-gradient(var(--gold),var(--gold)) right bottom/15px 1px no-repeat,
+    linear-gradient(var(--gold),var(--gold)) right bottom/1px 15px no-repeat;}
+
 .rt-card-h{display:flex;align-items:baseline;gap:8px;}
-.rt-card-n{font-size:16px;color:var(--gold-lit);}
+.rt-card-n{font-family:var(--display);font-size:16.5px;font-weight:600;
+  letter-spacing:.04em;color:var(--brass-lit);}
 .rt-card.sel .rt-card-n{color:var(--gold-lit);}
-.rt-card-b{font-size:13px;line-height:1.5;color:var(--dim);margin-top:5px;}
-.rt-mods{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px;}
-.rt-mod{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;padding:2px 6px;
-  border:1px solid #3a4454;color:var(--parch);}
-.rt-mod.up{border-color:#3f6b4f;color:#8fd6a5;}
-.rt-mod.dn{border-color:#6b3535;color:#e08e8e;}
+.rt-card-b{font-size:14.5px;line-height:1.58;color:var(--dim);margin:6px 0 0;}
 
-.rt-detail{margin-top:11px;padding-top:11px;border-top:1px dashed var(--rim);}
-.rt-dl{font-size:12px;color:var(--dim);line-height:1.55;margin:0 0 7px;}
-.rt-dl b{color:var(--parch);font-weight:400;}
-.rt-choice-l{font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-  color:var(--gold);letter-spacing:.06em;margin:11px 0 6px;}
+.rt-mods{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;}
+.rt-mod{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;
+  padding:3px 7px;border:1px solid var(--brass-dim);color:var(--text);
+  background:rgba(6,12,8,.55);}
+.rt-mod.up{border-color:#2f6b47;color:var(--green);background:rgba(11,28,19,.7);}
+.rt-mod.dn{border-color:#6b2a20;color:var(--bad);background:rgba(28,13,10,.7);}
+
+/* expanded detail */
+.rt-detail{margin-top:13px;padding-top:13px;
+  border-top:1px solid var(--brass-dim);
+  box-shadow:0 -2px 0 -1px rgba(201,169,97,.16);}   /* engraved double rule */
+.rt-dl{font-size:14px;color:var(--dim);line-height:1.6;margin:0 0 8px;}
+.rt-dl b{color:var(--green);font-weight:400;font-family:var(--mono);
+  font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;}
+.rt-choice-l{font-family:var(--mono);font-size:10.5px;color:var(--gold);
+  letter-spacing:.15em;text-transform:uppercase;margin:13px 0 7px;
+  display:flex;align-items:center;gap:8px;}
+.rt-choice-l::before{content:"//";color:var(--brass);}   /* registry tick */
+.rt-choice-l::after{content:"";flex:1;height:1px;
+  background:linear-gradient(90deg,var(--brass-dim),transparent);}
+
 .rt-opts{display:flex;flex-wrap:wrap;gap:6px;}
-.rt-opt{border:1px solid var(--rim);background:#0d1219;color:var(--parch);font-size:12.5px;
-  padding:6px 10px;cursor:pointer;font-family:inherit;}
-.rt-opt.on{background:var(--gold);border-color:var(--gold);color:#0b0f14;}
+.rt-opt{cursor:pointer;font-family:var(--mono);font-size:12px;padding:7px 11px;
+  border:1px solid var(--brass-dim);color:var(--text);background:rgba(6,12,8,.6);
+  clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);
+  transition:border-color .14s,color .14s;}
+.rt-opt:hover{border-color:var(--brass);color:var(--bone);}
+.rt-opt.on{color:#161004;border-color:var(--gold-lit);
+  background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
 
-.rt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;}
-.rt-stat{border:1px solid var(--rim);background:var(--panel);padding:9px 8px;text-align:center;}
-.rt-stat-k{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;
-  color:var(--gold);letter-spacing:.1em;}
-.rt-stat-v{font-size:26px;line-height:1.15;color:var(--parch);}
-.rt-stat-m{font-size:10.5px;color:var(--dim);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
-.rt-stat-m .plus{color:#8fd6a5;}
-.rt-stat-m .minus{color:#e08e8e;}
-.rt-reroll{margin-top:6px;width:100%;border:1px solid var(--rim);background:#0d1219;color:var(--dim);
-  font-size:10.5px;padding:3px;cursor:pointer;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+/* ====================== CHARACTERISTIC SHEET ======================
+   Rows on glass: code chip, name, roll, total, delta, bonus, reroll.
+   Flex rather than grid so the dossier's shorter row (no roll, no
+   reroll) still lines up without a second column definition. */
 
-.rt-btn{border:1px solid var(--gold);background:#1a1509;color:var(--gold-lit);padding:11px 14px;
-  font-size:13.5px;cursor:pointer;font-family:inherit;letter-spacing:.03em;}
-.rt-btn:active{background:#251e0c;}
-.rt-btn.ghost{border-color:var(--rim);background:var(--panel);color:var(--dim);}
+.rt-sheet{margin-bottom:14px;}
+
+.rt-sheet-h{display:flex;align-items:center;gap:10px;margin:0 2px 6px;
+  font-family:var(--display);font-size:11.5px;font-weight:600;
+  letter-spacing:.24em;text-transform:uppercase;color:var(--brass-lit);}
+.rt-sheet-h::before,.rt-sheet-h::after{content:"";flex:1;height:1px;
+  background:linear-gradient(90deg,transparent,var(--brass));}
+.rt-sheet-h::after{background:linear-gradient(90deg,var(--brass),transparent);}
+
+.rt-row{display:flex;align-items:center;gap:10px;padding:7px 3px;
+  border-bottom:1px solid rgba(143,224,168,.09);}
+.rt-row:last-child{border-bottom:0;}
+.rt-code{flex:none;width:34px;text-align:center;padding:2px 0;
+  font-family:var(--mono);font-size:9.5px;font-weight:500;letter-spacing:.08em;
+  color:var(--gold-lit);background:linear-gradient(180deg,#3b3120,#241d11);
+  border:1px solid var(--brass-dim);}
+.rt-cname{flex:1;min-width:0;font-size:15px;color:var(--text);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rt-croll{flex:none;font-family:var(--mono);font-size:10.5px;color:var(--dim);
+  opacity:.8;}
+.rt-cval{flex:none;min-width:40px;text-align:right;
+  font-family:var(--display);font-size:24px;font-weight:600;line-height:1;
+  color:var(--green);text-shadow:0 0 20px rgba(143,224,168,.35);}
+.rt-delta{flex:none;min-width:40px;font-family:var(--mono);font-size:11px;}
+.rt-delta.up{color:var(--green);}
+.rt-delta.dn{color:var(--bad);}
+.rt-cbon{flex:none;min-width:24px;text-align:center;padding:1px 4px;
+  font-family:var(--mono);font-size:10px;color:var(--brass-lit);
+  border:1px solid var(--brass-dim);background:rgba(6,12,8,.6);}
+.rt-reroll{flex:none;width:27px;height:27px;cursor:pointer;font-size:13px;line-height:1;
+  border:1px solid var(--brass-dim);color:var(--dim);background:rgba(6,12,8,.6);
+  transition:color .14s,border-color .14s;}
+.rt-reroll:hover{color:var(--gold);border-color:var(--brass);}
+
+/* the brass gauges — wounds, fate, profit factor */
+.rt-derived{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0;}
+.rt-der{text-align:center;padding:11px 6px 9px;
+  border:1px solid var(--brass);
+  background:linear-gradient(180deg,#241d0f,#0d1109);
+  box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
+.rt-der-v{font-family:var(--display);font-size:24px;font-weight:600;line-height:1.1;
+  color:var(--gold-lit);text-shadow:0 0 18px rgba(224,185,85,.35);}
+.rt-der-k{font-family:var(--mono);font-size:9px;color:var(--brass-lit);
+  letter-spacing:.16em;margin-top:3px;opacity:.8;}
+
+/* ------------------------------ BUTTONS ------------------------------ */
+
+.rt-btn{cursor:pointer;font-family:var(--display);font-weight:600;
+  font-size:12.5px;letter-spacing:.13em;text-transform:uppercase;
+  padding:12px 15px;color:var(--gold-lit);
+  border:1px solid var(--brass);
+  background:linear-gradient(180deg,var(--panel-lit),var(--panel));
+  box-shadow:inset 0 1px 0 rgba(201,169,97,.15);
+  clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px);
+  transition:color .14s,border-color .14s,filter .14s;}
+.rt-btn:hover{border-color:var(--brass-lit);color:var(--bone);filter:brightness(1.2);}
+.rt-btn:active{filter:brightness(.88);}
+.rt-btn.ghost{border-color:var(--brass-dim);color:var(--dim);
+  background:linear-gradient(180deg,var(--panel2),var(--panel));box-shadow:none;}
+.rt-btn.ghost:hover{color:var(--text);border-color:var(--brass);}
 .rt-btn.wide{width:100%;}
-.rt-btn:disabled{opacity:.35;cursor:default;}
-.rt-btnrow{display:flex;gap:8px;margin:14px 0;}
+.rt-btn:disabled{opacity:.3;cursor:default;filter:none;}
+.rt-btnrow{display:flex;gap:8px;margin:16px 0;}
 .rt-btnrow .rt-btn{flex:1;}
 
-.rt-derived{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:12px 0;}
-.rt-der{border:1px solid var(--rim);background:var(--panel);padding:9px 6px;text-align:center;}
-.rt-der-v{font-size:22px;color:var(--gold-lit);}
-.rt-der-k{font-size:9.5px;color:var(--dim);letter-spacing:.09em;
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+/* ------------------------- DOSSIER IDENTITY CARD ------------------------- */
 
-.rt-sect{border:1px solid var(--rim);background:var(--panel);padding:13px 14px;margin-bottom:9px;}
-.rt-sect-h{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--gold);
-  letter-spacing:.12em;margin-bottom:8px;}
-.rt-list{margin:0;padding-left:17px;font-size:13px;line-height:1.65;}
-.rt-list li{margin-bottom:2px;}
-.rt-para{font-size:13px;line-height:1.6;margin:0;}
-.rt-empty{font-size:13px;color:var(--dim);font-style:italic;}
+.rt-idcard{display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;}
+.rt-idtext{flex:1;min-width:0;}
 
-.rt-field{width:100%;background:#0b1017;border:1px solid var(--rim);color:var(--parch);
-  padding:10px 11px;font-size:15px;font-family:inherit;}
-.rt-field:focus{outline:2px solid var(--gold);outline-offset:-1px;}
+.rt-intro{margin-bottom:18px;}
+.rt-portrait-wrap{flex:none;width:92px;}
+.rt-portrait{position:relative;width:100%;
+  padding:7px;border-radius:3px;
+  background:linear-gradient(180deg,#6a5a36,#3a3120 22%,#272115 78%,#4a3f27);
+  box-shadow:inset 0 0 0 1px rgba(201,169,97,.45),0 4px 14px -6px rgba(0,0,0,.9);}
+.rt-port-img{position:relative;height:104px;overflow:hidden;
+  display:grid;place-items:center;
+  font-family:var(--display);font-size:42px;font-weight:700;
+  color:var(--brass-lit);text-shadow:0 0 28px rgba(201,169,97,.45);
+  background:radial-gradient(105% 85% at 50% 12%,#26402f,#0c1610 75%);
+  box-shadow:inset 0 0 26px rgba(0,0,0,.8),0 0 0 1px rgba(0,0,0,.6);}
+.rt-port-img img{position:absolute;inset:0;width:100%;height:100%;display:block;}
 
-.rt-nav{position:fixed;left:0;right:0;bottom:0;z-index:25;background:#0b0f16;
-  border-top:1px solid var(--rim);padding:9px 14px;padding-bottom:calc(9px + env(safe-area-inset-bottom));}
+.rt-port-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:9px;}
+.rt-port-actions .rt-opt{flex:1;text-align:center;padding:6px 8px;font-size:11px;}
+
+/* ---- portrait framer dialog ----
+   A real <dialog> opened with showModal(): the top layer sits above every
+   stacking context, so .rt-wrap's z-index cannot bury it under the nav. */
+.rt-framer{width:min(430px,94vw);max-height:88vh;overflow-y:auto;
+  padding:16px;border:1px solid var(--brass);border-radius:4px;
+  color:var(--text);
+  background:linear-gradient(180deg,#16211a,#0a110d 60%);
+  box-shadow:0 20px 64px -22px #000;}
+.rt-framer::backdrop{background:rgba(3,6,4,.82);}
+.rt-framer-in{max-width:100%;}
+
+/* ---- roster list ---- */
+.rt-roster-l{list-style:none;margin:0 0 4px;padding:0;}
+.rt-roster-i{display:flex;align-items:stretch;gap:6px;margin-bottom:6px;}
+.rt-roster-i.on .rt-roster-n{border-color:var(--gold);}
+.rt-roster-n{flex:1;min-width:0;text-align:left;cursor:pointer;padding:9px 11px;
+  font:inherit;color:var(--text);
+  border:1px solid var(--brass-dim);background:rgba(6,12,8,.6);
+  transition:border-color .14s;}
+.rt-roster-n:hover{border-color:var(--brass);}
+.rt-roster-nm{display:block;font-family:var(--display);font-size:14px;font-weight:600;
+  letter-spacing:.03em;color:var(--brass-lit);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rt-roster-mt{display:block;font-family:var(--mono);font-size:10px;
+  letter-spacing:.1em;color:var(--dim);margin-top:3px;}
+.rt-framer-h{display:flex;align-items:center;gap:9px;margin-bottom:6px;}
+.rt-framer-t{font-family:var(--display);font-size:15px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--gold-lit);
+  text-shadow:0 0 20px rgba(224,185,85,.35);}
+.rt-framer-stage{position:relative;width:100%;aspect-ratio:3 / 4;overflow:hidden;
+  cursor:grab;touch-action:none;   /* let pointer drags pan instead of scrolling */
+  background:#0a110d;border:1px solid var(--brass-dim);
+  box-shadow:inset 0 0 30px rgba(0,0,0,.8);}
+.rt-framer-stage:active{cursor:grabbing;}
+.rt-framer-stage img{position:absolute;inset:0;width:100%;height:100%;display:block;
+  user-select:none;-webkit-user-drag:none;}
+.rt-port-pf{position:absolute;right:-9px;top:-9px;width:38px;height:38px;
+  display:grid;place-items:center;align-content:center;border-radius:50%;
+  font-family:var(--display);font-size:14px;font-weight:700;line-height:1;
+  color:var(--gold-lit);
+  background:radial-gradient(circle at 50% 30%,#3b3120,#15110a);
+  border:1px solid var(--brass-lit);
+  box-shadow:0 0 14px -3px rgba(224,185,85,.6);}
+.rt-port-pf span{display:block;font-family:var(--mono);font-size:6.5px;
+  letter-spacing:.14em;color:var(--brass-lit);opacity:.85;margin-top:1px;}
+
+/* one strip: wounds gauge + the brass gauges, filling the row beside the
+   portrait instead of a full-width bar with a separate row underneath */
+.rt-idstats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:stretch;}
+.rt-idstats .rt-der{flex:1 1 78px;min-width:78px;}
+.rt-wgauge{flex:2 1 150px;min-width:150px;display:flex;flex-direction:column;
+  justify-content:center;text-align:center;padding:9px 8px;
+  border:1px solid var(--brass);
+  background:linear-gradient(180deg,#241d0f,#0d1109);
+  box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
+.rt-wbar{position:relative;height:20px;
+  border:1px solid var(--brass-dim);background:#0a1209;
+  box-shadow:inset 0 1px 4px rgba(0,0,0,.7);}
+.rt-wgauge .rt-der-k{margin-top:5px;}
+.rt-wbar > span{position:absolute;inset:0;
+  background:linear-gradient(180deg,#3f9a63,#1d5c38);
+  box-shadow:inset 0 1px 0 rgba(160,230,185,.35);}
+.rt-wbar > b{position:absolute;inset:0;display:grid;place-items:center;
+  font-family:var(--mono);font-size:9.5px;font-weight:500;letter-spacing:.14em;
+  color:#eaf6ee;text-shadow:0 1px 2px rgba(0,0,0,.8);}
+
+/* -------------------------- DOSSIER PARCHMENT --------------------------
+   The dossier is the one thing here you actually read at length, so it
+   gets the game's parchment treatment: ink on paper, brass rule. */
+
+/* One column, capped to a readable measure. Grid left dead voids under the
+   short section; multi-column fixed the voids but broke top alignment and
+   scrambled reading order. A sheet reads better as a single document column. */
+.rt-dossier{max-width:880px;}
+.rt-sects{}
+
+/* clickable glossary rows */
+.rt-entry{margin-bottom:3px;}
+.rt-entry-b{display:flex;align-items:center;gap:7px;width:100%;min-height:32px;
+  text-align:left;font:inherit;color:inherit;
+  background:none;border:0;padding:5px 0;cursor:pointer;}
+/* touch input needs a real target — dense on a mouse, comfortable on a finger */
+@media (pointer:coarse){
+  .rt-entry-b{min-height:44px;padding:9px 0;}
+  .rt-entry-x{font-size:17px;width:22px;}
+}
+.rt-entry-b:hover .rt-entry-t{color:#000;text-decoration:underline dotted;}
+.rt-entry-t{flex:1;min-width:0;}
+.rt-entry-c{flex:none;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  color:#7a6534;border:1px solid rgba(109,87,38,.45);padding:1px 4px;}
+.rt-entry-x{flex:none;font-family:var(--mono);font-size:13px;color:#8a6f31;width:12px;}
+.rt-entry-d{margin:5px 0 9px;padding:8px 11px;font-size:13.5px;line-height:1.55;
+  color:#3a3122;background:rgba(120,98,54,.12);border-left:2px solid #8a6f31;}
+.rt-entry-d > p{margin:0;}
+.rt-entry-d > p + p{margin-top:6px;}
+.rt-entry-s{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:#6d5726;}
+
+/* ---- starting gear ---- */
+.rt-gear{padding-left:0;list-style:none;}
+.rt-gear-g{margin-bottom:2px;}
+.rt-gear-alts{list-style:none;margin:0;padding:0;}
+/* an "or" between alternatives for the same slot, indented under the group */
+.rt-gear-or{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:#8a6f31;padding:1px 0 1px 10px;}
+.rt-gear-s{font-family:var(--mono);font-size:11px;line-height:1.5;
+  color:#4a3f28;letter-spacing:.02em;}
+.rt-sect{position:relative;padding:15px 16px;margin-bottom:10px;break-inside:avoid;
+  color:var(--parch-ink);
+  border:1px solid var(--brass);
+  background:
+    repeating-linear-gradient(94deg,rgba(120,100,60,.05) 0 2px,transparent 2px 5px),
+    linear-gradient(172deg,var(--parch-hi),var(--parch) 55%,#d8cba7);
+  box-shadow:inset 0 0 34px rgba(120,98,54,.2),0 3px 12px -4px rgba(0,0,0,.6);}
+.rt-sect-h{display:flex;align-items:center;gap:9px;margin-bottom:10px;
+  font-family:var(--mono);font-size:10.5px;color:#6d5726;
+  letter-spacing:.18em;text-transform:uppercase;}
+.rt-sect-h::before{content:"◆";font-size:7px;color:#8a6f31;}
+.rt-sect-h::after{content:"";flex:1;height:1px;
+  background:linear-gradient(90deg,rgba(109,87,38,.55),transparent);}
+.rt-sect .rt-list,.rt-sect .rt-para{color:var(--parch-ink);}
+.rt-sect .rt-empty{color:var(--parch-dim);}
+.rt-list{margin:0;padding-left:18px;font-size:14.5px;line-height:1.7;}
+.rt-list li{margin-bottom:3px;}
+.rt-list li::marker{color:#8a6f31;}
+.rt-para{font-size:14.5px;line-height:1.65;margin:0;}
+.rt-empty{font-size:14.5px;color:var(--dim);font-style:italic;}
+
+/* ------------------------------- INPUTS ------------------------------- */
+
+.rt-field{width:100%;padding:12px 13px;font-family:var(--serif);font-size:17px;
+  color:var(--bone);background:var(--well);border:1px solid var(--brass-dim);
+  box-shadow:inset 0 2px 7px rgba(0,0,0,.55);}
+.rt-field::placeholder{color:#5d6f63;font-style:italic;}
+.rt-field:focus{outline:none;border-color:var(--gold);
+  box-shadow:inset 0 2px 7px rgba(0,0,0,.55),0 0 0 1px var(--gold);}
+
+/* ------------------------------ BOTTOM NAV ------------------------------ */
+
+.rt-nav{position:fixed;left:0;right:0;bottom:0;z-index:25;
+  background:linear-gradient(180deg,rgba(11,17,13,.96),#0b110d);
+  border-top:1px solid var(--brass-dim);
+  backdrop-filter:blur(7px);
+  padding:10px 14px;padding-bottom:calc(10px + env(safe-area-inset-bottom));}
+.rt-nav::before{content:"";position:absolute;left:0;right:0;top:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--brass) 22%,var(--brass) 78%,transparent);
+  opacity:.7;}
 .rt-nav-in{max-width:760px;margin:0 auto;display:flex;gap:8px;align-items:center;}
-.rt-nav .rt-btn{flex:1;padding:10px;}
+.rt-nav .rt-btn{flex:1;padding:12px;}
 
-/* ---- vox drawer ---- */
-.rt-scrim{position:fixed;inset:0;background:rgba(4,6,9,.72);z-index:40;}
-.rt-vox{position:fixed;left:0;right:0;bottom:0;z-index:41;background:#0b1218;
-  border-top:1px solid var(--sig);max-height:88vh;overflow-y:auto;
-  padding:14px 14px calc(18px + env(safe-area-inset-bottom));}
+/* ---------------------------- VOX DRAWER ----------------------------
+   Plasma cyan, picked off the concept art's reactor glow so the machine
+   voice never blends into the ambient green. */
+
+.rt-scrim{position:fixed;inset:0;z-index:40;background:rgba(3,6,4,.8);
+  backdrop-filter:blur(2px);}
+.rt-vox{position:fixed;left:0;right:0;bottom:0;z-index:41;
+  max-height:88vh;overflow-y:auto;
+  background:linear-gradient(180deg,#08201d,#050d0c 60%);
+  border-top:1px solid var(--vox);
+  box-shadow:0 -12px 44px -16px rgba(127,232,216,.32);
+  padding:16px 14px calc(20px + env(safe-area-inset-bottom));}
 .rt-vox-in{max-width:760px;margin:0 auto;}
-.rt-vox-h{display:flex;align-items:center;gap:9px;margin-bottom:4px;}
-.rt-vox-t{font-size:15px;color:var(--sig);letter-spacing:.05em;}
-.rt-close{margin-left:auto;background:none;border:1px solid var(--rim);color:var(--dim);
-  width:30px;height:30px;font-size:16px;cursor:pointer;line-height:1;}
-.rt-vox-hint{font-size:11.5px;color:var(--dim);margin:0 0 11px;line-height:1.5;}
-.rt-ta{width:100%;min-height:104px;background:#070c11;border:1px solid var(--rim);color:var(--sig);
-  padding:11px;font-size:14px;line-height:1.5;resize:vertical;
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
-.rt-ta:focus{outline:2px solid var(--sig);outline-offset:-1px;}
-.rt-slider{width:100%;accent-color:#c59b27;margin:3px 0 9px;}
-.rt-sl-l{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.05em;}
-.rt-select{width:100%;background:#0b1017;border:1px solid var(--rim);color:var(--parch);
-  padding:9px;font-size:13px;font-family:inherit;margin-bottom:10px;}
-.rt-quick{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px;}
-.rt-speak{border:1px solid var(--sig);background:#0a2a26;color:var(--sig);padding:13px;
-  font-size:14px;letter-spacing:.09em;cursor:pointer;width:100%;
-  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
-.rt-speak:disabled{opacity:.45;cursor:default;}
-.rt-speak.stop{border-color:var(--rust);background:#2a1109;color:#e5a086;}
-.rt-warn{border:1px solid var(--rust);background:#1c0f0a;color:#e5a086;padding:10px;
-  font-size:12.5px;line-height:1.5;margin-bottom:11px;}
-@media (prefers-reduced-motion:reduce){.rt-root *{transition:none!important;}}
+.rt-vox-h{display:flex;align-items:center;gap:9px;margin-bottom:6px;}
+.rt-vox-t{font-family:var(--display);font-size:15px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--vox);
+  text-shadow:0 0 20px rgba(127,232,216,.45);}
+.rt-close{margin-left:auto;width:32px;height:32px;line-height:1;font-size:17px;
+  cursor:pointer;background:none;border:1px solid var(--brass-dim);color:var(--dim);
+  transition:color .14s,border-color .14s;}
+.rt-close:hover{color:var(--vox);border-color:var(--vox);}
+.rt-vox-hint{font-size:13.5px;color:var(--dim);margin:0 0 12px;line-height:1.55;}
+
+.rt-ta{width:100%;min-height:108px;resize:vertical;padding:12px;
+  font-family:var(--mono);font-size:13.5px;line-height:1.55;
+  color:var(--vox);background:#030a09;border:1px solid #1d4a44;
+  text-shadow:0 0 12px rgba(127,232,216,.35);
+  box-shadow:inset 0 2px 10px rgba(0,0,0,.6);}
+.rt-ta::placeholder{color:#3e6f68;}
+.rt-ta:focus{outline:none;border-color:var(--vox);
+  box-shadow:inset 0 2px 10px rgba(0,0,0,.6),0 0 0 1px var(--vox);}
+
+.rt-quick{display:flex;flex-wrap:wrap;gap:6px;margin:11px 0 4px;}
+.rt-slider{width:100%;accent-color:#c9a961;margin:4px 0 10px;}
+.rt-sl-l{display:flex;justify-content:space-between;
+  font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.16em;}
+.rt-select{width:100%;padding:10px;margin-bottom:11px;
+  font-family:var(--mono);font-size:12.5px;
+  color:var(--text);background:var(--well);border:1px solid var(--brass-dim);}
+.rt-select:focus{outline:none;border-color:var(--vox);}
+
+.rt-speak{width:100%;cursor:pointer;padding:14px;
+  font-family:var(--display);font-weight:700;font-size:13px;
+  letter-spacing:.2em;text-transform:uppercase;
+  color:var(--vox);border:1px solid var(--vox);
+  background:linear-gradient(180deg,#0e3b35,#061a17);
+  text-shadow:0 0 16px rgba(127,232,216,.5);
+  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px);
+  transition:filter .14s;}
+.rt-speak:hover{filter:brightness(1.2);}
+.rt-speak:disabled{opacity:.4;cursor:default;filter:none;}
+.rt-speak.stop{border-color:var(--rust);color:#f0b09a;
+  background:linear-gradient(180deg,#3c1409,#1f0a05);
+  text-shadow:0 0 16px rgba(192,85,42,.5);}
+
+.rt-warn{padding:11px 12px;margin-bottom:12px;font-size:13.5px;line-height:1.55;
+  color:#f0b09a;border:1px solid var(--crimson);
+  border-left:3px solid var(--rust);background:#1e0c07;}
+
+/* ============================= RESPONSIVE =============================
+   Mobile-first single column. The tab rail is kept at every size — it
+   just stops scrolling once the tabs fit. */
+
+@media (max-width:399px){
+  .rt-croll{display:none;}                       /* raw roll is the first to go */
+  .rt-derived{grid-template-columns:repeat(2,1fr);}
+  .rt-cval{font-size:21px;min-width:34px;}
+}
+
+@media (min-width:700px){
+  .rt-idcard{gap:18px;}
+  .rt-portrait-wrap{width:118px;}
+  .rt-port-img{height:134px;font-size:54px;}
+  /* a name field has no business being 1100px wide */
+  .rt-intro{max-width:520px;}
+}
+
+@media (min-width:900px){
+  .rt-wrap{max-width:1040px;padding-bottom:120px;}
+  .rt-head-in,.rt-nav-in{max-width:1040px;}
+  .rt-steps{justify-content:flex-start;flex-wrap:wrap;overflow-x:visible;}
+  .rt-cards{grid-template-columns:repeat(2,1fr);padding:24px 20px 21px;}
+  .rt-sheet{padding:24px 22px 19px;}
+  .rt-row{padding:9px 5px;}
+  .rt-cname{font-size:16px;}
+  .rt-cval{font-size:27px;min-width:46px;}
+  .rt-nav .rt-btn{flex:0 1 220px;}
+  .rt-nav-in{justify-content:flex-end;}
+}
+
+@media (min-width:1280px){
+  .rt-wrap{max-width:1200px;}
+  .rt-head-in,.rt-nav-in{max-width:1200px;}
+  .rt-cards{grid-template-columns:repeat(3,1fr);}
+}
+
+@media (prefers-reduced-motion:reduce){
+  .rt-root *,.rt-root *::before,.rt-root *::after{
+    transition:none!important;animation:none!important;}
+}
 `;
 
 /* ============================ COMPONENTS ============================ */
@@ -928,6 +1398,11 @@ export default function RogueTraderBuilder() {
   const [woundRoll, setWoundRoll] = useState(null);
   const [fateRoll, setFateRoll] = useState(null);
   const [stepIx, setStepIx] = useState(0);     // 0..5 origin, 6 characteristics, 7 dossier
+  const [avatar, setAvatar] = useState(null);  // { src, framing }
+  const [roster, setRoster] = useState([]);
+  const [charId, setCharId] = useState(null);  // null = unsaved sheet
+  const [rosterOpen, setRosterOpen] = useState(false);
+  const [rosterErr, setRosterErr] = useState('');
   const [voxOpen, setVoxOpen] = useState(false);
   const [voxText, setVoxText] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -1032,35 +1507,66 @@ export default function RogueTraderBuilder() {
       trials: MAGOS_PRESET.trials, motivation: MAGOS_PRESET.motivation, career: MAGOS_PRESET.career
     });
     setChoices(MAGOS_PRESET.choices);
+    // Falls back to the initial if the file is not there — see MAGOS_PRESET.
+    setAvatar({ src: MAGOS_PRESET.avatar, framing: DEFAULT_FRAMING });
     setStepIx(6);
   };
 
   const clearAll = () => {
     setName(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
+    setAvatar(null);
     setStepIx(0);
   };
 
-  /* ---- dossier text for the vox ---- */
-  const dossierText = () => {
-    const who = name || 'Unnamed adept';
-    const lines = [`${who}. ${career ? career.name : 'Career unassigned'}.`];
-    if (home) lines.push(`Origin: ${home.name}.`);
-    const path = ['birthright', 'lure', 'trials', 'motivation']
-      .map((k) => build.picked[k] && build.picked[k].name).filter(Boolean);
-    if (path.length) lines.push(`Path: ${path.join(', ')}.`);
-    if (totals) {
-      lines.push('Characteristics. ' + CHAR_KEYS.map((k) => `${CHAR_NAMES[k]} ${totals[k]}`).join('. ') + '.');
+  /* ---- roster: save / open / delete / start fresh ---- */
+
+  useEffect(() => { setRoster(readRoster()); }, []);
+
+  const saveCharacter = () => {
+    const id = charId || newId();
+    const next = upsert(roster, {
+      id,
+      name: name || 'Unnamed adept',
+      career: career ? career.name : null,
+      updatedAt: Date.now(),
+      state: { name, sel, choices, rolls, woundRoll, fateRoll, avatar }
+    });
+    if (!writeRoster(next)) {
+      setRosterErr('Could not save — browser storage is full. A large portrait is the usual cause.');
+      return;
     }
-    if (wounds != null) lines.push(`Wounds ${wounds}. Fate points ${fatePoints}. Profit factor ${profitFactor}.`);
-    lines.push('Praise the Omnissiah. The flesh is weak.');
-    return lines.join(' ');
+    setRosterErr('');
+    setRoster(next);
+    setCharId(id);
   };
 
-  const openVox = (preset) => {
-    if (preset) setVoxText(preset);
-    else if (!voxText.trim()) setVoxText(dossierText());
-    setVoxOpen(true);
+  const openCharacter = (id) => {
+    const c = roster.find((x) => x.id === id);
+    if (!c) return;
+    const s = c.state || {};
+    setName(s.name || '');
+    setSel(s.sel || {});
+    setChoices(s.choices || {});
+    setRolls(s.rolls || null);
+    setWoundRoll(s.woundRoll ?? null);
+    setFateRoll(s.fateRoll ?? null);
+    setAvatar(s.avatar || null);
+    setCharId(id);
+    setRosterErr('');
+    setStepIx(7);
   };
+
+  const deleteCharacter = (id) => {
+    const c = roster.find((x) => x.id === id);
+    const label = c ? c.name : 'this character';
+    if (!window.confirm(`Delete "${label}" permanently? This cannot be undone.`)) return;
+    const next = removeChar(roster, id);
+    writeRoster(next);
+    setRoster(next);
+    if (charId === id) setCharId(null);
+  };
+
+  const newCharacter = () => { clearAll(); setCharId(null); setRosterErr(''); };
 
   const stepDone = (i) => {
     if (i < 6) return !!sel[STEPS[i].id];
@@ -1078,20 +1584,26 @@ export default function RogueTraderBuilder() {
       <header className="rt-head">
         <div className="rt-head-in">
           <div className="rt-sigil">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-              <circle cx="12" cy="12" r="4" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M19.1 4.9l-2.8 2.8M7.7 16.3l-2.8 2.8" />
+            <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="1.3" strokeLinecap="round">
+              <circle cx="12" cy="12" r="2.9" />
+              <circle cx="12" cy="12" r="7.4" opacity=".5" />
+              <path d="M12 1.6v3M12 19.4v3M1.6 12h3M19.4 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M19.4 4.6l-2.1 2.1M6.7 17.3l-2.1 2.1" />
             </svg>
           </div>
           <div>
             <h1 className="rt-title">Origin Path Cogitator</h1>
             <div className="rt-sub">ROGUE TRADER / KORONUS EXPANSE</div>
           </div>
-          <button
-            className={'rt-voxbtn' + (vox.speaking ? ' live' : '')}
-            onClick={() => openVox()}
-          >
-            {vox.speaking ? '\u25CF VOX' : 'VOX'}
-          </button>
+          <div className="rt-head-btns">
+            <button className="rt-headbtn" onClick={() => setRosterOpen(true)}>ROSTER</button>
+            <button
+              className={'rt-voxbtn' + (vox.speaking ? ' live' : '')}
+              onClick={() => setVoxOpen(true)}
+            >
+              {vox.speaking ? '\u25CF VOX' : 'VOX'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1135,7 +1647,7 @@ export default function RogueTraderBuilder() {
           <DossierPane
             name={name} build={build} totals={totals}
             wounds={wounds} fatePoints={fatePoints} profitFactor={profitFactor}
-            onSpeak={() => openVox(dossierText())}
+            avatar={avatar} setAvatar={setAvatar}
             onClear={clearAll}
           />
         )}
@@ -1152,14 +1664,408 @@ export default function RogueTraderBuilder() {
         </div>
       </nav>
 
+      {rosterOpen && (
+        <RosterDialog
+          roster={roster} currentId={charId} err={rosterErr}
+          onSave={saveCharacter} onOpen={openCharacter}
+          onDelete={deleteCharacter} onNew={newCharacter}
+          onClose={() => setRosterOpen(false)}
+        />
+      )}
+
       {voxOpen && (
         <VoxPanel
           vox={vox} text={voxText} setText={setVoxText}
           onClose={() => setVoxOpen(false)}
-          onDossier={() => setVoxText(dossierText())}
           careerName={career ? career.name : null}
         />
       )}
+    </div>
+  );
+}
+
+const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
+
+/* ============================== GLOSSARY ==============================
+   Plain-language summaries of Rogue Trader (FFG, 2009) skills and talents,
+   written for this builder. They are a table reference, NOT the rulebook's
+   own wording — check the core book before ruling on an edge case.
+   Traits are not here: the data already stores them as "Name: effect". */
+
+const GLOSSARY = {
+  /* ---- skills ---- */
+  'Awareness': 'Notice what others miss — a hidden figure, a wrong sound, a detail out of place. Basic Skill, so anyone may attempt it.',
+  'Barter': 'Haggle. Talk a seller down or a buyer up on the price of goods.',
+  'Charm': 'Win people over with warmth, flattery and presence.',
+  'Command': 'Give orders that are actually obeyed, and rally those who follow you.',
+  'Commerce': 'Read markets, cargo values and trade routes — the working knowledge of a voidfaring merchant. Advanced Skill.',
+  'Common Lore': 'The everyday knowledge an insider of a given group or place would have. Advanced Skill, taken once per specialisation.',
+  'Concealment': 'Hide yourself or an object from sight.',
+  'Deceive': 'Lie well. Pass off a falsehood as truth, or a forgery as genuine.',
+  'Dodge': 'Throw yourself clear of an incoming attack or hazard, as a Reaction.',
+  'Evaluate': 'Judge what a thing is worth, and whether it is what it claims to be.',
+  'Forbidden Lore': 'Knowledge the Imperium would rather you did not hold — xenos, the warp, heresy. Advanced Skill; simply having it can draw the wrong attention.',
+  'Inquiry': 'Gather information by asking the right people the right questions.',
+  'Intimidate': 'Get compliance through threat, menace or sheer physical presence.',
+  'Invocation': 'Channel psychic power through rite and prayer. Advanced Skill.',
+  'Literacy': 'Read and write. Advanced Skill — and rarer than outsiders assume; most Imperial citizens are illiterate.',
+  'Logic': 'Reason a problem through, run the numbers, and spot what does not add up. Advanced Skill.',
+  'Medicae': 'Treat wounds, poison and disease. Advanced Skill.',
+  'Navigation': 'Plot a course and hold to it — across a surface, between stars, or through the warp. Advanced Skill.',
+  'One Skill of the GM’s choosing': 'A deliberate blank. Agree with your GM which skill this becomes before play.',
+  'Pilot': 'Fly or drive a craft or vehicle of the relevant class.',
+  'Psyniscience': 'Perceive the warp directly — psychic presences, and where reality has worn thin. Advanced Skill, for psykers.',
+  'Scholastic Lore': 'Formal, schooled learning of the sort taught rather than picked up. Advanced Skill.',
+  'Secret Tongue': 'A restricted cant used within one organisation, opaque to outsiders. Advanced Skill.',
+  'Sleight of Hand': 'Palm, plant, pick and conceal without being seen doing it.',
+  'Speak Language': 'Speak and understand a given tongue. Advanced Skill, taken once per language.',
+  'Survival': 'Stay alive away from civilisation — forage, shelter, read weather and track.',
+  'Tech-Use': 'Operate, repair and appease machines, with the proper rites observed. Advanced Skill.',
+  'Trade': 'A practical craft or profession, learned properly. Advanced Skill, taken once per trade.',
+
+  /* ---- talents ---- */
+  'Air of Authority': 'You carry the assumption of command, and can bend far more ordinary people to your will when you give orders.',
+  'Armour of Contempt': 'Practised disdain for the warp and its works hardens you against the corruption such things leave behind.',
+  'Basic Weapon Training': 'You are trained with that class of basic weapon, and no longer suffer the heavy penalty for firing it untrained.',
+  'Dark Soul': 'Something in you has already turned toward the dark, and it changes how further corruption takes hold.',
+  'Decadence': 'A lifetime of excess — you hold your drink and your indulgences far better than you should.',
+  'Die Hard': 'You do not go quietly. You resist being put down and keep acting when others would drop.',
+  'Enemy': 'A faction actively holds you in contempt. Expect worse treatment and active obstruction whenever they are involved.',
+  'Foresight': 'You think before you act, taking time to plan a task rather than committing to it blind.',
+  'Hardy': 'You heal as though lightly wounded even when badly hurt.',
+  'Heightened Senses': 'One of your senses is unusually sharp, sharpening perception through it.',
+  'Jaded': 'You have seen too much. Mundane horrors — corpses, carnage, the everyday brutality of the Imperium — no longer shake you.',
+  'Leap Up': 'You get back on your feet fast, standing without it costing you your action.',
+  'Light Sleeper': 'You wake instantly and completely, and are never caught truly asleep.',
+  'Logis Implant': 'A cogitator woven into your mind, feeding you probabilities and letting you read a situation with machine precision.',
+  'Melee Weapon Training': 'You are trained with that class of melee weapon, and no longer suffer the penalty for wielding it untrained.',
+  'Navigator': 'You bear the Navigator gene and its third eye, and can read the Astronomican to steer a ship through the warp.',
+  'Nerves of Steel': 'You hold together under fire, resisting being pinned down and shrugging off terror that would break others.',
+  'Paranoia': 'You assume threat everywhere, and are correspondingly hard to catch unready.',
+  'Peer': 'A faction thinks well of you. Dealing with its members goes markedly easier.',
+  'Pistol Weapon Training': 'You are trained with that class of pistol, and no longer suffer the penalty for firing it untrained.',
+  'Psy Rating 2': 'Your psychic strength, rated. It sets how much power you can safely push through a psychic discipline.',
+  'Pure Faith': 'Genuine, unfeigned belief in the Emperor — a shield against the warp that cynics cannot raise.',
+  'Quick Draw': 'You bring a weapon to hand fast enough that drawing it costs you nothing.',
+  'Resistance': 'You are unusually hard to affect by one particular kind of threat — cold, poison, psychic assault, or similar.',
+  'Rival': 'Someone with standing wants you to fail, and will spend effort to see it happen.',
+  'Sound Constitution': 'You are simply harder to kill. Each time you take this, you gain another Wound.',
+  'Talented': 'One skill is a natural gift, and you perform it markedly better than your training alone would explain.',
+  'Technical Knock': 'You can clear a jammed weapon with a well-placed strike, in the time it takes to swing.',
+  'Thrown Weapon Training': 'You are trained with that class of thrown weapon, and no longer suffer the penalty for using it untrained.',
+  'Unremarkable': 'Nothing about you sticks in the memory. Witnesses struggle to describe you and crowds swallow you whole.',
+  'Unshakeable Faith': 'Your belief holds where reason fails, letting you face the warp and its servants without breaking.',
+  'Weapon Training': 'You are trained with the named weapon class, and no longer suffer the penalty for using it untrained.',
+
+  /* ---- appears as a bare trait with no inline text ---- */
+  'Mechanicus Implants': 'The standard augmetics of the Machine Cult — the potentia coil and its attendant implants that mark you as more machine than most.'
+};
+
+function GearItem({ label }) {
+  const [open, setOpen] = useState(false);
+  const { entry, quality } = gearInfo(label);
+  const title = label.charAt(0).toUpperCase() + label.slice(1);
+
+  if (!entry) return <li className="rt-entry"><span className="rt-entry-t">{title}</span></li>;
+
+  return (
+    <li className={'rt-entry' + (open ? ' open' : '')}>
+      <button className="rt-entry-b" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="rt-entry-t">{title}</span>
+        {entry.kind && <span className="rt-entry-c">{entry.kind}</span>}
+        <span className="rt-entry-x" aria-hidden="true">{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div className="rt-entry-d">
+          {entry.stats && <p className="rt-gear-s">{entry.stats}</p>}
+          <p>{entry.desc}</p>
+          {quality && <p className="rt-entry-s">{CRAFT[quality]}</p>}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function GearList({ gear }) {
+  const groups = parseGear(gear);
+  return (
+    <ul className="rt-list rt-gear">
+      {groups.map((alts, i) => (
+        <li key={i} className="rt-gear-g">
+          <ul className="rt-gear-alts">
+            {alts.map((label, j) => (
+              <React.Fragment key={j}>
+                {j > 0 && <li className="rt-gear-or">or</li>}
+                <GearItem label={label} />
+              </React.Fragment>
+            ))}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const CHAR_TAG = /\s*\((WS|BS|S|T|Ag|Int|Per|WP|Fel)\)\s*$/;
+
+/* Splits a list entry into something explainable.
+   "Caves of Steel: Tech-Use counts as a Basic Skill." -> title + its own body
+   "Common Lore (Machine Cult, Tech) (Int)" -> Common Lore, spec, Int
+   Returns body:null when nothing is known, so the caller can render it flat. */
+function explainEntry(entry) {
+  const colon = entry.indexOf(': ');
+  if (colon > 0) {
+    return { title: entry.slice(0, colon), body: entry.slice(colon + 2), char: null, spec: null };
+  }
+  const charMatch = entry.match(CHAR_TAG);
+  const stripped = entry.replace(CHAR_TAG, '').trim();
+  const paren = stripped.match(/^([^(]+)\((.*)\)$/);
+  const baseName = (paren ? paren[1] : stripped).trim();
+  return {
+    title: stripped,
+    body: GLOSSARY[baseName] || null,
+    char: charMatch ? charMatch[1] : null,
+    spec: paren ? paren[2].trim() : null
+  };
+}
+
+/* One list row. Clickable only when there is something to say. */
+function Entry({ text }) {
+  const [open, setOpen] = useState(false);
+  const { title, body, char, spec } = explainEntry(text);
+
+  if (!body) {
+    return (
+      <li className="rt-entry">
+        <span className="rt-entry-t">{title}</span>
+        {char && <span className="rt-entry-c">{char}</span>}
+      </li>
+    );
+  }
+  return (
+    <li className={'rt-entry' + (open ? ' open' : '')}>
+      <button className="rt-entry-b" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="rt-entry-t">{title}</span>
+        {char && <span className="rt-entry-c">{char}</span>}
+        <span className="rt-entry-x" aria-hidden="true">{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div className="rt-entry-d">
+          {spec && <p className="rt-entry-s">{spec}</p>}
+          <p>{body}</p>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/* ---------------------------- AVATAR FRAMER ----------------------------
+   Drag to pan, slider to zoom. One crop target here (the dossier plate),
+   so unlike the dnd_multi-user original there is no per-view tab strip. */
+
+function AvatarFramer({ src, framing, setFraming, onClose }) {
+  const dialogRef = useRef(null);
+  const dragRef = useRef(null);
+  const f = framing ?? DEFAULT_FRAMING;
+
+  // showModal puts the dialog in the top layer, which ignores z-index and
+  // stacking contexts — .rt-wrap has z-index:1 and would otherwise trap it
+  // under the fixed bottom nav. Esc closes it and fires onClose for free.
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+
+  const onPointerDown = (e) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      startX: e.clientX, startY: e.clientY, start: f,
+      box: e.currentTarget.getBoundingClientRect()
+    };
+  };
+  const onPointerMove = (e) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    setFraming({
+      ...drag.start,
+      ...panFraming(drag.start, e.clientX - drag.startX, e.clientY - drag.startY, drag.box)
+    });
+  };
+  const onPointerUp = () => { dragRef.current = null; };
+
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer" onClose={onClose} aria-label="Frame portrait">
+        <div className="rt-framer-in">
+          <div className="rt-framer-h">
+            <span className="rt-framer-t">Frame portrait</span>
+            <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+          </div>
+          <p className="rt-vox-hint">Drag the image to reposition it, then set the zoom.</p>
+
+          <div
+            className="rt-framer-stage"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
+          >
+            <img src={src} alt="" draggable="false" style={framingStyle(f)} />
+          </div>
+
+          <div className="rt-sl-l"><span>ZOOM</span><span>{f.zoom.toFixed(2)}×</span></div>
+          <input
+            className="rt-slider" type="range" min="1" max="3" step="0.05"
+            value={f.zoom}
+            onChange={(e) => setFraming({ ...f, zoom: Number(e.target.value) })}
+          />
+
+          <div className="rt-btnrow">
+            <button className="rt-btn ghost" onClick={() => setFraming(DEFAULT_FRAMING)}>Reset</button>
+            <button className="rt-btn" onClick={close}>Done</button>
+          </div>
+        </div>
+    </dialog>
+  );
+}
+
+/* ------------------------------- ROSTER -------------------------------
+   Save, reopen, delete, or start fresh. Same shape as CharacterList in the
+   reference repos with the API half removed — see roster.js. */
+
+function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose, err }) {
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer" onClose={onClose} aria-label="Crew roster">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">Crew roster</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+
+      {err && <div className="rt-warn">{err}</div>}
+
+      {roster.length === 0 ? (
+        <p className="rt-vox-hint">
+          Nothing saved yet. Save the character you are building, or start a fresh sheet.
+        </p>
+      ) : (
+        <ul className="rt-roster-l">
+          {roster.map((c) => (
+            <li key={c.id} className={'rt-roster-i' + (c.id === currentId ? ' on' : '')}>
+              <button className="rt-roster-n" onClick={() => { onOpen(c.id); close(); }}>
+                <span className="rt-roster-nm">{c.name || 'Unnamed adept'}</span>
+                <span className="rt-roster-mt">{c.career || 'No career'}</span>
+              </button>
+              <button className="rt-opt" onClick={() => onDelete(c.id)}>Delete</button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="rt-btnrow">
+        <button className="rt-btn ghost" onClick={() => { onNew(); close(); }}>New character</button>
+        <button className="rt-btn" onClick={onSave}>Save current</button>
+      </div>
+    </dialog>
+  );
+}
+
+/* ---------------------------- PORTRAIT PLATE ---------------------------- */
+
+function PortraitPlate({ name, profitFactor, avatar, setAvatar }) {
+  const fileRef = useRef(null);
+  const [framerOpen, setFramerOpen] = useState(false);
+  const [err, setErr] = useState('');
+
+  const onFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';                     // let the same file be picked twice
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return setErr('That is not an image file.');
+    if (file.size > MAX_AVATAR_BYTES) return setErr('Image is over 8 MB. Pick a smaller one.');
+    const reader = new FileReader();
+    reader.onerror = () => setErr('Could not read that file.');
+    reader.onload = () => {
+      setErr('');
+      setAvatar({ src: reader.result, framing: DEFAULT_FRAMING });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="rt-portrait-wrap">
+      <div className="rt-portrait">
+        <div className="rt-port-img">
+          {avatar && avatar.src
+            ? <img src={avatar.src} alt="" style={framingStyle(avatar.framing)}
+                onError={() => setAvatar(null)} />
+            : <span aria-hidden="true">{(name || '').trim().charAt(0).toUpperCase() || '?'}</span>}
+        </div>
+        <div className="rt-port-pf" title="Profit Factor">
+          {profitFactor}<span>PF</span>
+        </div>
+      </div>
+
+      <div className="rt-port-actions">
+        <button className="rt-opt" onClick={() => fileRef.current && fileRef.current.click()}>
+          {avatar && avatar.src ? 'Replace' : 'Upload'}
+        </button>
+        {avatar && avatar.src && (
+          <button className="rt-opt" onClick={() => setFramerOpen(true)}>Frame</button>
+        )}
+        {/* ponytail: generation is a server call (see generate-avatar.js in
+            shadow-run_builder). Upload is the whole local half of it. */}
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
+      </div>
+      {err && <div className="rt-warn" style={{ marginTop: 8 }}>{err}</div>}
+
+      {framerOpen && (
+        <AvatarFramer
+          src={avatar.src}
+          framing={avatar.framing}
+          setFraming={(fr) => setAvatar({ ...avatar, framing: fr })}
+          onClose={() => setFramerOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------ CHARACTERISTIC SHEET ------------------------
+   Parchment row sheet after the CRPG: code chip, full name, roll, total,
+   modifier delta, bonus. onReroll is optional — the dossier renders the
+   same sheet read-only rather than keeping a second copy of this markup. */
+
+function StatSheet({ totals, mods, rolls, onReroll }) {
+  return (
+    <div className="rt-sheet rt-screen">
+      <div className="rt-sheet-h">Characteristics</div>
+      {CHAR_KEYS.map((k) => {
+        const m = (mods && mods[k]) || 0;
+        return (
+          <div className="rt-row" key={k}>
+            <span className="rt-code">{CHAR_SHORT[k]}</span>
+            <span className="rt-cname">{CHAR_NAMES[k]}</span>
+            {rolls && <span className="rt-croll">{rolls[k]}</span>}
+            <span className="rt-cval">{totals[k]}</span>
+            <span className={'rt-delta' + (m > 0 ? ' up' : m < 0 ? ' dn' : '')}>
+              {m !== 0 && (m > 0 ? '▲+' : '▼') + m}
+            </span>
+            <span className="rt-cbon">{Math.floor(totals[k] / 10)}</span>
+            {onReroll && (
+              <button className="rt-reroll" onClick={() => onReroll(k)}
+                aria-label={'Reroll ' + CHAR_NAMES[k]} title="Reroll">{'⟳'}</button>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1179,7 +2085,7 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
   return (
     <div>
       {showIntro && (
-        <div style={{ marginBottom: 18 }}>
+        <div className="rt-intro">
           <input
             className="rt-field"
             placeholder="Name your character"
@@ -1193,16 +2099,18 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
       )}
       <h2 className="rt-h2">{step.label}</h2>
       <p className="rt-lead">{STEP_LEAD[step.id]}</p>
-      {step.data.map((item) => (
-        <OptionCard
-          key={item.id}
-          item={item}
-          selected={selected === item.id}
-          onSelect={() => onSelect(step.id, item.id)}
-          choices={choices}
-          onChoose={onChoose}
-        />
-      ))}
+      <div className="rt-cards rt-screen">
+        {step.data.map((item) => (
+          <OptionCard
+            key={item.id}
+            item={item}
+            selected={selected === item.id}
+            onSelect={() => onSelect(step.id, item.id)}
+            choices={choices}
+            onChoose={onChoose}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -1229,23 +2137,7 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
 
       {rolls && totals && (
         <>
-          <div className="rt-grid">
-            {CHAR_KEYS.map((k) => {
-              const m = mods[k] || 0;
-              return (
-                <div className="rt-stat" key={k}>
-                  <div className="rt-stat-k">{CHAR_SHORT[k]}</div>
-                  <div className="rt-stat-v">{totals[k]}</div>
-                  <div className="rt-stat-m">
-                    {rolls[k]}
-                    {m !== 0 && <span className={m > 0 ? 'plus' : 'minus'}> {m > 0 ? '+' : ''}{m}</span>}
-                    {' \u00B7 '}bonus {Math.floor(totals[k] / 10)}
-                  </div>
-                  <button className="rt-reroll" onClick={() => rerollOne(k)}>reroll</button>
-                </div>
-              );
-            })}
-          </div>
+          <StatSheet totals={totals} mods={mods} rolls={rolls} onReroll={rerollOne} />
 
           <div className="rt-derived">
             <div className="rt-der"><div className="rt-der-v">{wounds ?? '\u2014'}</div><div className="rt-der-k">WOUNDS</div></div>
@@ -1270,41 +2162,46 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
 
 /* ---------------------------- DOSSIER PANE ---------------------------- */
 
-function DossierPane({ name, build, totals, wounds, fatePoints, profitFactor, onSpeak, onClear }) {
+function DossierPane({ name, build, totals, wounds, fatePoints, profitFactor, avatar, setAvatar, onClear }) {
   const career = build.picked.career;
-  const allSkills = [...(career ? career.skills : []), ...build.skills];
-  const allTalents = [...(career ? career.talents : []), ...build.talents];
-  const allTraits = [...(career && career.traits ? career.traits : []), ...build.traits];
+  // STEPS includes career, so build already folded its skills/talents/traits in
+  // (and deduped them). Concatenating career.* again is what duplicated every
+  // entry in these lists.
+  const { skills: allSkills, talents: allTalents, traits: allTraits } = build;
 
   return (
-    <div>
-      <h2 className="rt-h2">{name || 'Unnamed adept'}</h2>
-      <p className="rt-lead">
-        {career ? career.name : 'No career chosen'}
-        {build.picked.home ? ' \u00B7 ' + build.picked.home.name : ''}
-      </p>
-
-      {totals && (
-        <div className="rt-grid" style={{ marginBottom: 12 }}>
-          {CHAR_KEYS.map((k) => (
-            <div className="rt-stat" key={k}>
-              <div className="rt-stat-k">{CHAR_SHORT[k]}</div>
-              <div className="rt-stat-v">{totals[k]}</div>
-              <div className="rt-stat-m">bonus {Math.floor(totals[k] / 10)}</div>
+    <div className="rt-dossier">
+      <div className="rt-idcard">
+        <PortraitPlate name={name} profitFactor={profitFactor}
+          avatar={avatar} setAvatar={setAvatar} />
+        <div className="rt-idtext">
+          <h2 className="rt-h2">{name || 'Unnamed adept'}</h2>
+          <p className="rt-lead">
+            {career ? career.name : 'No career chosen'}
+            {build.picked.home ? ' \u00B7 ' + build.picked.home.name : ''}
+          </p>
+          {/* The wounds bar used to run the full width with the gauges in a
+              separate row below it. One strip, no dead space. */}
+          <div className="rt-idstats">
+            <div className="rt-wgauge">
+              <div className="rt-wbar">
+                <span />
+                <b>{wounds ?? '\u2014'}{wounds != null ? ' / ' + wounds : ''}</b>
+              </div>
+              <div className="rt-der-k">WOUNDS</div>
             </div>
-          ))}
+            <div className="rt-der"><div className="rt-der-v">{fatePoints ?? '\u2014'}</div><div className="rt-der-k">FATE</div></div>
+            <div className="rt-der"><div className="rt-der-v">{profitFactor}</div><div className="rt-der-k">PROFIT</div></div>
+            <div className="rt-der"><div className="rt-der-v">{allTalents.length}</div><div className="rt-der-k">TALENTS</div></div>
+          </div>
         </div>
-      )}
+      </div>
 
       {totals && (
-        <div className="rt-derived">
-          <div className="rt-der"><div className="rt-der-v">{wounds ?? '\u2014'}</div><div className="rt-der-k">WOUNDS</div></div>
-          <div className="rt-der"><div className="rt-der-v">{fatePoints ?? '\u2014'}</div><div className="rt-der-k">FATE</div></div>
-          <div className="rt-der"><div className="rt-der-v">{profitFactor}</div><div className="rt-der-k">PROFIT</div></div>
-          <div className="rt-der"><div className="rt-der-v">{allTalents.length}</div><div className="rt-der-k">TALENTS</div></div>
-        </div>
+        <StatSheet totals={totals} mods={build.mods} />
       )}
 
+      <div className="rt-sects">
       <div className="rt-sect">
         <div className="rt-sect-h">ORIGIN PATH</div>
         {STEPS.every((s) => !build.picked[s.id])
@@ -1319,21 +2216,21 @@ function DossierPane({ name, build, totals, wounds, fatePoints, profitFactor, on
       <div className="rt-sect">
         <div className="rt-sect-h">SKILLS</div>
         {allSkills.length
-          ? <ul className="rt-list">{allSkills.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          ? <ul className="rt-list">{allSkills.map((s, i) => <Entry key={i} text={s} />)}</ul>
           : <p className="rt-empty">Choose a career to fill this out.</p>}
       </div>
 
       <div className="rt-sect">
         <div className="rt-sect-h">TALENTS</div>
         {allTalents.length
-          ? <ul className="rt-list">{allTalents.map((t, i) => <li key={i}>{t}</li>)}</ul>
+          ? <ul className="rt-list">{allTalents.map((t, i) => <Entry key={i} text={t} />)}</ul>
           : <p className="rt-empty">Nothing yet.</p>}
       </div>
 
       {allTraits.length > 0 && (
         <div className="rt-sect">
           <div className="rt-sect-h">TRAITS AND QUIRKS</div>
-          <ul className="rt-list">{allTraits.map((t, i) => <li key={i}>{t}</li>)}</ul>
+          <ul className="rt-list">{allTraits.map((t, i) => <Entry key={i} text={t} />)}</ul>
         </div>
       )}
 
@@ -1347,12 +2244,12 @@ function DossierPane({ name, build, totals, wounds, fatePoints, profitFactor, on
       {career && (
         <div className="rt-sect">
           <div className="rt-sect-h">STARTING GEAR</div>
-          <p className="rt-para">{career.gear}</p>
+          <GearList gear={career.gear} />
         </div>
       )}
+      </div>
 
       <div className="rt-btnrow">
-        <button className="rt-btn" onClick={onSpeak}>Read this aloud</button>
         <button className="rt-btn ghost" onClick={onClear}>Start over</button>
       </div>
     </div>
@@ -1369,7 +2266,7 @@ const QUICK_LINES = [
   'Your request is noted and denied.'
 ];
 
-function VoxPanel({ vox, text, setText, onClose, onDossier, careerName }) {
+function VoxPanel({ vox, text, setText, onClose, careerName }) {
   const meta = PROFILE_META[vox.activeProfile];
   return (
     <>
@@ -1400,7 +2297,6 @@ function VoxPanel({ vox, text, setText, onClose, onDossier, careerName }) {
           />
 
           <div className="rt-quick">
-            <button className="rt-opt" onClick={onDossier}>Insert dossier</button>
             {QUICK_LINES.map((l) => (
               <button key={l} className="rt-opt" onClick={() => setText(l)}>
                 {l.length > 26 ? l.slice(0, 24) + '\u2026' : l}

@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId } from './roster.js';
-import { parseGear, gearInfo, CRAFT } from './gear.js';
+import { parseGear, gearInfo, CRAFT, GEAR } from './gear.js';
+import { woundState, applyDamage, adjustMax } from './wounds.js';
+import { roll1d100, resolveTest, DIFFICULTIES } from './dice.js';
+import { conditionalsFor } from './effects.js';
+import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
 
 /* ============================================================
    ROGUE TRADER : ORIGIN PATH COGITATOR
@@ -445,8 +449,10 @@ const TRIALS = [
 /* ---------------------------- MOTIVATION ---------------------------- */
 
 const MOTIVATIONS = [
-  { id: 'endurance', name: 'Endurance', blurb: 'You welcome the storm. What does not kill you is a stairway.', wounds: 1, notes: ['+1 Wound'] },
-  { id: 'fortune', name: 'Fortune', blurb: 'Everything begins and ends with the clink of Thrones.', fate: 1, notes: ['+1 Fate Point'] },
+  // No notes on these two: wounds/fate are applied to the sheet already, and
+  // repeating them under "Notes" read as though they were still outstanding.
+  { id: 'endurance', name: 'Endurance', blurb: 'You welcome the storm. What does not kill you is a stairway.', wounds: 1 },
+  { id: 'fortune', name: 'Fortune', blurb: 'Everything begins and ends with the clink of Thrones.', fate: 1 },
   {
     id: 'vengeance', name: 'Vengeance', blurb: 'You wake from dreams of knives and go looking for the guilty.',
     choices: [{
@@ -745,8 +751,7 @@ const CSS = `
    length. Amber is focus and selection only. Red is refusal.
    =========================================================== */
 
-/* the app never set this, so the page rendered with a light 8px gutter */
-html,body{margin:0;padding:0;background:#070a08;}
+/* the html/body reset lives in index.html so it also covers the login screen */
 
 .rt-root{
   /* ground */
@@ -1022,13 +1027,91 @@ html,body{margin:0;padding:0;background:#070a08;}
 .rt-delta{flex:none;min-width:40px;font-family:var(--mono);font-size:11px;}
 .rt-delta.up{color:var(--green);}
 .rt-delta.dn{color:var(--bad);}
-.rt-cbon{flex:none;min-width:24px;text-align:center;padding:1px 4px;
-  font-family:var(--mono);font-size:10px;color:var(--brass-lit);
+/* same footprint as the dice button beside it, so the row ends on a grid */
+.rt-cbon{flex:none;width:27px;height:27px;display:grid;place-items:center;
+  font-family:var(--mono);font-size:11px;color:var(--brass-lit);
   border:1px solid var(--brass-dim);background:rgba(6,12,8,.6);}
 .rt-reroll{flex:none;width:27px;height:27px;cursor:pointer;font-size:13px;line-height:1;
   border:1px solid var(--brass-dim);color:var(--dim);background:rgba(6,12,8,.6);
   transition:color .14s,border-color .14s;}
 .rt-reroll:hover{color:var(--gold);border-color:var(--brass);}
+.rt-dice{flex:none;width:27px;height:27px;display:grid;place-items:center;cursor:pointer;
+  border:1px solid var(--brass-dim);color:var(--green-dim);background:rgba(6,12,8,.6);
+  transition:color .14s,border-color .14s;}
+.rt-dice svg{width:15px;height:15px;}
+.rt-dice:hover{color:var(--green);border-color:var(--brass);}
+.rt-dice.on{color:#0d1b12;border-color:var(--green);
+  background:linear-gradient(180deg,var(--green),#4f9e70);}
+@media (pointer:coarse){
+  .rt-dice,.rt-reroll,.rt-cbon{width:38px;height:38px;}
+  .rt-dice svg{width:18px;height:18px;}
+}
+
+/* ---- test roller, opening under its characteristic ---- */
+.rt-roller{margin:0 0 8px;padding:11px 12px;
+  border:1px solid var(--brass-dim);border-left:2px solid var(--green-dim);
+  background:rgba(6,14,9,.72);}
+.rt-roller-h{display:flex;align-items:baseline;gap:10px;margin-bottom:9px;}
+.rt-roller-t{flex:1;font-family:var(--display);font-size:12px;font-weight:600;
+  letter-spacing:.12em;text-transform:uppercase;color:var(--brass-lit);}
+.rt-roller-tg{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--dim);}
+.rt-roller-tg b{font-size:14px;color:var(--green);margin-left:5px;}
+
+.rt-diffs{display:grid;grid-template-columns:repeat(auto-fit,minmax(84px,1fr));gap:4px;
+  margin-bottom:9px;}
+.rt-diff{display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;
+  padding:5px 4px;font-family:var(--mono);font-size:9px;letter-spacing:.06em;
+  color:var(--dim);border:1px solid var(--brass-dim);background:rgba(6,12,8,.6);
+  transition:color .14s,border-color .14s;}
+.rt-diff span{font-size:10.5px;color:var(--brass-lit);}
+.rt-diff:hover{color:var(--text);border-color:var(--brass);}
+.rt-diff.on{color:#161004;border-color:var(--gold-lit);
+  background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
+.rt-diff.on span{color:#3d2c06;}
+
+/* conditional modifiers from traits — off by default, applied per test */
+.rt-conds{margin-bottom:9px;}
+.rt-conds-h{font-family:var(--mono);font-size:9px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--dim);margin-bottom:5px;}
+.rt-cond{display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  cursor:pointer;padding:6px 8px;margin-bottom:3px;
+  border:1px solid var(--brass-dim);background:rgba(6,12,8,.5);
+  transition:border-color .14s,background .14s;}
+.rt-cond:hover{border-color:var(--brass);}
+.rt-cond.on{border-color:var(--gold);background:rgba(224,185,85,.12);}
+.rt-cond-m{flex:none;min-width:30px;text-align:center;padding:1px 4px;
+  font-family:var(--mono);font-size:10.5px;
+  border:1px solid var(--brass-dim);background:rgba(0,0,0,.35);}
+.rt-cond-m.up{color:var(--green);border-color:#2f6b47;}
+.rt-cond-m.dn{color:var(--bad);border-color:#6b2a20;}
+.rt-cond-w{flex:1;min-width:0;font-size:12.5px;line-height:1.35;color:var(--dim);}
+.rt-cond.on .rt-cond-w{color:var(--text);}
+.rt-cond-w b{color:var(--brass-lit);font-weight:400;}
+@media (pointer:coarse){.rt-cond{padding:10px 8px;}}
+
+.rt-rollbtn{width:100%;cursor:pointer;padding:11px;
+  font-family:var(--display);font-weight:700;font-size:12.5px;
+  letter-spacing:.18em;text-transform:uppercase;
+  color:#0d1b12;border:1px solid var(--green);
+  background:linear-gradient(180deg,var(--green),#4a9268);
+  clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px);
+  transition:filter .14s;}
+.rt-rollbtn:hover{filter:brightness(1.12);}
+.rt-rollbtn:active{filter:brightness(.9);}
+
+.rt-rolllog{list-style:none;margin:9px 0 0;padding:0;}
+.rt-rollr{display:flex;align-items:baseline;gap:9px;padding:5px 7px;margin-bottom:3px;
+  border-left:2px solid var(--brass-dim);background:rgba(0,0,0,.3);opacity:.62;}
+.rt-rollr.last{opacity:1;background:rgba(0,0,0,.5);}
+.rt-rollr.ok{border-left-color:var(--green);}
+.rt-rollr.no{border-left-color:var(--crimson);}
+.rt-rollr-d{font-family:var(--display);font-size:17px;font-weight:600;min-width:30px;
+  color:var(--bone);}
+.rt-rollr.ok .rt-rollr-d{color:var(--green);}
+.rt-rollr.no .rt-rollr-d{color:var(--bad);}
+.rt-rollr-v{font-family:var(--mono);font-size:9.5px;color:var(--dim);}
+.rt-rollr-o{flex:1;text-align:right;font-family:var(--mono);font-size:10px;
+  letter-spacing:.06em;color:var(--text);}
 
 /* the brass gauges — wounds, fate, profit factor */
 .rt-derived{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0;}
@@ -1063,16 +1146,18 @@ html,body{margin:0;padding:0;background:#070a08;}
 
 /* ------------------------- DOSSIER IDENTITY CARD ------------------------- */
 
-.rt-idcard{display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;}
+/* stretch, so the portrait column runs the full height of the block beside
+   it instead of leaving a gap under the icons on narrow screens */
+.rt-idcard{display:flex;gap:14px;align-items:stretch;margin-bottom:16px;}
 .rt-idtext{flex:1;min-width:0;}
 
 .rt-intro{margin-bottom:18px;}
-.rt-portrait-wrap{flex:none;width:92px;}
-.rt-portrait{position:relative;width:100%;
+.rt-portrait-wrap{flex:none;width:126px;display:flex;flex-direction:column;}
+.rt-portrait{position:relative;width:100%;flex:1;display:flex;flex-direction:column;
   padding:7px;border-radius:3px;
   background:linear-gradient(180deg,#6a5a36,#3a3120 22%,#272115 78%,#4a3f27);
   box-shadow:inset 0 0 0 1px rgba(201,169,97,.45),0 4px 14px -6px rgba(0,0,0,.9);}
-.rt-port-img{position:relative;height:104px;overflow:hidden;
+.rt-port-img{position:relative;flex:1;min-height:148px;overflow:hidden;
   display:grid;place-items:center;
   font-family:var(--display);font-size:42px;font-weight:700;
   color:var(--brass-lit);text-shadow:0 0 28px rgba(201,169,97,.45);
@@ -1080,8 +1165,14 @@ html,body{margin:0;padding:0;background:#070a08;}
   box-shadow:inset 0 0 26px rgba(0,0,0,.8),0 0 0 1px rgba(0,0,0,.6);}
 .rt-port-img img{position:absolute;inset:0;width:100%;height:100%;display:block;}
 
-.rt-port-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:9px;}
-.rt-port-actions .rt-opt{flex:1;text-align:center;padding:6px 8px;font-size:11px;}
+.rt-port-actions{display:flex;gap:6px;justify-content:center;margin-top:8px;}
+.rt-picon{flex:1;height:34px;display:grid;place-items:center;cursor:pointer;
+  border:1px solid var(--brass-dim);color:var(--gold-lit);background:rgba(6,12,8,.6);
+  transition:border-color .14s,color .14s;}
+.rt-picon svg{width:17px;height:17px;}
+.rt-picon:hover:not(:disabled){border-color:var(--brass-lit);color:var(--bone);}
+.rt-picon:disabled{opacity:.3;cursor:default;}
+@media (pointer:coarse){.rt-picon{height:44px;}}
 
 /* ---- portrait framer dialog ----
    A real <dialog> opened with showModal(): the top layer sits above every
@@ -1108,6 +1199,11 @@ html,body{margin:0;padding:0;background:#070a08;}
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .rt-roster-mt{display:block;font-family:var(--mono);font-size:10px;
   letter-spacing:.1em;color:var(--dim);margin-top:3px;}
+.rt-signed{display:flex;align-items:center;gap:9px;margin-top:14px;padding-top:12px;
+  border-top:1px solid var(--brass-dim);}
+.rt-signed-e{flex:1;min-width:0;font-family:var(--mono);font-size:10.5px;
+  letter-spacing:.06em;color:var(--dim);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .rt-framer-h{display:flex;align-items:center;gap:9px;margin-bottom:6px;}
 .rt-framer-t{font-family:var(--display);font-size:15px;font-weight:600;
   letter-spacing:.14em;text-transform:uppercase;color:var(--gold-lit);
@@ -1133,15 +1229,43 @@ html,body{margin:0;padding:0;background:#070a08;}
    portrait instead of a full-width bar with a separate row underneath */
 .rt-idstats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:stretch;}
 .rt-idstats .rt-der{flex:1 1 78px;min-width:78px;}
-.rt-wgauge{flex:2 1 150px;min-width:150px;display:flex;flex-direction:column;
-  justify-content:center;text-align:center;padding:9px 8px;
+.rt-wgauge{flex:3 1 240px;min-width:210px;display:flex;flex-direction:column;
+  justify-content:center;padding:9px 8px;
   border:1px solid var(--brass);
   background:linear-gradient(180deg,#241d0f,#0d1109);
   box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
-.rt-wbar{position:relative;height:20px;
+.rt-wrow{display:flex;align-items:stretch;gap:6px;}
+.rt-wbtn{flex:none;width:32px;cursor:pointer;font-size:17px;line-height:1;
+  border:1px solid var(--brass-dim);color:var(--gold-lit);background:rgba(6,12,8,.6);
+  transition:border-color .14s,color .14s;}
+.rt-wbtn:hover:not(:disabled){border-color:var(--brass-lit);color:var(--bone);}
+.rt-wbtn:disabled{opacity:.28;cursor:default;}
+.rt-wbar{flex:1;position:relative;height:30px;overflow:hidden;
   border:1px solid var(--brass-dim);background:#0a1209;
   box-shadow:inset 0 1px 4px rgba(0,0,0,.7);}
-.rt-wgauge .rt-der-k{margin-top:5px;}
+.rt-wbar > span{position:absolute;left:0;top:0;bottom:0;
+  background:linear-gradient(180deg,#3f9a63,#1d5c38);
+  box-shadow:inset 0 1px 0 rgba(160,230,185,.35);
+  transition:width .18s;}
+.rt-wgauge.low .rt-wbar > span{background:linear-gradient(180deg,#c08a2a,#7a5312);}
+.rt-wgauge.down .rt-wbar > span{background:linear-gradient(180deg,#a5321e,#5e1a0e);}
+.rt-wbar > b{position:absolute;inset:0;display:grid;place-items:center;
+  font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.12em;
+  color:#eaf6ee;text-shadow:0 1px 3px rgba(0,0,0,.9);}
+.rt-wfoot{display:flex;align-items:center;justify-content:space-between;
+  gap:8px;margin-top:6px;}
+.rt-wgauge.down .rt-der-k{color:var(--bad);opacity:1;}
+.rt-wmax{display:flex;align-items:center;gap:5px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--brass-lit);}
+.rt-wmaxb{width:20px;height:20px;line-height:1;cursor:pointer;font-size:12px;
+  border:1px solid var(--brass-dim);color:var(--gold-lit);background:rgba(6,12,8,.6);}
+.rt-wmaxb:hover:not(:disabled){border-color:var(--brass-lit);}
+.rt-wmaxb:disabled{opacity:.28;cursor:default;}
+@media (pointer:coarse){
+  .rt-wbtn{width:44px;}
+  .rt-wbar{height:44px;}
+  .rt-wmaxb{width:32px;height:32px;font-size:15px;}
+}
 .rt-wbar > span{position:absolute;inset:0;
   background:linear-gradient(180deg,#3f9a63,#1d5c38);
   box-shadow:inset 0 1px 0 rgba(160,230,185,.35);}
@@ -1157,7 +1281,61 @@ html,body{margin:0;padding:0;background:#070a08;}
    short section; multi-column fixed the voids but broke top alignment and
    scrambled reading order. A sheet reads better as a single document column. */
 .rt-dossier{max-width:880px;}
-.rt-sects{}
+
+/* ---- dossier tabs: raised parchment cartouches over one panel ---- */
+.rt-dtabs{display:flex;flex-wrap:wrap;gap:4px;position:relative;z-index:2;
+  margin-bottom:-1px;padding-left:2px;}
+.rt-dtab{flex:1 1 auto;display:flex;align-items:center;justify-content:center;
+  gap:7px;cursor:pointer;
+  padding:9px 14px;font-family:var(--display);font-weight:600;font-size:11.5px;
+  letter-spacing:.14em;text-transform:uppercase;color:#6f6047;
+  border:1px solid var(--brass);border-bottom-color:transparent;
+  border-radius:3px 3px 0 0;
+  background:linear-gradient(180deg,#c4b48c,#ab9b74);
+  transition:color .14s,background .14s;}
+.rt-dtab:hover{color:var(--parch-ink);}
+.rt-dtab.on{color:var(--parch-ink);
+  background:linear-gradient(180deg,var(--parch-hi),var(--parch));
+  box-shadow:0 -3px 10px -3px rgba(0,0,0,.35);}
+.rt-dtab-n{font-family:var(--mono);font-size:9px;letter-spacing:.06em;
+  padding:1px 5px;border-radius:2px;
+  background:rgba(58,47,24,.22);color:#5d4f2e;}
+.rt-dtab.on .rt-dtab-n{background:rgba(58,47,24,.3);}
+.rt-dpanel{border-radius:0 3px 3px 3px;min-height:190px;}
+
+/* two columns on wider screens, mirroring the sheet's skill list */
+.rt-2col{display:grid;grid-template-columns:1fr;gap:0 22px;align-items:start;}
+.rt-origin-k{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:#7a6534;margin-right:8px;}
+
+/* ---- add / remove on the sheet ---- */
+.rt-addbtn{width:100%;margin-top:12px;cursor:pointer;padding:10px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:#6d5726;border:1px dashed rgba(109,87,38,.6);background:rgba(120,98,54,.08);
+  transition:color .14s,border-color .14s,background .14s;}
+.rt-addbtn:hover{color:var(--parch-ink);border-color:#6d5726;background:rgba(120,98,54,.16);}
+@media (pointer:coarse){.rt-addbtn{padding:14px;}}
+
+.rt-rm{flex:none;width:22px;height:22px;line-height:1;cursor:pointer;font-size:15px;
+  color:#8a6f31;background:none;border:1px solid transparent;border-radius:2px;
+  transition:color .14s,border-color .14s;}
+.rt-rm:hover{color:var(--crimson);border-color:rgba(165,42,30,.5);}
+/* wrap is load-bearing: without it the expanded detail has no line to drop to
+   and overlaps the title */
+.rt-entry{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+.rt-entry .rt-entry-b{flex:1;min-width:0;}
+.rt-entry-d{flex-basis:100%;width:100%;}
+@media (pointer:coarse){.rt-rm{width:34px;height:34px;font-size:18px;}}
+
+.rt-addl{list-style:none;margin:12px 0 0;padding:0;max-height:46vh;overflow-y:auto;}
+.rt-addl > li{margin-bottom:4px;}
+.rt-addi{width:100%;text-align:left;cursor:pointer;padding:9px 11px;
+  font:inherit;font-size:14px;color:var(--text);
+  border:1px solid var(--brass-dim);background:rgba(6,12,8,.6);
+  transition:border-color .14s,color .14s;}
+.rt-addi:hover{border-color:var(--brass);color:var(--bone);}
+.rt-addi.custom{color:var(--gold-lit);border-color:var(--brass);border-style:dashed;}
+.rt-addnone{font-size:13.5px;color:var(--dim);font-style:italic;padding:8px 2px;}
 
 /* clickable glossary rows */
 .rt-entry{margin-bottom:3px;}
@@ -1172,7 +1350,14 @@ html,body{margin:0;padding:0;background:#070a08;}
 .rt-entry-b:hover .rt-entry-t{color:#000;text-decoration:underline dotted;}
 .rt-entry-t{flex:1;min-width:0;}
 .rt-entry-c{flex:none;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
-  color:#7a6534;border:1px solid rgba(109,87,38,.45);padding:1px 4px;}
+  color:#7a6534;border:1px solid rgba(109,87,38,.45);padding:1px 4px;
+  text-transform:uppercase;}
+/* characteristic tint, shared by the stat rows and the skill list. Solid
+   backgrounds so the chips read on dark glass and on parchment alike. */
+.rt-code[data-g="phys"],.rt-entry-c[data-g="phys"]{
+  background:#2c5a40;border-color:#417f5b;color:#bdecd0;}
+.rt-code[data-g="mind"],.rt-entry-c[data-g="mind"]{
+  background:#2a4763;border-color:#3f6689;color:#bcdcf2;}
 .rt-entry-x{flex:none;font-family:var(--mono);font-size:13px;color:#8a6f31;width:12px;}
 .rt-entry-d{margin:5px 0 9px;padding:8px 11px;font-size:13.5px;line-height:1.55;
   color:#3a3122;background:rgba(120,98,54,.12);border-left:2px solid #8a6f31;}
@@ -1184,9 +1369,6 @@ html,body{margin:0;padding:0;background:#070a08;}
 .rt-gear{padding-left:0;list-style:none;}
 .rt-gear-g{margin-bottom:2px;}
 .rt-gear-alts{list-style:none;margin:0;padding:0;}
-/* an "or" between alternatives for the same slot, indented under the group */
-.rt-gear-or{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;
-  text-transform:uppercase;color:#8a6f31;padding:1px 0 1px 10px;}
 .rt-gear-s{font-family:var(--mono);font-size:11px;line-height:1.5;
   color:#4a3f28;letter-spacing:.02em;}
 .rt-sect{position:relative;padding:15px 16px;margin-bottom:10px;break-inside:avoid;
@@ -1231,6 +1413,16 @@ html,body{margin:0;padding:0;background:#070a08;}
   opacity:.7;}
 .rt-nav-in{max-width:760px;margin:0 auto;display:flex;gap:8px;align-items:center;}
 .rt-nav .rt-btn{flex:1;padding:12px;}
+.rt-nav.slim .rt-nav-in{justify-content:flex-end;}
+.rt-editbtn{display:flex;align-items:center;gap:8px;cursor:pointer;padding:11px 18px;
+  font-family:var(--display);font-weight:600;font-size:12px;
+  letter-spacing:.14em;text-transform:uppercase;
+  color:var(--gold-lit);border:1px solid var(--brass);
+  background:linear-gradient(180deg,var(--panel-lit),var(--panel));
+  box-shadow:inset 0 1px 0 rgba(201,169,97,.15);
+  clip-path:polygon(9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%,0 9px);
+  transition:color .14s,border-color .14s,filter .14s;}
+.rt-editbtn:hover{border-color:var(--brass-lit);color:var(--bone);filter:brightness(1.2);}
 
 /* ---------------------------- VOX DRAWER ----------------------------
    Plasma cyan, picked off the concept art's reactor glow so the machine
@@ -1302,9 +1494,10 @@ html,body{margin:0;padding:0;background:#070a08;}
 }
 
 @media (min-width:700px){
+  .rt-2col{grid-template-columns:repeat(2,1fr);}
   .rt-idcard{gap:18px;}
-  .rt-portrait-wrap{width:118px;}
-  .rt-port-img{height:134px;font-size:54px;}
+  .rt-portrait-wrap{width:170px;}
+  .rt-port-img{min-height:200px;font-size:64px;}
   /* a name field has no business being 1100px wide */
   .rt-intro{max-width:520px;}
 }
@@ -1390,18 +1583,24 @@ function OptionCard({ item, selected, onSelect, choices, onChoose }) {
 
 /* ============================== THE APP ============================== */
 
-export default function RogueTraderBuilder() {
+export default function RogueTraderBuilder({ me }) {
   const [name, setName] = useState('');
   const [sel, setSel] = useState({});          // stepId -> optionId
   const [choices, setChoices] = useState({});  // choiceId -> option label
   const [rolls, setRolls] = useState(null);    // characteristic base values
   const [woundRoll, setWoundRoll] = useState(null);
+  const [damage, setDamage] = useState(0);       // wounds taken in play
+  const [woundBonus, setWoundBonus] = useState(0); // level-ups, Sound Constitution
   const [fateRoll, setFateRoll] = useState(null);
   const [stepIx, setStepIx] = useState(0);     // 0..5 origin, 6 characteristics, 7 dossier
   const [avatar, setAvatar] = useState(null);  // { src, framing }
+  // Anything gained after character creation — advances, loot, table rulings.
+  // Kept apart from `build` so the origin path stays the derived source of truth.
+  const [extras, setExtras] = useState(EMPTY_EXTRAS);
   const [roster, setRoster] = useState([]);
   const [charId, setCharId] = useState(null);  // null = unsaved sheet
   const [rosterOpen, setRosterOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [rosterErr, setRosterErr] = useState('');
   const [voxOpen, setVoxOpen] = useState(false);
   const [voxText, setVoxText] = useState('');
@@ -1409,32 +1608,37 @@ export default function RogueTraderBuilder() {
 
   const vox = useVoxEngine();
 
-  /* ---- persistence ---- */
+  /* ---- autosave of the in-progress sheet ----
+     Distinct from the roster: this is the unnamed sheet you are working on, so
+     a refresh does not lose it. Was written against window.storage, which does
+     not exist in a browser — every read and write threw into an empty catch,
+     so nothing was ever saved. */
   useEffect(() => {
-    (async () => {
-      try {
-        const res = await window.storage.get('rt-builder:current');
-        if (res && res.value) {
-          const s = JSON.parse(res.value);
-          setName(s.name || ''); setSel(s.sel || {}); setChoices(s.choices || {});
-          setRolls(s.rolls || null); setWoundRoll(s.woundRoll ?? null); setFateRoll(s.fateRoll ?? null);
-        }
-      } catch (e) { /* nothing saved yet */ }
-      setLoaded(true);
-    })();
+    try {
+      const raw = localStorage.getItem(AUTOSAVE_KEY);
+      if (raw) {
+        const s = JSON.parse(raw);
+        setName(s.name || ''); setSel(s.sel || {}); setChoices(s.choices || {});
+        setRolls(s.rolls || null); setWoundRoll(s.woundRoll ?? null); setFateRoll(s.fateRoll ?? null);
+        setDamage(s.damage || 0); setWoundBonus(s.woundBonus || 0);
+        setAvatar(s.avatar || null); setExtras(readExtras(s.extras));
+        if (typeof s.stepIx === 'number') setStepIx(s.stepIx);
+      }
+    } catch { /* nothing saved, or storage unavailable */ }
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => {
       try {
-        const p = window.storage.set('rt-builder:current',
-          JSON.stringify({ name, sel, choices, rolls, woundRoll, fateRoll }));
-        if (p && p.catch) p.catch(() => {});
-      } catch (e) { /* storage unavailable, build continues in memory */ }
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
+          name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras, stepIx
+        }));
+      } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
-  }, [name, sel, choices, rolls, woundRoll, fateRoll, loaded]);
+  }, [name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras, stepIx, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -1480,6 +1684,11 @@ export default function RogueTraderBuilder() {
   const tBonus = totals ? Math.floor(totals.t / 10) : null;
   const wounds = (tBonus != null && woundRoll != null)
     ? tBonus * 2 + woundRoll + build.bonusWounds : null;
+
+  // wounds is the origin-path maximum; ws carries the playable state on top
+  const ws = woundState(wounds, woundBonus, damage);
+  const takeDamage = (n) => setDamage((d) => applyDamage(d, n, ws ? ws.max : 0));
+  const changeMax = (n) => setWoundBonus((b) => adjustMax(wounds, b, n));
   const fatePoints = (fateRoll != null && home)
     ? (home.fateTable.find(([max]) => fateRoll <= max) || [0, 3])[1] + build.bonusFate : null;
   const profitFactor = 20 + build.profit;
@@ -1514,7 +1723,8 @@ export default function RogueTraderBuilder() {
 
   const clearAll = () => {
     setName(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
-    setAvatar(null);
+    setDamage(0); setWoundBonus(0);
+    setAvatar(null); setExtras(EMPTY_EXTRAS);
     setStepIx(0);
   };
 
@@ -1529,7 +1739,7 @@ export default function RogueTraderBuilder() {
       name: name || 'Unnamed adept',
       career: career ? career.name : null,
       updatedAt: Date.now(),
-      state: { name, sel, choices, rolls, woundRoll, fateRoll, avatar }
+      state: { name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras }
     });
     if (!writeRoster(next)) {
       setRosterErr('Could not save — browser storage is full. A large portrait is the usual cause.');
@@ -1550,7 +1760,10 @@ export default function RogueTraderBuilder() {
     setRolls(s.rolls || null);
     setWoundRoll(s.woundRoll ?? null);
     setFateRoll(s.fateRoll ?? null);
+    setDamage(s.damage || 0);
+    setWoundBonus(s.woundBonus || 0);
     setAvatar(s.avatar || null);
+    setExtras(readExtras(s.extras));
     setCharId(id);
     setRosterErr('');
     setStepIx(7);
@@ -1568,6 +1781,11 @@ export default function RogueTraderBuilder() {
 
   const newCharacter = () => { clearAll(); setCharId(null); setRosterErr(''); };
 
+  const addExtra = (kind, value) =>
+    setExtras((p) => (p[kind].includes(value) ? p : { ...p, [kind]: [...p[kind], value] }));
+  const removeExtra = (kind, value) =>
+    setExtras((p) => ({ ...p, [kind]: p[kind].filter((v) => v !== value) }));
+
   const stepDone = (i) => {
     if (i < 6) return !!sel[STEPS[i].id];
     if (i === 6) return !!rolls;
@@ -1575,6 +1793,10 @@ export default function RogueTraderBuilder() {
   };
 
   const stepLabels = [...STEPS.map((s) => s.label), 'Characteristics', 'Dossier'];
+
+  const onDossier = stepIx === 7;
+  // leaving the dossier re-arms the collapsed control bar for next time
+  useEffect(() => { if (!onDossier) setNavOpen(false); }, [onDossier]);
 
   /* ---------------------------- render ---------------------------- */
   return (
@@ -1637,8 +1859,8 @@ export default function RogueTraderBuilder() {
         {stepIx === 6 && (
           <CharacteristicsPane
             rolls={rolls} totals={totals} mods={build.mods}
-            rollAll={rollAll} rerollOne={rerollOne}
-            home={home} wounds={wounds} fatePoints={fatePoints}
+            rollAll={rollAll} rerollOne={rerollOne} picked={build.picked}
+            home={home} wounds={ws ? ws.max : null} fatePoints={fatePoints}
             profitFactor={profitFactor} tBonus={tBonus}
           />
         )}
@@ -1646,27 +1868,46 @@ export default function RogueTraderBuilder() {
         {stepIx === 7 && (
           <DossierPane
             name={name} build={build} totals={totals}
-            wounds={wounds} fatePoints={fatePoints} profitFactor={profitFactor}
+            ws={ws} onDamage={takeDamage} onAdjustMax={changeMax}
+            fatePoints={fatePoints} profitFactor={profitFactor}
             avatar={avatar} setAvatar={setAvatar}
-            onClear={clearAll}
+            extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
           />
         )}
       </div>
 
-      <nav className="rt-nav">
+      {/* On the dossier the controls collapse to a single Edit affordance so
+          the sheet reads clean; tapping it reveals Start over / Back / Save. */}
+      <nav className={'rt-nav' + (onDossier && !navOpen ? ' slim' : '')}>
         <div className="rt-nav-in">
-          <button className="rt-btn ghost" disabled={stepIx === 0}
-            onClick={() => setStepIx((i) => Math.max(0, i - 1))}>Back</button>
-          <button className="rt-btn" disabled={stepIx === 7}
-            onClick={() => setStepIx((i) => Math.min(7, i + 1))}>
-            {stepIx === 6 ? 'View dossier' : 'Next'}
-          </button>
+          {onDossier && !navOpen ? (
+            <button className="rt-editbtn" onClick={() => setNavOpen(true)}
+              aria-expanded="false" aria-label="Show sheet controls">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+              Edit
+            </button>
+          ) : (
+            <>
+              {onDossier && (
+                <button className="rt-btn ghost" onClick={clearAll}>Start over</button>
+              )}
+              <button className="rt-btn ghost" disabled={stepIx === 0}
+                onClick={() => setStepIx((i) => Math.max(0, i - 1))}>Back</button>
+              <button className="rt-btn"
+                onClick={() => (onDossier ? saveCharacter() : setStepIx((i) => Math.min(7, i + 1)))}>
+                {onDossier ? 'Save' : stepIx === 6 ? 'View dossier' : 'Next'}
+              </button>
+            </>
+          )}
         </div>
       </nav>
 
       {rosterOpen && (
         <RosterDialog
-          roster={roster} currentId={charId} err={rosterErr}
+          roster={roster} currentId={charId} err={rosterErr} me={me}
           onSave={saveCharacter} onOpen={openCharacter}
           onDelete={deleteCharacter} onNew={newCharacter}
           onClose={() => setRosterOpen(false)}
@@ -1685,88 +1926,28 @@ export default function RogueTraderBuilder() {
 }
 
 const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
+const AUTOSAVE_KEY = 'rt:current';
+const EMPTY_EXTRAS = { skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [] };
+// merges a stored extras object over the empty shape, so an older save that
+// predates a category still loads
+const readExtras = (v) => ({ ...EMPTY_EXTRAS, ...(v || {}) });
 
-/* ============================== GLOSSARY ==============================
-   Plain-language summaries of Rogue Trader (FFG, 2009) skills and talents,
-   written for this builder. They are a table reference, NOT the rulebook's
-   own wording — check the core book before ruling on an edge case.
-   Traits are not here: the data already stores them as "Name: effect". */
+/* --------------------------- EQUIPMENT ROWS ---------------------------
+   Data and parsing live in gear.js; these are just the rows. */
 
-const GLOSSARY = {
-  /* ---- skills ---- */
-  'Awareness': 'Notice what others miss — a hidden figure, a wrong sound, a detail out of place. Basic Skill, so anyone may attempt it.',
-  'Barter': 'Haggle. Talk a seller down or a buyer up on the price of goods.',
-  'Charm': 'Win people over with warmth, flattery and presence.',
-  'Command': 'Give orders that are actually obeyed, and rally those who follow you.',
-  'Commerce': 'Read markets, cargo values and trade routes — the working knowledge of a voidfaring merchant. Advanced Skill.',
-  'Common Lore': 'The everyday knowledge an insider of a given group or place would have. Advanced Skill, taken once per specialisation.',
-  'Concealment': 'Hide yourself or an object from sight.',
-  'Deceive': 'Lie well. Pass off a falsehood as truth, or a forgery as genuine.',
-  'Dodge': 'Throw yourself clear of an incoming attack or hazard, as a Reaction.',
-  'Evaluate': 'Judge what a thing is worth, and whether it is what it claims to be.',
-  'Forbidden Lore': 'Knowledge the Imperium would rather you did not hold — xenos, the warp, heresy. Advanced Skill; simply having it can draw the wrong attention.',
-  'Inquiry': 'Gather information by asking the right people the right questions.',
-  'Intimidate': 'Get compliance through threat, menace or sheer physical presence.',
-  'Invocation': 'Channel psychic power through rite and prayer. Advanced Skill.',
-  'Literacy': 'Read and write. Advanced Skill — and rarer than outsiders assume; most Imperial citizens are illiterate.',
-  'Logic': 'Reason a problem through, run the numbers, and spot what does not add up. Advanced Skill.',
-  'Medicae': 'Treat wounds, poison and disease. Advanced Skill.',
-  'Navigation': 'Plot a course and hold to it — across a surface, between stars, or through the warp. Advanced Skill.',
-  'One Skill of the GM’s choosing': 'A deliberate blank. Agree with your GM which skill this becomes before play.',
-  'Pilot': 'Fly or drive a craft or vehicle of the relevant class.',
-  'Psyniscience': 'Perceive the warp directly — psychic presences, and where reality has worn thin. Advanced Skill, for psykers.',
-  'Scholastic Lore': 'Formal, schooled learning of the sort taught rather than picked up. Advanced Skill.',
-  'Secret Tongue': 'A restricted cant used within one organisation, opaque to outsiders. Advanced Skill.',
-  'Sleight of Hand': 'Palm, plant, pick and conceal without being seen doing it.',
-  'Speak Language': 'Speak and understand a given tongue. Advanced Skill, taken once per language.',
-  'Survival': 'Stay alive away from civilisation — forage, shelter, read weather and track.',
-  'Tech-Use': 'Operate, repair and appease machines, with the proper rites observed. Advanced Skill.',
-  'Trade': 'A practical craft or profession, learned properly. Advanced Skill, taken once per trade.',
-
-  /* ---- talents ---- */
-  'Air of Authority': 'You carry the assumption of command, and can bend far more ordinary people to your will when you give orders.',
-  'Armour of Contempt': 'Practised disdain for the warp and its works hardens you against the corruption such things leave behind.',
-  'Basic Weapon Training': 'You are trained with that class of basic weapon, and no longer suffer the heavy penalty for firing it untrained.',
-  'Dark Soul': 'Something in you has already turned toward the dark, and it changes how further corruption takes hold.',
-  'Decadence': 'A lifetime of excess — you hold your drink and your indulgences far better than you should.',
-  'Die Hard': 'You do not go quietly. You resist being put down and keep acting when others would drop.',
-  'Enemy': 'A faction actively holds you in contempt. Expect worse treatment and active obstruction whenever they are involved.',
-  'Foresight': 'You think before you act, taking time to plan a task rather than committing to it blind.',
-  'Hardy': 'You heal as though lightly wounded even when badly hurt.',
-  'Heightened Senses': 'One of your senses is unusually sharp, sharpening perception through it.',
-  'Jaded': 'You have seen too much. Mundane horrors — corpses, carnage, the everyday brutality of the Imperium — no longer shake you.',
-  'Leap Up': 'You get back on your feet fast, standing without it costing you your action.',
-  'Light Sleeper': 'You wake instantly and completely, and are never caught truly asleep.',
-  'Logis Implant': 'A cogitator woven into your mind, feeding you probabilities and letting you read a situation with machine precision.',
-  'Melee Weapon Training': 'You are trained with that class of melee weapon, and no longer suffer the penalty for wielding it untrained.',
-  'Navigator': 'You bear the Navigator gene and its third eye, and can read the Astronomican to steer a ship through the warp.',
-  'Nerves of Steel': 'You hold together under fire, resisting being pinned down and shrugging off terror that would break others.',
-  'Paranoia': 'You assume threat everywhere, and are correspondingly hard to catch unready.',
-  'Peer': 'A faction thinks well of you. Dealing with its members goes markedly easier.',
-  'Pistol Weapon Training': 'You are trained with that class of pistol, and no longer suffer the penalty for firing it untrained.',
-  'Psy Rating 2': 'Your psychic strength, rated. It sets how much power you can safely push through a psychic discipline.',
-  'Pure Faith': 'Genuine, unfeigned belief in the Emperor — a shield against the warp that cynics cannot raise.',
-  'Quick Draw': 'You bring a weapon to hand fast enough that drawing it costs you nothing.',
-  'Resistance': 'You are unusually hard to affect by one particular kind of threat — cold, poison, psychic assault, or similar.',
-  'Rival': 'Someone with standing wants you to fail, and will spend effort to see it happen.',
-  'Sound Constitution': 'You are simply harder to kill. Each time you take this, you gain another Wound.',
-  'Talented': 'One skill is a natural gift, and you perform it markedly better than your training alone would explain.',
-  'Technical Knock': 'You can clear a jammed weapon with a well-placed strike, in the time it takes to swing.',
-  'Thrown Weapon Training': 'You are trained with that class of thrown weapon, and no longer suffer the penalty for using it untrained.',
-  'Unremarkable': 'Nothing about you sticks in the memory. Witnesses struggle to describe you and crowds swallow you whole.',
-  'Unshakeable Faith': 'Your belief holds where reason fails, letting you face the warp and its servants without breaking.',
-  'Weapon Training': 'You are trained with the named weapon class, and no longer suffer the penalty for using it untrained.',
-
-  /* ---- appears as a bare trait with no inline text ---- */
-  'Mechanicus Implants': 'The standard augmetics of the Machine Cult — the potentia coil and its attendant implants that mark you as more machine than most.'
-};
-
-function GearItem({ label }) {
+function GearItem({ label, onRemove }) {
   const [open, setOpen] = useState(false);
   const { entry, quality } = gearInfo(label);
   const title = label.charAt(0).toUpperCase() + label.slice(1);
 
-  if (!entry) return <li className="rt-entry"><span className="rt-entry-t">{title}</span></li>;
+  if (!entry) {
+    return (
+      <li className="rt-entry">
+        <span className="rt-entry-t">{title}</span>
+        {onRemove && <RemoveBtn label={title} onRemove={onRemove} />}
+      </li>
+    );
+  }
 
   return (
     <li className={'rt-entry' + (open ? ' open' : '')}>
@@ -1775,6 +1956,7 @@ function GearItem({ label }) {
         {entry.kind && <span className="rt-entry-c">{entry.kind}</span>}
         <span className="rt-entry-x" aria-hidden="true">{open ? '−' : '+'}</span>
       </button>
+      {onRemove && <RemoveBtn label={title} onRemove={onRemove} />}
       {open && (
         <div className="rt-entry-d">
           {entry.stats && <p className="rt-gear-s">{entry.stats}</p>}
@@ -1786,19 +1968,28 @@ function GearItem({ label }) {
   );
 }
 
-function GearList({ gear }) {
-  const groups = parseGear(gear);
+function GearList({ gear, extra = [], hidden = [], onRemove, onDrop }) {
+  // issued kit can be lost, sold or spent, so it is removable too — dropped
+  // labels are remembered rather than mutating the career's gear string
+  const groups = parseGear(gear)
+    .map((alts) => alts.filter((l) => !hidden.includes(l)))
+    .filter((alts) => alts.length);
+
   return (
     <ul className="rt-list rt-gear">
       {groups.map((alts, i) => (
         <li key={i} className="rt-gear-g">
           <ul className="rt-gear-alts">
             {alts.map((label, j) => (
-              <React.Fragment key={j}>
-                {j > 0 && <li className="rt-gear-or">or</li>}
-                <GearItem label={label} />
-              </React.Fragment>
+              <GearItem key={j} label={label} onRemove={() => onDrop(label)} />
             ))}
+          </ul>
+        </li>
+      ))}
+      {extra.map((label) => (
+        <li key={'x' + label} className="rt-gear-g">
+          <ul className="rt-gear-alts">
+            <GearItem label={label} onRemove={() => onRemove(label)} />
           </ul>
         </li>
       ))}
@@ -1806,31 +1997,15 @@ function GearList({ gear }) {
   );
 }
 
-const CHAR_TAG = /\s*\((WS|BS|S|T|Ag|Int|Per|WP|Fel)\)\s*$/;
-
-/* Splits a list entry into something explainable.
-   "Caves of Steel: Tech-Use counts as a Basic Skill." -> title + its own body
-   "Common Lore (Machine Cult, Tech) (Int)" -> Common Lore, spec, Int
-   Returns body:null when nothing is known, so the caller can render it flat. */
-function explainEntry(entry) {
-  const colon = entry.indexOf(': ');
-  if (colon > 0) {
-    return { title: entry.slice(0, colon), body: entry.slice(colon + 2), char: null, spec: null };
-  }
-  const charMatch = entry.match(CHAR_TAG);
-  const stripped = entry.replace(CHAR_TAG, '').trim();
-  const paren = stripped.match(/^([^(]+)\((.*)\)$/);
-  const baseName = (paren ? paren[1] : stripped).trim();
-  return {
-    title: stripped,
-    body: GLOSSARY[baseName] || null,
-    char: charMatch ? charMatch[1] : null,
-    spec: paren ? paren[2].trim() : null
-  };
+/* One list row. Clickable only when there is something to say. */
+function RemoveBtn({ label, onRemove }) {
+  return (
+    <button className="rt-rm" onClick={onRemove} title={'Remove ' + label}
+      aria-label={'Remove ' + label}>&times;</button>
+  );
 }
 
-/* One list row. Clickable only when there is something to say. */
-function Entry({ text }) {
+function Entry({ text, onRemove }) {
   const [open, setOpen] = useState(false);
   const { title, body, char, spec } = explainEntry(text);
 
@@ -1838,7 +2013,8 @@ function Entry({ text }) {
     return (
       <li className="rt-entry">
         <span className="rt-entry-t">{title}</span>
-        {char && <span className="rt-entry-c">{char}</span>}
+        {char && <span className="rt-entry-c" data-g={charGroup(char)}>{char}</span>}
+        {onRemove && <RemoveBtn label={title} onRemove={onRemove} />}
       </li>
     );
   }
@@ -1846,9 +2022,10 @@ function Entry({ text }) {
     <li className={'rt-entry' + (open ? ' open' : '')}>
       <button className="rt-entry-b" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <span className="rt-entry-t">{title}</span>
-        {char && <span className="rt-entry-c">{char}</span>}
+        {char && <span className="rt-entry-c" data-g={charGroup(char)}>{char}</span>}
         <span className="rt-entry-x" aria-hidden="true">{open ? '−' : '+'}</span>
       </button>
+      {onRemove && <RemoveBtn label={title} onRemove={onRemove} />}
       {open && (
         <div className="rt-entry-d">
           {spec && <p className="rt-entry-s">{spec}</p>}
@@ -1934,7 +2111,16 @@ function AvatarFramer({ src, framing, setFraming, onClose }) {
    Save, reopen, delete, or start fresh. Same shape as CharacterList in the
    reference repos with the API half removed — see roster.js. */
 
-function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose, err }) {
+async function signOut() {
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch {
+    // no /api under plain `vite dev` — reloading re-stubs the dev user
+  }
+  window.location.reload();
+}
+
+function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose, err, me }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -1973,6 +2159,13 @@ function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onCl
         <button className="rt-btn ghost" onClick={() => { onNew(); close(); }}>New character</button>
         <button className="rt-btn" onClick={onSave}>Save current</button>
       </div>
+
+      {me && (
+        <div className="rt-signed">
+          <span className="rt-signed-e">{me.email}</span>
+          <button className="rt-opt" onClick={signOut}>Sign out</button>
+        </div>
+      )}
     </dialog>
   );
 }
@@ -2014,14 +2207,32 @@ function PortraitPlate({ name, profitFactor, avatar, setAvatar }) {
       </div>
 
       <div className="rt-port-actions">
-        <button className="rt-opt" onClick={() => fileRef.current && fileRef.current.click()}>
-          {avatar && avatar.src ? 'Replace' : 'Upload'}
+        <button className="rt-picon" title={avatar && avatar.src ? 'Replace image' : 'Upload image'}
+          aria-label={avatar && avatar.src ? 'Replace image' : 'Upload image'}
+          onClick={() => fileRef.current && fileRef.current.click()}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" />
+          </svg>
         </button>
-        {avatar && avatar.src && (
-          <button className="rt-opt" onClick={() => setFramerOpen(true)}>Frame</button>
-        )}
+        <button className="rt-picon" title="Frame image" aria-label="Frame image"
+          disabled={!avatar || !avatar.src} onClick={() => setFramerOpen(true)}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M7 2v14a1 1 0 0 0 1 1h14" /><path d="M2 7h14a1 1 0 0 1 1 1v14" />
+          </svg>
+        </button>
         {/* ponytail: generation is a server call (see generate-avatar.js in
-            shadow-run_builder). Upload is the whole local half of it. */}
+            shadow-run_builder). Present but inert until that endpoint exists. */}
+        <button className="rt-picon" disabled
+          title="Generate a portrait — needs the generate-avatar endpoint, which is not built yet"
+          aria-label="Generate portrait (unavailable)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3.5 13.7 9l5.5 1.7-5.5 1.7L12 18l-1.7-5.6L4.8 10.7 10.3 9Z" />
+            <path d="M18.5 3v3M20 4.5h-3" />
+          </svg>
+        </button>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
       </div>
       {err && <div className="rt-warn" style={{ marginTop: 8 }}>{err}</div>}
@@ -2038,20 +2249,157 @@ function PortraitPlate({ name, profitFactor, avatar, setAvatar }) {
   );
 }
 
+/* ------------------------------ ADD DIALOG ------------------------------
+   Pick from the catalogue for this tab, or type an entry of your own. Tabs
+   with no catalogue (traits, notes) are free text only. */
+
+function AddDialog({ title, options, existing, onAdd, onClose }) {
+  const dialogRef = useRef(null);
+  const [q, setQ] = useState('');
+
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  const held = new Set(existing.map((s) => String(s).toLowerCase()));
+  const needle = q.trim().toLowerCase();
+  const matches = options
+    .filter((o) => !held.has(o.toLowerCase()))
+    .filter((o) => !needle || o.toLowerCase().includes(needle))
+    .slice(0, 80);
+  const custom = q.trim();
+  const exact = options.some((o) => o.toLowerCase() === custom.toLowerCase());
+
+  const add = (v) => { onAdd(v); close(); };
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer" onClose={onClose} aria-label={title}>
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">{title}</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+
+      <input className="rt-field" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+        placeholder={options.length ? 'Search, or type your own' : 'Type the entry'} />
+
+      <ul className="rt-addl">
+        {custom && !exact && (
+          <li>
+            <button className="rt-addi custom" onClick={() => add(custom)}>
+              Add “{custom}” as written
+            </button>
+          </li>
+        )}
+        {matches.map((o) => (
+          <li key={o}><button className="rt-addi" onClick={() => add(o)}>{o}</button></li>
+        ))}
+        {!matches.length && !custom && (
+          <li className="rt-addnone">
+            {options.length ? 'Everything in the catalogue is already on the sheet.'
+              : 'Type above to add an entry.'}
+          </li>
+        )}
+      </ul>
+    </dialog>
+  );
+}
+
+/* ------------------------------ TEST ROLLER ------------------------------
+   Opens under the characteristic it belongs to. Difficulty sets the modifier,
+   the target updates live, and the log keeps the last few rolls so a run of
+   tests stays on screen. */
+
+const ROLL_LOG_MAX = 6;
+
+function TestRoller({ charName, base, history, onRoll, conditionals = [] }) {
+  const [mod, setMod] = useState(0);
+  const [on, setOn] = useState([]);   // indexes of applied conditionals
+
+  const toggle = (i) => setOn((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i]));
+  const condMod = on.reduce((n, i) => n + (conditionals[i] ? conditionals[i].mod : 0), 0);
+  const total = mod + condMod;
+  const target = base + total;
+
+  return (
+    <div className="rt-roller">
+      <div className="rt-roller-h">
+        <span className="rt-roller-t">{charName} test</span>
+        <span className="rt-roller-tg">TARGET <b>{target}</b></span>
+      </div>
+
+      <div className="rt-diffs">
+        {DIFFICULTIES.map((d) => (
+          <button key={d.label} className={'rt-diff' + (mod === d.mod ? ' on' : '')}
+            onClick={() => setMod(d.mod)} aria-pressed={mod === d.mod}>
+            {d.label}
+            <span>{d.mod > 0 ? '+' : ''}{d.mod}</span>
+          </button>
+        ))}
+      </div>
+
+      {conditionals.length > 0 && (
+        <div className="rt-conds">
+          <div className="rt-conds-h">Applies to this test?</div>
+          {conditionals.map((c, i) => (
+            <button key={i} className={'rt-cond' + (on.includes(i) ? ' on' : '')}
+              onClick={() => toggle(i)} aria-pressed={on.includes(i)}>
+              <span className={'rt-cond-m' + (c.mod > 0 ? ' up' : ' dn')}>
+                {c.mod > 0 ? '+' : ''}{c.mod}
+              </span>
+              <span className="rt-cond-w"><b>{c.from}</b> — {c.when}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <button className="rt-rollbtn" onClick={() => onRoll(resolveTest(base, total, roll1d100()))}>
+        Roll d100
+      </button>
+
+      {history.length > 0 && (
+        <ul className="rt-rolllog">
+          {history.map((r, i) => (
+            <li key={r.id} className={'rt-rollr' + (r.success ? ' ok' : ' no') + (i === 0 ? ' last' : '')}>
+              <b className="rt-rollr-d">{r.roll}</b>
+              <span className="rt-rollr-v">vs {r.target}</span>
+              <span className="rt-rollr-o">
+                {r.success ? 'Success' : 'Failure'}
+                {r.degrees > 0 && ` · ${r.degrees} ${r.success ? 'DoS' : 'DoF'}`}
+                {r.automatic && ' · automatic'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------ CHARACTERISTIC SHEET ------------------------
    Parchment row sheet after the CRPG: code chip, full name, roll, total,
    modifier delta, bonus. onReroll is optional — the dossier renders the
    same sheet read-only rather than keeping a second copy of this markup. */
 
-function StatSheet({ totals, mods, rolls, onReroll }) {
+function StatSheet({ totals, mods, rolls, onReroll, picked }) {
+  const [rollFor, setRollFor] = useState(null);  // characteristic key, or null
+  const [log, setLog] = useState({});            // key -> most recent results
+
+  const record = (k, result) => setLog((prev) => ({
+    ...prev,
+    [k]: [{ ...result, id: newId() }, ...(prev[k] || [])].slice(0, ROLL_LOG_MAX)
+  }));
+
   return (
     <div className="rt-sheet rt-screen">
       <div className="rt-sheet-h">Characteristics</div>
       {CHAR_KEYS.map((k) => {
         const m = (mods && mods[k]) || 0;
         return (
-          <div className="rt-row" key={k}>
-            <span className="rt-code">{CHAR_SHORT[k]}</span>
+          <React.Fragment key={k}>
+          <div className="rt-row">
+            <span className="rt-code" data-g={charGroup(k)}>{CHAR_SHORT[k]}</span>
             <span className="rt-cname">{CHAR_NAMES[k]}</span>
             {rolls && <span className="rt-croll">{rolls[k]}</span>}
             <span className="rt-cval">{totals[k]}</span>
@@ -2059,11 +2407,33 @@ function StatSheet({ totals, mods, rolls, onReroll }) {
               {m !== 0 && (m > 0 ? '▲+' : '▼') + m}
             </span>
             <span className="rt-cbon">{Math.floor(totals[k] / 10)}</span>
+            <button className={'rt-dice' + (rollFor === k ? ' on' : '')}
+              onClick={() => setRollFor(rollFor === k ? null : k)}
+              aria-expanded={rollFor === k}
+              aria-label={'Roll a ' + CHAR_NAMES[k] + ' test'} title="Roll a test">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+                strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3.5" y="3.5" width="17" height="17" rx="3.5" />
+                <circle cx="8.6" cy="8.6" r="1.35" fill="currentColor" stroke="none" />
+                <circle cx="15.4" cy="15.4" r="1.35" fill="currentColor" stroke="none" />
+                <circle cx="12" cy="12" r="1.35" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
             {onReroll && (
               <button className="rt-reroll" onClick={() => onReroll(k)}
                 aria-label={'Reroll ' + CHAR_NAMES[k]} title="Reroll">{'⟳'}</button>
             )}
           </div>
+          {rollFor === k && (
+            <TestRoller
+              charName={CHAR_NAMES[k]}
+              base={totals[k]}
+              history={log[k] || []}
+              onRoll={(r) => record(k, r)}
+              conditionals={conditionalsFor(picked, k)}
+            />
+          )}
+          </React.Fragment>
         );
       })}
     </div>
@@ -2117,7 +2487,7 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
 
 /* ----------------------- CHARACTERISTICS PANE ----------------------- */
 
-function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wounds, fatePoints, profitFactor, tBonus }) {
+function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wounds, fatePoints, profitFactor, tBonus, picked }) {
   return (
     <div>
       <h2 className="rt-h2">Characteristics</h2>
@@ -2137,7 +2507,7 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
 
       {rolls && totals && (
         <>
-          <StatSheet totals={totals} mods={mods} rolls={rolls} onReroll={rerollOne} />
+          <StatSheet totals={totals} mods={mods} rolls={rolls} onReroll={rerollOne} picked={picked} />
 
           <div className="rt-derived">
             <div className="rt-der"><div className="rt-der-v">{wounds ?? '\u2014'}</div><div className="rt-der-k">WOUNDS</div></div>
@@ -2162,12 +2532,53 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
 
 /* ---------------------------- DOSSIER PANE ---------------------------- */
 
-function DossierPane({ name, build, totals, wounds, fatePoints, profitFactor, avatar, setAvatar, onClear }) {
+const DOSSIER_TABS = [
+  { id: 'origin', label: 'Origin' },
+  { id: 'skills', label: 'Skills' },
+  { id: 'talents', label: 'Talents' },
+  { id: 'traits', label: 'Traits' },
+  { id: 'gear', label: 'Gear' },
+  { id: 'notes', label: 'Notes' }
+];
+
+const ADD_SOURCES = {
+  skills:  { title: 'Add a skill',    options: Object.keys(SKILLS) },
+  talents: { title: 'Add a talent',   options: Object.keys(TALENTS) },
+  traits:  { title: 'Add a trait',    options: [] },
+  gear:    { title: 'Add equipment',  options: Object.keys(GEAR) },
+  notes:   { title: 'Add a note',     options: [] }
+};
+
+function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
+  avatar, setAvatar, extras, onAddExtra, onRemoveExtra }) {
+  const [tab, setTab] = useState('skills');
+  const [adding, setAdding] = useState(null);
   const career = build.picked.career;
   // STEPS includes career, so build already folded its skills/talents/traits in
   // (and deduped them). Concatenating career.* again is what duplicated every
   // entry in these lists.
-  const { skills: allSkills, talents: allTalents, traits: allTraits } = build;
+  // origin-path entries first, then anything gained after creation
+  const allSkills = [...build.skills, ...extras.skills];
+  const allTalents = [...build.talents, ...extras.talents];
+  const allTraits = [...build.traits, ...extras.traits];
+  const allNotes = [...build.notes, ...extras.notes];
+  const gearCount =
+    (career ? parseGear(career.gear).flat().filter((l) => !extras.gearDropped.includes(l)).length : 0)
+    + extras.gear.length;
+
+  const listFor = (kind) => ({
+    skills: allSkills, talents: allTalents, traits: allTraits,
+    gear: extras.gear, notes: allNotes
+  }[kind] || []);
+
+  const counts = {
+    origin: STEPS.filter((s) => build.picked[s.id]).length,
+    skills: allSkills.length,
+    talents: allTalents.length,
+    traits: allTraits.length,
+    gear: gearCount,
+    notes: allNotes.length
+  };
 
   return (
     <div className="rt-dossier">
@@ -2183,12 +2594,27 @@ function DossierPane({ name, build, totals, wounds, fatePoints, profitFactor, av
           {/* The wounds bar used to run the full width with the gauges in a
               separate row below it. One strip, no dead space. */}
           <div className="rt-idstats">
-            <div className="rt-wgauge">
-              <div className="rt-wbar">
-                <span />
-                <b>{wounds ?? '\u2014'}{wounds != null ? ' / ' + wounds : ''}</b>
+            <div className={'rt-wgauge' + (ws && ws.down ? ' down' : ws && ws.current / ws.max <= 0.34 ? ' low' : '')}>
+              <div className="rt-wrow">
+                <button className="rt-wbtn" onClick={() => onDamage(1)}
+                  disabled={!ws || ws.down} aria-label="Take one wound">{'\u2212'}</button>
+                <div className="rt-wbar">
+                  <span style={{ width: ws ? (ws.current / ws.max) * 100 + '%' : '0%' }} />
+                  <b>{ws ? ws.current + ' / ' + ws.max : '\u2014'}</b>
+                </div>
+                <button className="rt-wbtn" onClick={() => onDamage(-1)}
+                  disabled={!ws || ws.taken === 0} aria-label="Heal one wound">+</button>
               </div>
-              <div className="rt-der-k">WOUNDS</div>
+              <div className="rt-wfoot">
+                <span className="rt-der-k">{ws && ws.down ? 'DOWN' : 'WOUNDS'}</span>
+                <span className="rt-wmax">
+                  <button className="rt-wmaxb" onClick={() => onAdjustMax(-1)}
+                    disabled={!ws} aria-label="Lower maximum wounds">{'\u2212'}</button>
+                  MAX
+                  <button className="rt-wmaxb" onClick={() => onAdjustMax(1)}
+                    disabled={!ws} aria-label="Raise maximum wounds">+</button>
+                </span>
+              </div>
             </div>
             <div className="rt-der"><div className="rt-der-v">{fatePoints ?? '\u2014'}</div><div className="rt-der-k">FATE</div></div>
             <div className="rt-der"><div className="rt-der-v">{profitFactor}</div><div className="rt-der-k">PROFIT</div></div>
@@ -2198,60 +2624,114 @@ function DossierPane({ name, build, totals, wounds, fatePoints, profitFactor, av
       </div>
 
       {totals && (
-        <StatSheet totals={totals} mods={build.mods} />
+        <StatSheet totals={totals} mods={build.mods} picked={build.picked} />
       )}
 
-      <div className="rt-sects">
-      <div className="rt-sect">
-        <div className="rt-sect-h">ORIGIN PATH</div>
-        {STEPS.every((s) => !build.picked[s.id])
-          ? <p className="rt-empty">Nothing chosen yet. Start at Home World.</p>
-          : <ul className="rt-list">
-            {STEPS.map((s) => build.picked[s.id] && (
-              <li key={s.id}>{s.label}: {build.picked[s.id].name}</li>
-            ))}
-          </ul>}
+      {/* Tabbed lower panel, after the CRPG sheet: one parchment panel with
+          raised cartouche tabs, rather than six stacked sections. */}
+      <div className="rt-dtabs" role="tablist">
+        {DOSSIER_TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            className={'rt-dtab' + (tab === t.id ? ' on' : '')}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+            <span className="rt-dtab-n">{counts[t.id]}</span>
+          </button>
+        ))}
       </div>
 
-      <div className="rt-sect">
-        <div className="rt-sect-h">SKILLS</div>
-        {allSkills.length
-          ? <ul className="rt-list">{allSkills.map((s, i) => <Entry key={i} text={s} />)}</ul>
-          : <p className="rt-empty">Choose a career to fill this out.</p>}
+      <div className="rt-sect rt-dpanel" role="tabpanel">
+        {tab === 'origin' && (
+          STEPS.every((s) => !build.picked[s.id])
+            ? <p className="rt-empty">Nothing chosen yet. Start at Home World.</p>
+            : <ul className="rt-list rt-2col">
+              {STEPS.map((s) => build.picked[s.id] && (
+                <li key={s.id} className="rt-entry">
+                  <span className="rt-origin-k">{s.label}</span>
+                  <span className="rt-entry-t">{build.picked[s.id].name}</span>
+                </li>
+              ))}
+            </ul>
+        )}
+
+        {tab === 'skills' && (
+          allSkills.length
+            ? <ul className="rt-list rt-2col">
+              {allSkills.map((v, i) => (
+                <Entry key={i} text={v}
+                  onRemove={extras.skills.includes(v) ? () => onRemoveExtra('skills', v) : undefined} />
+              ))}
+            </ul>
+            : <p className="rt-empty">Choose a career, or add skills gained in play.</p>
+        )}
+
+        {tab === 'talents' && (
+          allTalents.length
+            ? <ul className="rt-list rt-2col">
+              {allTalents.map((v, i) => (
+                <Entry key={i} text={v}
+                  onRemove={extras.talents.includes(v) ? () => onRemoveExtra('talents', v) : undefined} />
+              ))}
+            </ul>
+            : <p className="rt-empty">Nothing yet. Advances go here as you take them.</p>
+        )}
+
+        {tab === 'traits' && (
+          allTraits.length
+            ? <ul className="rt-list">
+              {allTraits.map((v, i) => (
+                <Entry key={i} text={v}
+                  onRemove={extras.traits.includes(v) ? () => onRemoveExtra('traits', v) : undefined} />
+              ))}
+            </ul>
+            : <p className="rt-empty">No traits or quirks from this origin path.</p>
+        )}
+
+        {tab === 'gear' && (
+          career || extras.gear.length
+            ? <GearList gear={career ? career.gear : ''} extra={extras.gear}
+                hidden={extras.gearDropped}
+                onRemove={(v) => onRemoveExtra('gear', v)}
+                onDrop={(v) => onAddExtra('gearDropped', v)} />
+            : <p className="rt-empty">Choose a career to be issued equipment, or add your own.</p>
+        )}
+
+        {tab === 'notes' && (
+          allNotes.length
+            ? <ul className="rt-list">
+              {allNotes.map((v, i) => (
+                <li key={i} className="rt-entry">
+                  <span className="rt-entry-t">{v}</span>
+                  {extras.notes.includes(v) && (
+                    <RemoveBtn label={v} onRemove={() => onRemoveExtra('notes', v)} />
+                  )}
+                </li>
+              ))}
+            </ul>
+            : <p className="rt-empty">Nothing outstanding. Everything resolved on the sheet.</p>
+        )}
+
+        {ADD_SOURCES[tab] && (
+          <button className="rt-addbtn" onClick={() => setAdding(tab)}>
+            + {ADD_SOURCES[tab].title}
+          </button>
+        )}
       </div>
 
-      <div className="rt-sect">
-        <div className="rt-sect-h">TALENTS</div>
-        {allTalents.length
-          ? <ul className="rt-list">{allTalents.map((t, i) => <Entry key={i} text={t} />)}</ul>
-          : <p className="rt-empty">Nothing yet.</p>}
-      </div>
-
-      {allTraits.length > 0 && (
-        <div className="rt-sect">
-          <div className="rt-sect-h">TRAITS AND QUIRKS</div>
-          <ul className="rt-list">{allTraits.map((t, i) => <Entry key={i} text={t} />)}</ul>
-        </div>
+      {adding && (
+        <AddDialog
+          title={ADD_SOURCES[adding].title}
+          options={ADD_SOURCES[adding].options}
+          existing={listFor(adding)}
+          onAdd={(v) => onAddExtra(adding, v)}
+          onClose={() => setAdding(null)}
+        />
       )}
 
-      {build.notes.length > 0 && (
-        <div className="rt-sect">
-          <div className="rt-sect-h">TO RESOLVE AT THE TABLE</div>
-          <ul className="rt-list">{build.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
-        </div>
-      )}
-
-      {career && (
-        <div className="rt-sect">
-          <div className="rt-sect-h">STARTING GEAR</div>
-          <GearList gear={career.gear} />
-        </div>
-      )}
-      </div>
-
-      <div className="rt-btnrow">
-        <button className="rt-btn ghost" onClick={onClear}>Start over</button>
-      </div>
     </div>
   );
 }

@@ -99,6 +99,40 @@ unverified, so an unverified account cannot claim your `OWNER_EMAIL`.
 
 Mirror them into `.env.local` for `vercel dev`. See [.env.example](.env.example).
 
+## Sign-in errors and what they mean
+
+**`Error 400: invalid_request` — "Missing required parameter: client_id"**
+`GOOGLE_CLIENT_ID` is empty or absent *on that deployment*. Google reports it as
+missing rather than invalid because an empty value produces `client_id=` with
+nothing after it. Two causes, both common:
+
+- Vercel environment variables are **per-environment**. Adding them to
+  Development only leaves Production blank. Check all three boxes.
+- `vercel env pull` writes names it has no value for as `""`, and an empty
+  string is not a value.
+
+The app now returns a plain 500 naming the missing variable instead of
+forwarding you to Google with a blank parameter, so this should be self-evident
+next time.
+
+**`Error 400: redirect_uri_mismatch`** The URI on the OAuth client must match
+what the app sends, which is the request host plus `/api/auth/callback` — the
+full path, not just the origin:
+
+```
+https://roguetrader-builder.vercel.app/api/auth/callback
+```
+
+Note Vercel turns the underscore in `roguetrader_builder` into a hyphen for the
+domain. A bare origin with no path is the usual mistake.
+
+**`403 This app is not open for signups yet.`** Your Google address does not
+match `OWNER_EMAIL`. That is the gate working.
+
+**`500` mentioning Redis** Neither the `UPSTASH_` nor the `KV_REST_API_` pair
+resolved to a non-empty value. See `redisConfigFromEnv()` in
+[lib/storage.js](lib/storage.js).
+
 ## Gotchas
 
 - **Preview deployments cannot sign in.** The redirect URI is derived from the

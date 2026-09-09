@@ -19,15 +19,42 @@ function origin(req) {
 
 const redirectUri = (req) => `${origin(req)}/api/auth/callback`;
 
+// `vercel env pull` writes variables it has no value for as "" rather than
+// omitting them, and Vercel env vars are per-environment — so a name can be
+// present on the deployment and still be blank. An empty client_id sends the
+// user to Google with `client_id=`, which it reports as "Missing required
+// parameter: client_id" — an error that points at Google rather than at the
+// deployment. Treat empty as missing and say so plainly instead.
+const envValue = (name) => {
+  const v = process.env[name];
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+};
+
+function missingEnv(res, ...names) {
+  const missing = names.filter((n) => !envValue(n));
+  if (!missing.length) return false;
+  console.error("[auth] not configured, missing/empty:", missing.join(", "));
+  res
+    .status(500)
+    .send(
+      "Sign-in is not configured on this deployment: " +
+        missing.join(", ") +
+        " is missing or empty. Set it in the Vercel project's environment " +
+        "variables for this environment, then redeploy."
+    );
+  return true;
+}
+
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   const { action } = req.query;
 
   if (action === "google") {
+    if (missingEnv(res, "GOOGLE_CLIENT_ID")) return;
     const state = randomToken();
     setCookie(res, "gstate", state, 600);
     const url = new URL(GOOGLE_AUTH);
-    url.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID);
+    url.searchParams.set("client_id", envValue("GOOGLE_CLIENT_ID"));
     url.searchParams.set("redirect_uri", redirectUri(req));
     url.searchParams.set("response_type", "code");
     url.searchParams.set("scope", "openid email profile");
@@ -37,6 +64,7 @@ export default async function handler(req, res) {
   }
 
   if (action === "callback") {
+    if (missingEnv(res, "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET")) return;
     const { code, state } = req.query;
     // CSRF: the state we minted is in an HttpOnly cookie the attacker cannot read.
     if (!code || !state || state !== req.cookies?.gstate) {
@@ -49,8 +77,8 @@ export default async function handler(req, res) {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         code,
-        client_id: process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        client_id: envValue("GOOGLE_CLIENT_ID"),
+        client_secret: envValue("GOOGLE_CLIENT_SECRET"),
         redirect_uri: redirectUri(req),
         grant_type: "authorization_code",
       }),
@@ -73,8 +101,10 @@ export default async function handler(req, res) {
       return res.status(403).send("That Google account has no verified email address.");
     }
 
-    // Single-owner gate. Unset OWNER_EMAIL and any Google account may sign in.
-    if (process.env.OWNER_EMAIL && email !== process.env.OWNER_EMAIL) {
+    // Single-owner gate. Unset or blank OWNER_EMAIL lets any Google account in,
+    // which is why envValue treats "" as absent rather than as a value to match.
+    const owner = envValue("OWNER_EMAIL");
+    if (owner && email !== owner) {
       return res.status(403).send("This app is not open for signups yet.");
     }
 

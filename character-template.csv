@@ -1,0 +1,66 @@
+Field,Value,Notes / accepted values
+#,,Rows beginning # are ignored on import. One tab per character.
+# — IDENTITY —,,
+Name,Magos Linus-Theta 7,Free text.
+Portrait URL,,"Optional. Direct link to an image, or leave blank."
+# — ORIGIN PATH —,,Must match one of the listed values exactly.
+Home World,Forge World,Death World | Void Born | Forge World | Hive World | Imperial World | Noble Born
+Birthright,Savant,Scavenger | Scapegrace | Stubjack | Child of the Creed | Savant | Vaunted
+Lure of the Void,Renegade,Tainted | Criminal | Renegade | Duty Bound | Zealot | Chosen by Destiny
+Trials,Calamity,Press-Ganged | Calamity | Ship-Lorn | Dark Voyage | High Vendetta | The Hand of War
+Motivation,Endurance,Endurance | Fortune | Vengeance | Renown | Pride | Prestige
+Career,Explorator,Rogue Trader | Arch-Militant | Astropath Transcendent | Explorator | Missionary | Navigator | Seneschal | Void-Master
+# — ORIGIN PATH CHOICES —,,Only those belonging to the picks above apply. Leave the rest blank.
+Death World: Hardened,,choice id: dw_hardened
+Forge World: Apply +3 to one characteristic,Intelligence,choice id: fw_purpose
+Noble Born: Supremely Connected: choose a second Peer,,choice id: nb_peer
+Scavenger: Talent,,choice id: sc_t
+Scavenger: Bonus,,choice id: sc_b
+Scavenger: Cost,,choice id: sc_c
+Scapegrace: Bonus,,choice id: sg_b
+Scapegrace: Cost,,choice id: sg_c
+Stubjack: Combat bonus,,choice id: sj_b
+Child of the Creed: Bonus,,choice id: cc_b
+Savant: Training,Logic as a trained Basic Skill,choice id: sv_a
+Savant: Bonus,+3 Intelligence,choice id: sv_b
+Vaunted: Bonus,,choice id: vt_b
+Tainted: Nature of the taint,,choice id: tn
+Criminal: What drove you off-world,,choice id: cr
+Renegade: Kind of renegade,Free-thinker (+3 Int),choice id: rn
+Duty Bound: Sworn to,,choice id: db
+Zealot: Mark of faith,,choice id: zl
+Chosen by Destiny: Shape of the calling,,choice id: cd
+Press-Ganged: What the service taught you,,choice id: pg
+Calamity: Inured to Adversity,Hardy,choice id: cl
+Ship-Lorn: Against All Odds,,choice id: sl
+Dark Voyage: Things Man Was Not Meant to Know,,choice id: dv
+High Vendetta: Blood Will Have Blood,,choice id: hv
+The Hand of War: The Ashes of War,,choice id: hw_t
+The Hand of War: Hatred (your old foe),,choice id: hw_h
+Vengeance: Hatred,,choice id: vg
+Renown: Talent,,choice id: rw
+Pride: Reward,,choice id: pr
+Prestige: Talent,,choice id: pg2
+# — CHARACTERISTICS —,,The 2d10+25 roll BEFORE origin modifiers. The app applies those itself.
+Weapon Skill,31,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+Ballistic Skill,28,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+Strength,30,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+Toughness,35,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+Agility,29,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+Intelligence,42,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+Perception,33,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+Willpower,30,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+Fellowship,27,27-45 from 2d10+25. Blank leaves the sheet unrolled.
+# — DERIVED ROLLS —,,
+Wound roll,3,The 1d5 (+0/1/2) your Home World calls for. Wounds = 2 x Toughness Bonus + this + origin bonuses.
+Fate roll,2,"1d10, read against your Home World fate table."
+# — IN PLAY —,,Leave blank for a fresh character.
+Damage taken,4,Wounds lost so far. Current wounds = max - this.
+Wound bonus,1,"Extra maximum wounds from advances (Sound Constitution, level-ups)."
+# — GAINED AFTER CREATION —,,Semicolon separated. Origin-path entries come across automatically; list only additions.
+Extra skills,Barter (Fel),e.g. Awareness (Per); Dodge (Ag)
+Extra talents,Nerves of Steel,e.g. Quick Draw; Sound Constitution
+Extra traits,,"Free text. Use ""Name: effect"" so the sheet can explain it."
+Extra gear,best power sword,Craftsmanship prefixes work: poor / common / good / best.
+Dropped gear,,"Issued kit that has been lost, sold or spent."
+Notes,Owes the Navigator a favour,Anything to resolve at the table.

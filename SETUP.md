@@ -23,22 +23,28 @@ No `vercel.json` is needed. Nothing here overrides a default.
 
 ### If the repo does not appear in the import list
 
-The repo is public, so visibility is not the cause. Check these in order:
+This happened on the first import, and the cause was **Vercel's GitHub App
+being installed with "Only select repositories"** — the selected list was fixed
+before this repo existed, so the app could not see it.
 
-1. **Which GitHub account is Vercel connected to.** There are two accounts on
-   this machine — `xaviergdiez` (which owns this repo) and `coolblue-javier`.
-   Vercel only lists repos for the GitHub login attached to it:
-   Vercel → **Settings → Git** shows which. If it is the wrong one, disconnect
-   and reconnect as `xaviergdiez`.
-2. **Vercel's GitHub App repository access.** If it was installed with "Only
-   select repositories", a newly created repo is not included. Fix it from the
-   **Adjust GitHub App Permissions** link at the bottom of Vercel's repo list,
-   or GitHub → Settings → Applications → Installed GitHub Apps → Vercel →
-   Configure → Repository access.
-3. **The Vercel scope in the dropdown.** A personal GitHub connection does not
-   carry into a Team scope. Make sure the scope selector at the top of
-   [vercel.com/new](https://vercel.com/new) is the account holding the
-   connection.
+Fix: [github.com/settings/installations](https://github.com/settings/installations)
+→ **Vercel** → **Configure** → *Repository access* → add `roguetrader_builder`,
+or switch to **All repositories**. Reload
+[vercel.com/new](https://vercel.com/new) afterwards. Vercel's import list also
+has an *Adjust GitHub App Permissions* link at the bottom that goes there.
+
+How to tell that is what you are looking at: the import list is sorted
+newest-first, so a repo pushed today belongs at the top. If your other repos
+appear — private ones included — under the right scope, and only the new one is
+missing, it is per-repo selection and not a permission or visibility problem.
+
+Two other causes worth ruling out if the above does not match:
+
+- **Vercel connected to the wrong GitHub account.** There are two on this
+  machine, `xaviergdiez` (which owns this repo) and `coolblue-javier`. Vercel
+  lists repos only for the login attached to it — see Vercel → **Settings → Git**.
+- **The Vercel scope in the dropdown.** A personal GitHub connection does not
+  carry into a Team scope.
 
 Last resort: because the repo is public, **Import Third-Party Git Repository**
 accepts the clone URL directly. Avoid it if you can — it deploys without the

@@ -1839,13 +1839,6 @@ export default function RogueTraderBuilder({ me }) {
   const wounds = (tBonus != null && woundRoll != null)
     ? tBonus * 2 + woundRoll + build.bonusWounds : null;
 
-  // Fate and Profit Factor as actually played: the origin-path derivation plus
-  // whatever has been spent, burned or earned since. Both panes read these
-  // rather than the raw derived values, or the steppers move state that
-  // nothing displays.
-  const fateShown = fatePoints == null ? null : Math.max(0, fatePoints + fateAdj);
-  const profitShown = Math.max(0, profitFactor + profitAdj);
-
   // wounds is the origin-path maximum; ws carries the playable state on top
   const ws = woundState(wounds, woundBonus, damage);
   const takeDamage = (n) => setDamage((d) => applyDamage(d, n, ws ? ws.max : 0));
@@ -1853,6 +1846,17 @@ export default function RogueTraderBuilder({ me }) {
   const fatePoints = (fateRoll != null && home)
     ? (home.fateTable.find(([max]) => fateRoll <= max) || [0, 3])[1] + build.bonusFate : null;
   const profitFactor = 20 + build.profit;
+
+  // Fate and Profit Factor as actually played: the origin-path derivation plus
+  // whatever has been spent, burned or earned since. Both panes read these
+  // rather than the raw derived values, or the steppers move state that
+  // nothing displays.
+  //
+  // These MUST stay below fatePoints and profitFactor. Declared above them
+  // they still build clean, then throw "Cannot access before initialization"
+  // at runtime on every render — const has no hoisted value to read.
+  const fateShown = fatePoints == null ? null : Math.max(0, fatePoints + fateAdj);
+  const profitShown = Math.max(0, profitFactor + profitAdj);
 
   /* ---- actions ---- */
   const choose = (stepId, id) => {

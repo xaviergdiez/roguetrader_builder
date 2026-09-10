@@ -15,8 +15,16 @@ export const RANKS = [
   { rank: 8, min: 29000, max: Infinity }
 ];
 
-// A starting Explorer is built on this much XP.
-export const STARTING_XP = { min: 4500, max: 5000 };
+// A starting Rank 1 Explorer enters play at 5,000 XP total, but that total is
+// not a spending budget. 4,500 of it is the *value* of the free creation
+// packages — the Origin Path nodes and the starting career package hand over
+// every skill, talent, trait and gear item at no cost. Only the remaining 500
+// is actually spendable, on characteristic advances or Rank 1 table advances,
+// before session one.
+//
+// Conflating the two is the easy mistake: an audit that compares purchases
+// against 5,000 will clear a sheet that has overspent tenfold.
+export const STARTING_XP = { baseline: 4500, spendable: 500, total: 5000 };
 
 export function rankForXp(xp) {
   const n = Math.max(0, Math.floor(xp || 0));
@@ -32,7 +40,13 @@ export function xpToNextRank(xp) {
 }
 
 export const isStartingBudget = (xp) =>
-  xp >= STARTING_XP.min && xp <= STARTING_XP.max;
+  xp >= STARTING_XP.baseline && xp <= STARTING_XP.total;
+
+// How much of a stated total was ever available to spend. A fresh Explorer on
+// 5,000 has 500; the 7,500 XP Rogue Trader has 3,000 — its initial 500 plus
+// 2,500 earned in play.
+export const spendableXp = (total) =>
+  Math.max(0, Math.floor(total || 0) - STARTING_XP.baseline);
 
 /* --------------------------- characteristic advances ---------------------------
    Each advance raises a characteristic by +5. What it costs depends on where

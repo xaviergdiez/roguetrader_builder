@@ -1,7 +1,7 @@
 // Self-check for XP, rank and advance costs. Run: node src/xp.check.mjs
 import assert from 'node:assert/strict';
 import {
-  RANKS, STARTING_XP, rankForXp, xpToNextRank, isStartingBudget,
+  RANKS, STARTING_XP, rankForXp, xpToNextRank, isStartingBudget, spendableXp,
   advanceCost, cumulativeAdvanceCost, advancesBetween,
   ADVANCE_LEVELS, ADVANCE_STEP, CHAR_ADVANCE_COST
 } from './xp.js';
@@ -37,7 +37,21 @@ assert.equal(isStartingBudget(5000), true);
 assert.equal(isStartingBudget(4500), true);
 assert.equal(isStartingBudget(4499), false);
 assert.equal(isStartingBudget(7500), false, 'the 7,500 XP Rogue Trader is over the standard budget');
-assert.equal(STARTING_XP.max, 5000);
+
+// THE DISTINCTION THAT MATTERS: the 5,000 total is not a spending budget.
+// 4,500 is the value of the free creation packages; only 500 is spendable.
+// An audit that compares purchases against the total instead of the spendable
+// figure would clear a sheet that had overspent by a factor of ten.
+assert.equal(STARTING_XP.total, 5000);
+assert.equal(STARTING_XP.baseline, 4500);
+assert.equal(STARTING_XP.spendable, 500);
+assert.equal(STARTING_XP.baseline + STARTING_XP.spendable, STARTING_XP.total);
+
+assert.equal(spendableXp(5000), 500, 'a fresh Explorer has 500 to spend, not 5,000');
+assert.equal(spendableXp(4500), 0, 'the bare baseline buys nothing');
+assert.equal(spendableXp(7500), 3000, 'the initial 500 plus 2,500 earned in play');
+assert.equal(spendableXp(4000), 0, 'never negative');
+assert.equal(spendableXp(null), 0);
 
 // advance costs by tier
 assert.equal(advanceCost('primary', 'simple'), 100);

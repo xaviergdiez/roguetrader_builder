@@ -1,39 +1,43 @@
-// Audits the pre-made characters against the career advance tables.
+// Origin & Elite Advance Tracker for the pre-made characters.
 //
 //   curl -sL "https://docs.google.com/document/d/<ID>/export?format=txt" -o doc.txt
 //   node scripts/audit-xp.mjs doc.txt
 //
-// WHAT THIS CAN AND CANNOT ESTABLISH
+// WHAT THIS IS FOR
 //
-// It computes a FLOOR on XP spent, not a total. Three things put real XP on a
-// sheet, and only one of them is recoverable here:
+// Starting skills, talents, traits and gear in Rogue Trader are 100% free:
+// the Origin Path nodes and the starting career package hand them over as the
+// 4,500 XP creation baseline. Only the remaining 500 XP is spendable before
+// session one. So an entry appearing on a sheet is NOT evidence of spending.
 //
-//   1. Skill and talent purchases  — recoverable: matched against the career's
-//      Rank 1-4 tables, with origin-path grants subtracted because those are
-//      free.
-//   2. Characteristic advances     — NOT recoverable. They cost 100-1,500 XP
-//      each, but the premades record only FINAL characteristics, so the
-//      starting values, and therefore the number of advances bought, are
-//      unknown.
-//   3. Psy Rating and psychic techniques — partly recoverable, and counted
-//      when they appear in the career table.
+// This sorts every listed skill and talent into three buckets:
 //
-// So the floor UNDERSTATES the true spend. If the floor alone already exceeds
-// the 5,000 XP budget, that is a definite breach. If it does not, the sheet is
-// merely "not disproven" — characteristic advances could still push it over.
+//   FREE        matched to an Origin Path node or the starting career package
+//               in the app's own data — costs nothing, by the rules.
+//   PURCHASED   matched to the career's Rank 1-4 advance tables and not free —
+//               real XP, summed and compared against the SPENDABLE budget.
+//   UNCLASSIFIED  in neither. Expected, not an error: an off-table Origin Path
+//               grant, a starting career package entry the app's data does not
+//               carry, or a GM-approved Elite Advance (200-500 XP each). These
+//               are listed for a human to classify, not guessed at.
+//
+// STILL NOT RECOVERABLE: characteristic advances. They cost 100-1,500 XP each,
+// but the premades record only FINAL characteristics, so the starting values —
+// and therefore the number bought — cannot be derived. PURCHASED is a floor.
 
 import fs from 'node:fs';
-import { CAREER_ADVANCES, advancesFor, baseCareer, MAX_TABLED_RANK } from '../src/advances.js';
-import { STARTING_XP } from '../src/xp.js';
+import { advancesFor, baseCareer, MAX_TABLED_RANK } from '../src/advances.js';
+import { STARTING_XP, spendableXp, rankForXp } from '../src/xp.js';
 
 const APP = fs.readFileSync('src/RogueTraderBuilder.jsx', 'utf8').split('const CSS =')[0];
 
-/* ---------- what the origin path hands over free ---------- */
+/* ---------- what the creation packages hand over free ---------- */
 
 function sliceArray(name) {
   const start = APP.indexOf(`const ${name} = [`);
   if (start < 0) return '';
-  let i = APP.indexOf('[', start), depth = 0;
+  const i = APP.indexOf('[', start);
+  let depth = 0;
   for (let j = i; j < APP.length; j++) {
     if (APP[j] === '[') depth++;
     else if (APP[j] === ']') { depth--; if (!depth) return APP.slice(i, j + 1); }
@@ -41,7 +45,7 @@ function sliceArray(name) {
   return '';
 }
 
-const ORIGIN_GRANTS = new Map();   // item name -> [skills+talents]
+const PACKAGES = new Map();   // node name -> [skills + talents]
 for (const arr of ['HOME_WORLDS', 'BIRTHRIGHTS', 'LURES', 'TRIALS', 'MOTIVATIONS', 'CAREERS']) {
   const body = sliceArray(arr);
   const starts = [...body.matchAll(/id: '([a-z0-9_]+)',\s*\n?\s*name: '((?:[^'\\]|\\.)*)'/g)];
@@ -52,24 +56,22 @@ for (const arr of ['HOME_WORLDS', 'BIRTHRIGHTS', 'LURES', 'TRIALS', 'MOTIVATIONS
       const m = seg.match(new RegExp(field + ":\\s*\\[([\\s\\S]*?)\\]"));
       if (m) for (const q of m[1].matchAll(/'((?:[^'\\]|\\.)*)'/g)) got.push(q[1]);
     }
-    ORIGIN_GRANTS.set(starts[k][2], got);
+    PACKAGES.set(starts[k][2], got);
   }
 }
 
-/* ---------- normalising names so doc and table can be compared ---------- */
+/* ---------- normalising so doc and table can be compared ---------- */
 
-// "Dodge (+10)" and "Dodge +10" are the same purchase; "Common Lore (Imperium,
-// Underworld)" is matched on its base name, counted once. That undercounts a
-// multi-specialisation entry, which keeps the result a floor.
+// "Dodge (+10)" and "Dodge +10" are the same entry. A multi-specialisation
+// entry like "Common Lore (Imperium, Underworld)" is matched on its base name
+// and counted once, which keeps PURCHASED a floor.
 function norm(s) {
   let t = String(s || '').trim().replace(/\s+/g, ' ');
   const plus = t.match(/\(?\+(\d+)\)?\s*$/);
   t = t.replace(/\(?\+\d+\)?\s*$/, '').trim();
-  const base = t.split('(')[0].trim().toLowerCase();
-  return base + (plus ? ' +' + plus[1] : '');
+  return t.split('(')[0].trim().toLowerCase() + (plus ? ' +' + plus[1] : '');
 }
 
-// split a comma list without breaking inside parentheses
 function splitList(s) {
   const out = [];
   let depth = 0, cur = '';
@@ -86,10 +88,8 @@ function splitList(s) {
 /* ---------- the doc ---------- */
 
 function parseDoc(path) {
-  // Split on \r?\n, not \n. The Docs export is CRLF, and in JavaScript `.`
-  // does not match \r — it is a line terminator — so a trailing \r stops
-  // `(.*)$` from reaching end-of-string and every line-anchored regex here
-  // silently matches nothing.
+  // Split on \r?\n: the Docs export is CRLF, and in JavaScript `.` does not
+  // match \r, so a trailing \r stops every `(.*)$` from matching.
   const lines = fs.readFileSync(path, 'utf8').replace(/^﻿/, '').split(/\r?\n/);
   const heads = [];
   lines.forEach((l, i) => {
@@ -107,7 +107,8 @@ function parseDoc(path) {
       name: h.title.replace(/\s*\([^)]*\)\s*$/, ''),
       career: f['Career'] || '',
       xp: Number((f['XP Total'] || '').replace(/[^\d]/g, '')) || 0,
-      path: (f['Origin Path'] || '').split(/[→>]+/).map((p) => p.trim().replace(/\s*\([^)]*\)\s*$/, '')).filter(Boolean),
+      path: (f['Origin Path'] || '').split(/[→>]+/)
+        .map((p) => p.trim().replace(/\s*\([^)]*\)\s*$/, '')).filter(Boolean),
       skills: splitList(f['Trained'] || f['Skills'] || ''),
       talents: splitList(f['Combat & General'] || f['Talents'] || '')
     };
@@ -117,16 +118,13 @@ function parseDoc(path) {
 /* ---------- audit ---------- */
 
 const chars = parseDoc(process.argv[2]);
-
-// A parse that finds nothing must fail loudly. Reporting "0 of 0 characters
-// exceed the budget" reads like a pass and is worse than an error.
 if (!chars.length) {
   console.error('audit-xp: parsed 0 characters from %s — the format has changed, '
     + 'or the file is not the exported document.', process.argv[2]);
   process.exit(1);
 }
 
-let breaches = 0;
+let overspent = 0, unclassifiedTotal = 0, skipped = 0, outOfRank = 0;
 
 for (const c of chars) {
   const base = baseCareer(c.career);
@@ -134,11 +132,11 @@ for (const c of chars) {
   console.log('%s  —  %s', c.name, c.career || '(no career)');
 
   if (!base) {
-    console.log('  SKIPPED: no advance table for this career (outside the core eight).');
+    console.log('  SKIPPED: career is outside the core eight, so it has no advance table.');
+    skipped++;
     continue;
   }
 
-  // everything the career could sell, across the tabled ranks
   const table = new Map();
   for (let r = 1; r <= MAX_TABLED_RANK; r++) {
     for (const a of advancesFor(base, r) || []) {
@@ -147,50 +145,69 @@ for (const c of chars) {
     }
   }
 
-  // what the origin path already gave, free
+  // the free creation baseline: every Origin Path node plus the career package
   const free = new Set();
-  for (const step of c.path) {
-    for (const g of ORIGIN_GRANTS.get(step) || []) free.add(norm(g));
-  }
+  for (const node of c.path) for (const g of PACKAGES.get(node) || []) free.add(norm(g));
+  for (const g of PACKAGES.get(base) || []) free.add(norm(g));
 
-  let floor = 0;
-  const bought = [], granted = [], unknown = [];
+  // A character can only buy from tables at or below their own rank, so this
+  // is a separate breach from overspending: at 5,000 XP everyone is Rank 1,
+  // and any Rank 2+ purchase is simply out of reach whatever the budget.
+  const charRank = rankForXp(c.xp);
+
+  let spent = 0;
+  const purchased = [], granted = [], unclassified = [], aboveRank = [];
   for (const entry of [...c.skills, ...c.talents]) {
     const key = norm(entry);
     if (free.has(key)) { granted.push(entry); continue; }
     const hit = table.get(key);
-    if (hit) { floor += hit.cost; bought.push(`${entry} (r${hit.rank}, ${hit.cost})`); }
-    else unknown.push(entry);
+    if (hit) {
+      spent += hit.cost;
+      const tooHigh = hit.rank > charRank;
+      if (tooHigh) aboveRank.push(`${entry} (Rank ${hit.rank})`);
+      purchased.push(`${entry} — Rank ${hit.rank}, ${hit.cost} XP`
+        + (tooHigh ? `   <-- Rank ${hit.rank} advance, character is Rank ${charRank}` : ''));
+    } else unclassified.push(entry);
   }
 
-  const over = floor > STARTING_XP.max;
-  console.log('  stated XP        %s', c.xp ? c.xp.toLocaleString() : '—');
-  console.log('  XP floor         %s  from %d table advances%s',
-    floor.toLocaleString(), bought.length, over ? '   <-- OVER the 5,000 budget' : '');
-  console.log('  origin-granted   %d (free, not counted)', granted.length);
-  console.log('  not in tables    %d%s', unknown.length,
-    unknown.length ? ': ' + unknown.slice(0, 6).join('; ') + (unknown.length > 6 ? ' …' : '') : '');
-  if (over) breaches++;
+  const budget = spendableXp(c.xp);
+  const over = spent > budget;
+  if (over) overspent++;
+  if (aboveRank.length) outOfRank++;
+  unclassifiedTotal += unclassified.length;
+
+  console.log('  stated XP %s → Rank %d · spendable %s (%s is the free baseline)',
+    c.xp.toLocaleString(), rankForXp(c.xp), budget.toLocaleString(),
+    STARTING_XP.baseline.toLocaleString());
+  console.log('  FREE          %d from Origin Path + career package', granted.length);
+  console.log('  PURCHASED     %s XP from %d table advances%s',
+    spent.toLocaleString(), purchased.length,
+    over ? `   <-- OVER the ${budget.toLocaleString()} spendable` : '');
+  for (const p of purchased) console.log('                  %s', p);
+  if (aboveRank.length) {
+    console.log('  OUT OF RANK   %d advance(s) above Rank %d: %s',
+      aboveRank.length, charRank, aboveRank.join('; '));
+  }
+  console.log('  UNCLASSIFIED  %d%s', unclassified.length,
+    unclassified.length ? ' — classify by hand:' : '');
+  for (const u of unclassified) console.log('                  %s', u);
 }
 
 console.log('\n%s', '='.repeat(78));
-console.log('%d of %d characters are PROVEN over the %s XP budget by skills and talents alone.',
-  breaches, chars.length, STARTING_XP.max.toLocaleString());
+console.log('%d of %d characters purchase more than their spendable XP allows.',
+  overspent, chars.length - skipped);
+console.log('%d of %d hold advances from a rank above their own — a separate breach,',
+  outOfRank, chars.length - skipped);
+console.log('   since a table above your rank is unreachable whatever your budget.');
+console.log('%d entries are unclassified across the set; %d characters were skipped.',
+  unclassifiedTotal, skipped);
 console.log('');
-console.log('READ THAT AS "not disproven", NOT as "compliant". This audit cannot');
-console.log('settle the XP question, for three reasons:');
+console.log('PURCHASED is a floor, not a total: characteristic advances cost 100-1,500 XP');
+console.log('each and cannot be recovered, because the premades record only final');
+console.log('characteristics. A character within budget here may still be over once');
+console.log('those are counted; one over budget here is over regardless.');
 console.log('');
-console.log('  1. Characteristic advances are unknowable. They cost 100-1,500 XP each,');
-console.log('     but the premades record only FINAL characteristics, so the starting');
-console.log('     values — and the number of advances bought — cannot be recovered.');
-console.log('     This is almost certainly where most of the XP went.');
-console.log('  2. The career is itself an origin-path step, so its starting skills and');
-console.log('     talents are treated as granted free and never matched against the');
-console.log('     purchase tables. That is why the floors below are so low. Whether');
-console.log('     RT gives career skills free or charges Rank 1 XP for them decides');
-console.log('     whether these floors mean anything at all.');
-console.log('  3. Entries listed as "not in tables" cannot be costed — they come from');
-console.log('     alternate ranks, other books, or supplements not supplied here.');
-console.log('');
-console.log('The useful output above is the "not in tables" lists: those name entries');
-console.log('that come from neither the character\'s career tables nor its origin path.');
+console.log('UNCLASSIFIED is expected, not an error. Each is an off-table Origin Path');
+console.log('grant, a starting career package entry the app\'s data does not carry, or a');
+console.log('GM-approved Elite Advance at 200-500 XP — and an Elite Advance does spend');
+console.log('from the same budget, so those need classifying before a total is trustworthy.');

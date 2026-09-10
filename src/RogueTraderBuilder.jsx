@@ -10,7 +10,7 @@ import {
   risksPhenomena, psyRatingInfo, disciplineSlots, thoughtSendingKm,
   describePower, manifest, sustainPenalty, DISCIPLINES, ALL_TECHNIQUES
 } from './psychic.js';
-import { rankForXp, xpToNextRank, isStartingBudget, spendableXp, remainingXp } from './xp.js';
+import { rankForXp, romanRank, xpToNextRank, isStartingBudget, spendableXp, remainingXp } from './xp.js';
 import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
 import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
 
@@ -1162,6 +1162,8 @@ const CSS = `
 .rt-xpleft{font-family:var(--mono);font-size:9px;letter-spacing:.14em;
   color:var(--green-dim);}
 .rt-xpleft.over{color:var(--bad);}
+/* the distance to the next rank, so a threshold crossing is visibly coming */
+.rt-nextrank{color:var(--dim);letter-spacing:.08em;opacity:.8;}
 
 /* ---- advances tab ---- */
 .rt-advsum{margin:0 0 12px;font-size:13.5px;color:var(--parch-dim);}
@@ -2964,7 +2966,14 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                   aria-label="Award 100 XP">+</button>
               </div>
               <div className="rt-wfoot">
-                <span className="rt-der-k">XP · RANK {charRank}</span>
+                <span className="rt-der-k" title={xpToNextRank(xp) != null
+                  ? xpToNextRank(xp).toLocaleString() + ' XP to Rank ' + romanRank(charRank + 1)
+                  : 'Rank VIII — no further thresholds'}>
+                  RANK {romanRank(charRank)}
+                  {xpToNextRank(xp) != null && (
+                    <span className="rt-nextrank"> · {xpToNextRank(xp).toLocaleString()} to {romanRank(charRank + 1)}</span>
+                  )}
+                </span>
                 <span className={'rt-xpleft' + (remaining < 0 ? ' over' : '')}>
                   {remaining < 0
                     ? (-remaining).toLocaleString() + ' OVER'
@@ -3119,7 +3128,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                     ? (-remaining).toLocaleString() + ' over budget'
                     : remaining.toLocaleString() + ' remaining'}
                 </span>
-                {' · Rank '}{charRank}
+                {' · Rank '}{romanRank(charRank)}
               </p>
 
               {Array.from({ length: MAX_TABLED_RANK }, (_, i) => i + 1).map((r) => {
@@ -3129,7 +3138,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                 return (
                   <div key={r} className={'rt-advrank' + (rankLocked ? ' locked' : '')}>
                     <div className="rt-sect-h">
-                      Rank {r}{rankLocked ? ' — not yet reached' : ''}
+                      Rank {romanRank(r)}{rankLocked ? ' — not yet reached' : ''}
                     </div>
                     <ul className="rt-advlist">
                       {rows.map((a) => {
@@ -3137,7 +3146,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                           rank: charRank, remaining, totals, owned: extras.advances
                         });
                         const why = st.owned ? null
-                          : st.lockedByRank ? `Rank ${a.rank} required`
+                          : st.lockedByRank ? `Rank ${romanRank(a.rank)} required`
                             : st.unmetChars.length
                               ? 'Needs ' + st.unmetChars.map((c) => c.key.toUpperCase() + ' ' + c.min).join(', ')
                               : st.unaffordable ? 'Not enough XP' : null;

@@ -26,6 +26,14 @@ export const RANKS = [
 // against 5,000 will clear a sheet that has overspent tenfold.
 export const STARTING_XP = { baseline: 4500, spendable: 500, total: 5000 };
 
+// Ranks are written as Roman numerals. The ladder stops at 8, so a lookup is
+// simpler and safer than a general numeral converter.
+const ROMAN_RANKS = [null, 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
+export function romanRank(n) {
+  const i = Math.floor(n || 0);
+  return ROMAN_RANKS[i] || String(i);
+}
+
 export function rankForXp(xp) {
   const n = Math.max(0, Math.floor(xp || 0));
   return (RANKS.find((r) => n >= r.min && n <= r.max) || RANKS[RANKS.length - 1]).rank;

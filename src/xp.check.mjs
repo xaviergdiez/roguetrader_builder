@@ -27,6 +27,16 @@ for (let i = 1; i < RANKS.length; i++) {
     'gap or overlap between rank ' + RANKS[i - 1].rank + ' and ' + RANKS[i].rank);
 }
 
+// ranks display as Roman numerals, across the whole ladder
+const { romanRank } = await import('./xp.js');
+assert.deepEqual(RANKS.map((r) => romanRank(r.rank)),
+  ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII']);
+// and the numeral tracks XP, so crossing a threshold changes what is shown
+assert.equal(romanRank(rankForXp(5000)), 'I');
+assert.equal(romanRank(rankForXp(6999)), 'I');
+assert.equal(romanRank(rankForXp(7000)), 'II', 'the threshold flips the numeral');
+assert.equal(romanRank(rankForXp(29000)), 'VIII');
+
 // distance to the next rank
 assert.equal(xpToNextRank(6999), 1);
 assert.equal(xpToNextRank(5000), 2000);

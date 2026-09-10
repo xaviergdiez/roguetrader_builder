@@ -1,8 +1,48 @@
 // Self-check for the sheet importer. Run: node src/sheet.check.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { parseCsv, parseCharacterSheet, splitEntries, sheetIdFrom } from './sheet.js';
+import {
+  matchOption, looksFlattened, FLATTENED_MESSAGE,
+  parseCsv, parseCharacterSheet, splitEntries, sheetIdFrom
+} from './sheet.js';
 
+/* ---- slash-separated alternatives resolve to an exact option ---- */
+{
+  const homes = [{ id: 'imperial', name: 'Imperial World' }, { id: 'forge', name: 'Forge World' }];
+
+  assert.equal(matchOption(homes, 'Imperial World').id, 'imperial');
+  // real values off the pre-made sheets
+  assert.equal(matchOption(homes, 'Mind-Cleansed/Imperial World').id, 'imperial');
+  assert.equal(matchOption(homes, 'Imperial World / notes').id, 'imperial');
+
+  // Only an EXACT match on one side counts — a near miss must stay unmatched
+  // rather than be guessed at, or a character silently gets the wrong origin.
+  assert.equal(matchOption(homes, 'Mind-Cleansed'), null);
+  assert.equal(matchOption(homes, 'Imperial'), null);
+  assert.equal(matchOption(homes, 'Hive World/Death World'), null);
+  assert.equal(matchOption(homes, ''), null);
+  assert.equal(matchOption([], 'Imperial World'), null);
+}
+
+/* ---- a flattened tab is detected, not half-parsed ---- */
+{
+  const flat = [[
+    'Field # — IDENTITY — Name Career Concept Role in crew XP total '
+    + '# — ORIGIN PATH — Home World Birthright Lure of the Void Trials Motivation',
+    'Value Inquisitorial Agent Seneschal Spymaster Imperial World Savant'
+  ], ['Weapon Skill', '32']];
+  assert.equal(looksFlattened(flat), true);
+
+  // A healthy sheet must never trip it, including a long prose note.
+  assert.equal(looksFlattened([['Name', 'Magos'], ['Home World', 'Forge World']]), false);
+  assert.equal(looksFlattened([['Secret', 'x'.repeat(400)]]), false);
+  assert.equal(looksFlattened([]), false);
+  assert.equal(looksFlattened(null), false);
+
+  const { state, warnings } = parseCharacterSheet(flat, { steps: {} });
+  assert.equal(state, null, 'a flattened sheet yields no character');
+  assert.deepEqual(warnings, [FLATTENED_MESSAGE]);
+}
 /* --- CSV parsing -------------------------------------------------------- */
 
 assert.deepEqual(parseCsv('a,b,c'), [['a', 'b', 'c']]);

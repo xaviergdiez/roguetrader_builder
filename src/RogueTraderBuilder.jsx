@@ -599,7 +599,9 @@ const STEPS = [
 
 // The origin catalogue the sheet importer matches names against. Derived from
 // STEPS so it cannot drift from the data the builder itself offers.
-const SHEET_CATALOG = {
+// exported so scripts/audit-parse.mjs matches sheets against the same option
+// names the app does, rather than a copy that can drift
+export const SHEET_CATALOG = {
   steps: STEPS.reduce((out, s) => {
     out[s.id] = s.data.map(({ id, name }) => ({ id, name }));
     return out;
@@ -1762,6 +1764,87 @@ const CSS = `
   .rt-root *,.rt-root *::before,.rt-root *::after{
     transition:none!important;animation:none!important;}
 }
+
+/* ============================== PRINT ==============================
+   A dossier to hand across the table, not a screenshot of the app.
+   The interactive sheet is hidden and .rt-print draws every section at once,
+   because the screen dossier is tabbed — printing it directly would emit
+   whichever single tab happened to be open.
+   ponytail: no PDF library. The browser's own dialog saves to PDF, and does it
+   better than rasterising the DOM to a canvas would; jsPDF/html2canvas would
+   add a megabyte to produce blurrier output with worse text. */
+
+.rt-print{display:none;}
+
+@media print{
+  @page{margin:14mm;}
+
+  .rt-head,.rt-nav,.rt-steps,dialog,.no-print{display:none!important;}
+  /* one rule for the id card, stat sheet, tab rail and tab panel */
+  .rt-dossier > *:not(.rt-print){display:none!important;}
+  .rt-root::after{display:none;}          /* the vignette would grey the paper */
+
+  .rt-root{background:#fff;color:#000;min-height:0;font-size:10.5pt;}
+  .rt-wrap{max-width:none;padding:0;}
+  *,*::before,*::after{box-shadow:none!important;text-shadow:none!important;
+    background-image:none!important;}
+
+  .rt-print{display:block;}
+  .rt-print h1,.rt-print h2{color:#000;}
+
+  .rt-pr-head{display:flex;gap:14px;align-items:flex-start;
+    padding-bottom:8px;margin-bottom:12px;border-bottom:2px solid #000;}
+  .rt-pr-portrait{width:32mm;height:42mm;object-fit:cover;flex:none;
+    border:1px solid #000;
+    /* the portrait is the one image on the sheet, so it keeps its ink */
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .rt-pr-id{flex:1;min-width:0;}
+  .rt-print h1{font-family:var(--display);font-size:19pt;margin:0;
+    letter-spacing:.02em;text-transform:uppercase;}
+  .rt-pr-sub{font-size:10pt;margin:3px 0 8px;font-style:italic;}
+
+  .rt-pr-stamps{display:flex;flex-wrap:wrap;gap:4mm;margin:0;}
+  .rt-pr-stamps > div{border:1px solid #000;padding:2mm 3mm;min-width:18mm;}
+  .rt-pr-stamps dt{font-family:var(--mono);font-size:7pt;letter-spacing:.12em;
+    text-transform:uppercase;}
+  .rt-pr-stamps dd{margin:1mm 0 0;font-family:var(--display);font-size:14pt;
+    font-weight:700;line-height:1;}
+
+  /* Ticked with a pen at the table, so they have to survive the colour strip. */
+  .rt-pr-boxes{display:flex;flex-wrap:wrap;gap:1.2mm;margin-top:2mm;}
+  .rt-pr-box{width:4.5mm;height:4.5mm;border:1px solid #000;}
+  .rt-pr-box.taken{background:#000;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;}
+
+  .rt-pr-sect{margin-bottom:9pt;break-inside:avoid;page-break-inside:avoid;}
+  .rt-pr-sect > h2{font-family:var(--mono);font-size:8pt;letter-spacing:.18em;
+    text-transform:uppercase;margin:0 0 4pt;padding-bottom:2pt;
+    border-bottom:1px solid #000;}
+  .rt-pr-cols{columns:2;column-gap:8mm;}
+  .rt-pr-cols.three{columns:3;}
+  .rt-pr-list{margin:0;padding-left:4.5mm;font-size:9.5pt;line-height:1.5;}
+  .rt-pr-list li{break-inside:avoid;page-break-inside:avoid;}
+  .rt-pr-none{margin:0;font-size:9.5pt;font-style:italic;}
+
+  .rt-pr-chars{width:100%;border-collapse:collapse;font-size:9.5pt;}
+  .rt-pr-chars th,.rt-pr-chars td{border:1px solid #000;padding:1.6mm 2mm;
+    text-align:left;}
+  .rt-pr-chars th{font-family:var(--mono);font-size:7.5pt;letter-spacing:.12em;
+    text-transform:uppercase;}
+  .rt-pr-chars td.n{text-align:center;font-family:var(--display);font-size:12pt;
+    font-weight:700;width:16mm;}
+  /* room to write the modified value a test actually uses */
+  .rt-pr-chars td.blank{width:24mm;}
+
+  .rt-pr-kv{margin:0;font-size:9.5pt;line-height:1.55;}
+  .rt-pr-kv dt{font-family:var(--mono);font-size:7.5pt;letter-spacing:.12em;
+    text-transform:uppercase;float:left;clear:left;width:34mm;}
+  .rt-pr-kv dd{margin:0 0 1mm 34mm;}
+
+  .rt-pr-foot{margin-top:6mm;padding-top:2mm;border-top:1px solid #000;
+    font-family:var(--mono);font-size:7pt;letter-spacing:.1em;
+    display:flex;justify-content:space-between;}
+}
 `;
 
 /* ============================ COMPONENTS ============================ */
@@ -2324,14 +2407,28 @@ export default function RogueTraderBuilder({ me, cloud }) {
       <nav className={'rt-nav' + (onDossier && !navOpen ? ' slim' : '')}>
         <div className="rt-nav-in">
           {onDossier && !navOpen ? (
-            <button className="rt-editbtn" onClick={() => setNavOpen(true)}
-              aria-expanded="false" aria-label="Show sheet controls">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
-              </svg>
-              Edit
-            </button>
+            <>
+              {/* Print lives beside Edit because it only means anything on the
+                  dossier — the print sheet is rendered by DossierPane. */}
+              <button className="rt-editbtn" onClick={() => window.print()}
+                title="Print or save the dossier as a PDF" aria-label="Print dossier">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 9V3h12v6" />
+                  <path d="M6 18H4a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-2" />
+                  <path d="M6 14h12v7H6z" />
+                </svg>
+                Print
+              </button>
+              <button className="rt-editbtn" onClick={() => setNavOpen(true)}
+                aria-expanded="false" aria-label="Show sheet controls">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+                Edit
+              </button>
+            </>
           ) : (
             <>
               {onDossier && (
@@ -2701,6 +2798,12 @@ function ImportDialog({ onApply, onImportMany, onPreset, onClose }) {
 
   const applyCsv = (text, label) => {
     const { state, warnings: w } = parseCharacterSheet(parseCsv(text), SHEET_CATALOG);
+    // A flattened tab parses to nothing on purpose — the parser refuses it
+    // rather than handing back a hollow character. Report why.
+    if (!state) {
+      setErr(w[0]);
+      return false;
+    }
     if (!state.name && !state.finalTotals && !state.rolls) {
       setErr(`${label || 'That sheet'} did not look like a character sheet.`);
       return false;
@@ -2733,7 +2836,7 @@ function ImportDialog({ onApply, onImportMany, onPreset, onClose }) {
           const { state } = parseCharacterSheet(parseCsv(await fetchCsv(name)), SHEET_CATALOG);
           // Awaited: saving is a network call in cloud mode, and an unawaited
           // rejection would be counted as a success and reported as one.
-          if (state.name) { await onImportMany(state); done.push(state.name); }
+          if (state && state.name) { await onImportMany(state); done.push(state.name); }
           else failed.push(name);
         } catch { failed.push(name); }
       }
@@ -3410,6 +3513,127 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
 
 /* ---------------------------- DOSSIER PANE ---------------------------- */
 
+/* ---------------------------- PRINT DOSSIER ----------------------------
+   Hidden on screen, the only thing visible when printing. Every section at
+   once, because the screen sheet is tabbed and a plain window.print() would
+   emit one tab. Interactive affordances are left out rather than styled away:
+   nothing on paper can be stepped, rolled or removed.
+   Takes the lists the dossier has already derived, so the two cannot disagree. */
+
+function PrintSheet({ name, career, picked, totals, mods, ws, fate, profit, xp, rank,
+  psyRating, skills, talents, traits, gear, powers, notes, advances, avatar }) {
+  // A characteristic bonus is its tens digit, and every test at the table needs
+  // it, so it is printed rather than left to be worked out.
+  const bonus = (v) => (typeof v === 'number' ? Math.floor(v / 10) : '—');
+
+  const Section = ({ title, items, cols = 2, empty }) => (
+    <section className="rt-pr-sect">
+      <h2>{title}{items.length ? ` (${items.length})` : ''}</h2>
+      {items.length
+        ? <div className={'rt-pr-cols' + (cols === 3 ? ' three' : '')}>
+          <ul className="rt-pr-list">
+            {items.map((v, i) => <li key={i}>{v}</li>)}
+          </ul>
+        </div>
+        : <p className="rt-pr-none">{empty}</p>}
+    </section>
+  );
+
+  return (
+    <div className="rt-print">
+      <header className="rt-pr-head">
+        {avatar && avatar.src && (
+          <img className="rt-pr-portrait" src={avatar.src} alt=""
+            style={framingStyle(avatar.framing)} />
+        )}
+        <div className="rt-pr-id">
+          <h1>{name || 'Unnamed adept'}</h1>
+          <p className="rt-pr-sub">
+            {career ? career.name : 'No career'}
+            {picked.home ? ' · ' + picked.home.name : ''}
+            {' · Rank '}{romanRank(rank)}
+            {' · '}{xp.toLocaleString()} XP
+          </p>
+          <dl className="rt-pr-stamps">
+            <div>
+              <dt>Wounds</dt>
+              <dd>{ws ? ws.max : '—'}</dd>
+            </div>
+            <div><dt>Fate</dt><dd>{fate ?? '—'}</dd></div>
+            <div><dt>Profit</dt><dd>{profit}</dd></div>
+            {totals && <div><dt>T Bonus</dt><dd>{bonus(totals.t)}</dd></div>}
+            {psyRating > 0 && <div><dt>Psy Rating</dt><dd>{psyRating}</dd></div>}
+          </dl>
+          {ws && (
+            <div className="rt-pr-boxes" aria-hidden="true">
+              {Array.from({ length: ws.max }, (_, i) => (
+                <span key={i} className={'rt-pr-box' + (i < ws.taken ? ' taken' : '')} />
+              ))}
+            </div>
+          )}
+        </div>
+      </header>
+
+      <section className="rt-pr-sect">
+        <h2>Characteristics</h2>
+        <table className="rt-pr-chars">
+          <thead>
+            <tr>
+              <th>Characteristic</th><th>Value</th><th>Bonus</th><th>In play</th>
+            </tr>
+          </thead>
+          <tbody>
+            {CHAR_KEYS.map((k) => (
+              <tr key={k}>
+                <td>{CHAR_NAMES[k]} ({CHAR_SHORT[k]})</td>
+                <td className="n">{totals ? totals[k] : '—'}</td>
+                <td className="n">{totals ? bonus(totals[k]) : '—'}</td>
+                {/* left blank on purpose: modifiers change per test */}
+                <td className="blank" />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section className="rt-pr-sect">
+        <h2>Origin path</h2>
+        <dl className="rt-pr-kv">
+          {STEPS.map((s) => picked[s.id] && (
+            <React.Fragment key={s.id}>
+              <dt>{s.label}</dt>
+              <dd>{picked[s.id].name}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      </section>
+
+      <Section title="Skills" items={skills} cols={3}
+        empty="No skills recorded." />
+      <Section title="Talents" items={talents}
+        empty="No talents recorded." />
+      <Section title="Traits" items={traits}
+        empty="No traits from this origin path." />
+      <Section title="Gear" items={gear}
+        empty="No equipment recorded." />
+      {psyRating > 0 && (
+        <Section title="Psychic powers" items={powers.map(describePower)}
+          empty="No powers recorded." />
+      )}
+      <Section title="Advances taken"
+        items={advances.map((a) => `${a.name} — ${a.type}, ${a.cost} XP`)}
+        empty="No advances purchased." />
+      <Section title="Notes" items={notes} cols={1}
+        empty="No notes." />
+
+      <div className="rt-pr-foot">
+        <span>Rogue Trader {'·'} Koronus Expanse</span>
+        <span>{new Date().toLocaleDateString()}</span>
+      </div>
+    </div>
+  );
+}
+
 const DOSSIER_TABS = [
   { id: 'origin', label: 'Origin' },
   { id: 'skills', label: 'Skills' },
@@ -3841,6 +4065,17 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
         />
       )}
 
+      {/* Last child of .rt-dossier on purpose: the print rule hides every
+          sibling, so anything added after this would print too. */}
+      <PrintSheet
+        name={name} career={career} picked={build.picked}
+        totals={totals} mods={build.mods} ws={ws}
+        fate={fatePoints} profit={profitFactor} xp={xp} rank={charRank}
+        psyRating={psyRating} avatar={avatar}
+        skills={allSkills} talents={allTalents} traits={allTraits}
+        gear={allGear} powers={allPowers} notes={allNotes}
+        advances={extras.advances}
+      />
     </div>
   );
 }

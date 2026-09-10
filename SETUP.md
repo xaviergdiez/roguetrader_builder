@@ -180,6 +180,46 @@ open it.
 On first sign-in from a browser that already has local characters, they are
 copied up to the account and the local copy is left in place.
 
+## Printing a dossier
+
+The Print button on the dossier calls `window.print()`. There is no PDF
+library: the browser's own dialog saves to PDF, and does it better than
+rasterising the DOM would. Choose "Save as PDF" as the destination.
+
+What prints is not the screen. `PrintSheet` renders a purpose-built document —
+black on white, every section at once — because the on-screen dossier is
+tabbed and printing it directly would emit whichever single tab was open. It
+takes the lists the dossier has already derived, so the two cannot disagree.
+The wound boxes are meant to be ticked with a pen and keep their ink via
+`print-color-adjust: exact`.
+
+## Repairing the character sheet
+
+Every tab of the shared Google Sheet was flattened on the way in: each tab's
+whole IDENTITY and ORIGIN PATH block ended up inside cell A1, so A1 read
+`Field # — IDENTITY — Name Career Concept …` and there was no `Name` row, no
+origin path and no gear. The importer now refuses such a tab and says so,
+rather than handing back a nameless character whose final characteristics have
+landed in the roll fields and get origin modifiers applied a second time.
+
+The workbook committed here is intact. To rebuild clean tabs:
+
+```bash
+python3 scripts/xlsx-to-csv.py characters.xlsx out/   # one CSV per character
+node scripts/audit-parse.mjs out/                     # prove they parse
+```
+
+Then import each CSV as its own tab, or re-upload `characters.xlsx` to Drive
+and open it as a Google Sheet. Do not paste the rows in as text — that is what
+flattened them.
+
+`audit-parse.mjs` also cross-checks `lib/prompt.js` against the app's own
+`SHEET_CATALOG`, which is how two origin options were caught sitting under the
+wrong step and silently losing their portrait phrase.
+
+Current state, from the intact workbook: **11 of 13 parse cleanly**. The two
+that do not are the xenos characters below.
+
 ## Not built yet
 
 Marked with a `ponytail:` comment where it would slot in.

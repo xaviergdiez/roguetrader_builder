@@ -4,3 +4,7 @@ dist
 .env*
 !.env.example
 .DS_Store
+
+# scripts/audit-parse.mjs compiles the .jsx here to read SHEET_CATALOG and
+# deletes it again; ignored so a crashed run cannot leave one committable.
+src/.audit-*.mjs

@@ -74,6 +74,48 @@ export function splitEntries(v) {
   return out.map((x) => x.replace(/\.$/, '').trim()).filter(Boolean);
 }
 
+// Matches a sheet value against a step's options.
+//
+// Sheet authors write alternatives with a slash — "Mind-Cleansed/Imperial
+// World", "Astropath Transcendent / Psyker Import" — where one side is the
+// actual option and the other is flavour or an import note. Splitting on "/"
+// and taking an EXACT option match among the parts is not a guess: either a
+// part is one of the six names or nothing is chosen. Anything looser (prefix
+// matching, fuzzy distance) would silently pick the wrong origin.
+export function matchOption(options, value) {
+  const want = key(value);
+  const hit = (options || []).find((o) => key(o.name) === want);
+  if (hit) return hit;
+  if (!want.includes('/')) return null;
+  for (const part of String(value).split('/')) {
+    const p = key(part);
+    const alt = (options || []).find((o) => key(o.name) === p);
+    if (alt) return alt;
+  }
+  return null;
+}
+
+// A tab whose rows were flattened into a single cell on the way into Google
+// Sheets: A1 ends up holding "Field # — IDENTITY — Name Career Concept ...".
+// Parsing such a tab yields a character with no name, no origin path and no
+// gear, and — because the "# — FINAL CHARACTERISTICS —" marker is swallowed
+// with everything else — final characteristics land in the roll fields and get
+// origin modifiers applied a second time. Worth refusing outright.
+const FLAT_LABELS = ['Name', 'Career', 'Home World', 'Birthright', 'Motivation'];
+
+export const FLATTENED_MESSAGE =
+  'This tab is flattened: its identity and origin-path rows are all inside one '
+  + 'cell, so there is no name, no origin path and no gear to read. It was most '
+  + 'likely pasted in as text. Re-import the tab from a clean two-column CSV.';
+
+export function looksFlattened(rows) {
+  return (rows || []).some((row) => {
+    const cell = String((row && row[0]) || '');
+    return cell.length > 80
+      && FLAT_LABELS.filter((l) => cell.includes(l)).length >= 3;
+  });
+}
+
 const STEP_FIELDS = {
   'home world': 'home',
   'birthright': 'birthright',
@@ -118,6 +160,13 @@ export function parseCharacterSheet(rows, catalog) {
   const steps = (catalog && catalog.steps) || {};
   const warnings = [];
 
+  // Refused rather than half-parsed: see looksFlattened. Returning a nameless
+  // character with its final characteristics in the roll fields is worse than
+  // returning nothing, because nothing about it looks wrong on screen.
+  if (looksFlattened(rows)) {
+    return { state: null, flattened: true, warnings: [FLATTENED_MESSAGE] };
+  }
+
   // Pass one: collect rows with the section each sits under. Section headers
   // are the "# — NAME —" rows both formats emit.
   const entries = [];
@@ -161,7 +210,7 @@ export function parseCharacterSheet(rows, catalog) {
     // converted one, which carries "Career (origin step)" separately.
     if (k === 'career' && !seen.has('career (origin step)')) {
       const options = steps.career || [];
-      const hit = options.find((o) => key(o.name) === key(value));
+      const hit = matchOption(options, value);
       if (hit) { state.sel.career = hit.id; continue; }
       state.extras.notes.push(`Career: ${value}`);
       warnings.push(`Career: "${value}" is not one of the ${options.length} careers`);
@@ -171,7 +220,7 @@ export function parseCharacterSheet(rows, catalog) {
     if (STEP_FIELDS[k]) {
       const stepId = STEP_FIELDS[k];
       const options = steps[stepId] || [];
-      const hit = options.find((o) => key(o.name) === key(value));
+      const hit = matchOption(options, value);
       if (hit) state.sel[stepId] = hit.id;
       else warnings.push(`${field}: "${value}" is not one of the ${options.length} options`);
       continue;

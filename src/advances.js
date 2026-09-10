@@ -1,9 +1,10 @@
 // Career advance tables, Ranks 1-4.
 //
 // Source of truth: the Rogue Trader career advance tables supplied for this
-// project. Only these four careers have published tables here; the other four
-// in CAREERS have none yet, and advancesFor() returns null rather than an
-// empty list so the caller can tell "no table" from "nothing at this rank".
+// project. All eight careers in CAREERS are covered for Ranks 1-4. A career
+// outside that set — an Into the Storm xenos path, say — returns null rather
+// than an empty list, so the caller can tell "no table" from "nothing at
+// this rank".
 //
 // Pure: see advances.check.mjs.
 
@@ -156,6 +157,157 @@ export const CAREER_ADVANCES = {
       A('Compel', 'Technique', 'Telepathy Discipline', 500),
       A('Master Telepath', 'Talent', 'Telepathy Discipline', 500),
       A('Rite of Sanctioning', 'Talent', 'Psy Rating 3', 500)
+    ]
+  },
+
+  'Seneschal': {
+    1: [
+      A('Barter', 'Skill', null, 100),
+      A('Commerce', 'Skill', null, 100),
+      A('Common Lore (Imperium)', 'Skill', null, 100),
+      A('Deceive', 'Skill', null, 100),
+      A('Evaluate', 'Skill', null, 100),
+      A('Inquiry', 'Skill', null, 100),
+      A('Literacy', 'Skill', null, 100),
+      A('Basic Weapon Training (Universal)', 'Talent', null, 500),
+      A('Pistol Weapon Training (Universal)', 'Talent', null, 500),
+      A('Seeker of Lore', 'Talent', null, 200),
+      A('Unremarkable', 'Talent', null, 200)
+    ],
+    2: [
+      A('Commerce +10', 'Skill', 'Commerce', 200),
+      A('Evaluate +10', 'Skill', 'Evaluate', 200),
+      A('Inquiry +10', 'Skill', 'Inquiry', 200),
+      A('Forbidden Lore (Inquisition)', 'Skill', null, 200),
+      A('Logic', 'Skill', null, 200),
+      A('Peer (Academic)', 'Talent', 'Fel 30', 200),
+      A('Infused Knowledge', 'Talent', 'Int 40', 500),
+      A('Sound Constitution (x2)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Commerce +20', 'Skill', 'Commerce +10', 200),
+      A('Evaluate +20', 'Skill', 'Evaluate +10', 200),
+      A('Inquiry +20', 'Skill', 'Inquiry +10', 200),
+      A('Scrutiny +10', 'Skill', 'Scrutiny', 200),
+      A('Whispers', 'Talent', 'Inquiry +10', 500),
+      A('Polyglot', 'Talent', 'Int 30, Fel 30', 500)
+    ],
+    4: [
+      A('Barter +20', 'Skill', 'Barter +10', 200),
+      A('Deceive +20', 'Skill', 'Deceive +10', 200),
+      A('Mastery (Commerce)', 'Talent', 'Commerce +20', 500),
+      A('Talent for Deception', 'Talent', 'Deceive +10', 500)
+    ]
+  },
+
+  'Navigator': {
+    1: [
+      A('Navigation (Warp)', 'Skill', null, 100),
+      A('Navigation (Stellar)', 'Skill', null, 100),
+      A('Psyniscience', 'Skill', null, 100),
+      A('Forbidden Lore (Warp)', 'Skill', null, 100),
+      A('Scholastic Lore (Astromancy)', 'Skill', null, 100),
+      A('Pistol Weapon Training (Universal)', 'Talent', null, 500),
+      A('Navigator', 'Talent', null, 200),
+      A('Navigator Power (Novice)', 'Power', null, 200),
+      A('Warp Sense', 'Talent', 'Psyniscience, WP 30', 200)
+    ],
+    2: [
+      A('Navigation (Warp) +10', 'Skill', 'Navigation (Warp)', 200),
+      A('Psyniscience +10', 'Skill', 'Psyniscience', 200),
+      A('Forbidden Lore (Warp) +10', 'Skill', 'Forbidden Lore (Warp)', 200),
+      A('Navigator Power (Novice/Adept)', 'Power', 'Navigator Power', 200),
+      A('Resistance (Fear)', 'Talent', null, 200),
+      A('Foresight', 'Talent', 'Int 30', 200),
+      A('Sound Constitution (x2)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Navigation (Warp) +20', 'Skill', 'Navigation (Warp) +10', 200),
+      A('Psyniscience +20', 'Skill', 'Psyniscience +10', 200),
+      A('Navigator Power (Adept)', 'Power', 'Novice Power', 300),
+      A('Gaze into the Abyss', 'Power', 'Navigator', 300),
+      A('Inured to the Warp', 'Talent', 'WP 40', 500)
+    ],
+    4: [
+      A('Scholastic Lore (Astromancy) +20', 'Skill', 'Scholastic Lore (Astromancy) +10', 200),
+      A('Navigator Power (Master)', 'Power', 'Adept Power', 500),
+      A('Master Navigator', 'Talent', 'Navigation (Warp) +20', 500),
+      A('Unshakeable Faith', 'Talent', null, 500)
+    ]
+  },
+
+  'Missionary': {
+    1: [
+      A('Common Lore (Imperial Creed)', 'Skill', null, 100),
+      A('Common Lore (Imperium)', 'Skill', null, 100),
+      A('Forbidden Lore (Heresy)', 'Skill', null, 100),
+      A('Medicae', 'Skill', null, 100),
+      A('Scholastic Lore (Imperial Creed)', 'Skill', null, 100),
+      A('Basic Weapon Training (Universal)', 'Talent', null, 500),
+      A('Flame Weapon Training', 'Talent', null, 500),
+      A('Melee Weapon Training (Universal)', 'Talent', null, 500),
+      A('Pure Faith', 'Talent', null, 500),
+      A('Unshakeable Faith', 'Talent', null, 200)
+    ],
+    2: [
+      A('Common Lore (Imperial Creed) +10', 'Skill', 'Common Lore (Imperial Creed)', 200),
+      A('Medicae +10', 'Skill', 'Medicae', 200),
+      A('Charm', 'Skill', null, 200),
+      A('Intimidate', 'Skill', null, 200),
+      A('Hatred (Psykers)', 'Talent', null, 200),
+      A('Inspired Rhetoric', 'Talent', 'Charm', 200),
+      A('Sound Constitution (x2)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Common Lore (Imperial Creed) +20', 'Skill', 'Common Lore (Imperial Creed) +10', 200),
+      A('Medicae +20', 'Skill', 'Medicae +10', 200),
+      A('Charm +10', 'Skill', 'Charm', 200),
+      A('Divine Ministration', 'Talent', 'Medicae +10', 500),
+      A('Litany of Hate', 'Talent', 'Hatred', 500),
+      A('Master Orator', 'Talent', 'Fel 30', 500)
+    ],
+    4: [
+      A('Charm +20', 'Skill', 'Charm +10', 200),
+      A('Intimidate +20', 'Skill', 'Intimidate +10', 200),
+      A('Wrath of the Righteous', 'Talent', 'Pure Faith', 500),
+      A('Flagellant', 'Talent', null, 500)
+    ]
+  },
+
+  'Void-Master': {
+    1: [
+      A('Common Lore (Imperial Navy)', 'Skill', null, 100),
+      A('Common Lore (War)', 'Skill', null, 100),
+      A('Navigation (Stellar)', 'Skill', null, 100),
+      A('Pilot (Space Craft)', 'Skill', null, 100),
+      A('Pilot (Flyers)', 'Skill', null, 100),
+      A('Scholastic Lore (Astromancy)', 'Skill', null, 100),
+      A('Pistol Weapon Training (Universal)', 'Talent', null, 500),
+      A('Basic Weapon Training (Universal)', 'Talent', null, 500),
+      A('Mastery of Small Craft', 'Talent', null, 200),
+      A('Nerves of Steel', 'Talent', null, 200)
+    ],
+    2: [
+      A('Pilot (Space Craft) +10', 'Skill', 'Pilot (Space Craft)', 200),
+      A('Pilot (Flyers) +10', 'Skill', 'Pilot (Flyers)', 200),
+      A('Navigation (Stellar) +10', 'Skill', 'Navigation (Stellar)', 200),
+      A('Dodge', 'Skill', null, 200),
+      A('Quick Draw', 'Talent', null, 200),
+      A('Void Accustomed', 'Talent', null, 200),
+      A('Sound Constitution (x2)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Pilot (Space Craft) +20', 'Skill', 'Pilot (Space Craft) +10', 200),
+      A('Pilot (Flyers) +20', 'Skill', 'Pilot (Flyers) +10', 200),
+      A('Gunnery', 'Skill', null, 200),
+      A('Ace Pilot', 'Talent', 'Ag 40, Pilot', 500),
+      A('Hotfoot Pilot', 'Talent', 'Ag 35', 500)
+    ],
+    4: [
+      A('Gunnery +10', 'Skill', 'Gunnery', 200),
+      A('Navigation (Stellar) +20', 'Skill', 'Navigation (Stellar) +10', 200),
+      A('Target Selection', 'Talent', 'BS 50', 500),
+      A('Master Gunner', 'Talent', 'Gunnery +10', 500)
     ]
   }
 };

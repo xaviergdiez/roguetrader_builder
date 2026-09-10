@@ -5,9 +5,10 @@ import {
   parsePrereq, unmetCharPrereqs, MAX_TABLED_RANK
 } from './advances.js';
 
-// four careers have published tables here
-assert.deepEqual(CAREERS_WITH_TABLES.sort(),
-  ['Arch-Militant', 'Astropath Transcendent', 'Explorator', 'Rogue Trader']);
+// all eight careers now have published tables
+assert.deepEqual(CAREERS_WITH_TABLES.slice().sort(),
+  ['Arch-Militant', 'Astropath Transcendent', 'Explorator', 'Missionary',
+   'Navigator', 'Rogue Trader', 'Seneschal', 'Void-Master']);
 
 // every career covers ranks 1-4, and every entry is well formed — a typo in a
 // cost or type would otherwise pass silently into the UI
@@ -18,17 +19,20 @@ for (const [career, ranks] of Object.entries(CAREER_ADVANCES)) {
     for (const a of list) {
       const where = `${career} r${rank} ${a.name}`;
       assert.ok(a.name && typeof a.name === 'string', where + ': name');
-      assert.ok(['Skill', 'Talent', 'Technique'].includes(a.type), where + ': type ' + a.type);
+      assert.ok(['Skill', 'Talent', 'Technique', 'Power'].includes(a.type),
+        where + ': type ' + a.type);
       assert.ok(Number.isInteger(a.cost) && a.cost > 0, where + ': cost');
       assert.ok(a.prereq === null || typeof a.prereq === 'string', where + ': prereq');
     }
   }
 }
 
-// a career with no table is distinguishable from a rank with no entries
-assert.equal(advancesFor('Seneschal', 1), null, 'no published table yet');
-assert.equal(advancesFor('Navigator', 1), null);
+// a career outside the eight is distinguishable from a rank with no entries
+assert.equal(advancesFor('Eldar Corsair', 1), null, 'no table for xenos paths');
+assert.equal(advancesFor('Ork Weirdboy', 1), null);
 assert.ok(Array.isArray(advancesFor('Explorator', 1)));
+assert.ok(Array.isArray(advancesFor('Seneschal', 1)));
+assert.ok(Array.isArray(advancesFor('Void-Master', 4)));
 assert.deepEqual(advancesFor('Explorator', 9), [], 'a rank beyond the table is empty, not null');
 
 // sheets carry alternate ranks and parentheticals, so match the base name
@@ -45,6 +49,11 @@ assert.equal(advancesFor('Explorator', 1).find((a) => a.name === 'Tech-Use').cos
 assert.equal(advancesFor('Explorator', 1).find((a) => a.name === 'Security').cost, 200);
 assert.equal(advancesFor('Astropath Transcendent', 2).find((a) => a.name === 'Psy Rating 3').cost, 300);
 assert.equal(advancesFor('Arch-Militant', 3).find((a) => a.name === 'Swift Attack').prereq, 'WS 35');
+assert.equal(advancesFor('Seneschal', 1).find((a) => a.name === 'Seeker of Lore').cost, 200);
+assert.equal(advancesFor('Missionary', 1).find((a) => a.name === 'Pure Faith').cost, 500);
+assert.equal(advancesFor('Void-Master', 3).find((a) => a.name === 'Ace Pilot').prereq, 'Ag 40, Pilot');
+// the Navigator table introduces a fourth advance type
+assert.equal(advancesFor('Navigator', 1).find((a) => a.name === 'Navigator Power (Novice)').type, 'Power');
 assert.equal(MAX_TABLED_RANK, 4);
 
 // prerequisite parsing

@@ -1244,8 +1244,10 @@ const CSS = `
   background:linear-gradient(180deg,#241d0f,#0d1109);
   box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
 
-/* fate and profit change in play, so their label row carries steppers */
-.rt-adjrow{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:3px;}
+/* label above the number, steppers below it — the label used to sit between
+   the buttons, which pushed them past the edge of a 78px gauge */
+.rt-der-k.top{margin-top:0;margin-bottom:3px;}
+.rt-adjrow{display:flex;align-items:center;justify-content:center;gap:4px;margin-top:4px;}
 .rt-adjb{flex:none;width:20px;height:20px;line-height:1;cursor:pointer;font-size:12px;
   border:1px solid var(--brass-dim);color:var(--gold-lit);background:rgba(6,12,8,.55);
   transition:border-color .14s,color .14s;}
@@ -2987,27 +2989,30 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
               </div>
             </div>
             <div className="rt-der">
+              <div className="rt-der-k top">FATE</div>
               <div className="rt-der-v">{fatePoints ?? '\u2014'}</div>
               <div className="rt-adjrow">
                 <button className="rt-adjb" onClick={() => onFate(-1)}
                   disabled={fatePoints == null || fatePoints <= 0}
                   aria-label="Spend a Fate Point">{'\u2212'}</button>
-                <span className="rt-der-k">FATE</span>
                 <button className="rt-adjb" onClick={() => onFate(1)}
                   disabled={fatePoints == null} aria-label="Regain a Fate Point">+</button>
               </div>
             </div>
             <div className="rt-der">
+              <div className="rt-der-k top">PROFIT</div>
               <div className="rt-der-v">{profitFactor}</div>
               <div className="rt-adjrow">
                 <button className="rt-adjb" onClick={() => onProfit(-1)}
                   disabled={profitFactor <= 0} aria-label="Lower Profit Factor">{'\u2212'}</button>
-                <span className="rt-der-k">PROFIT</span>
                 <button className="rt-adjb" onClick={() => onProfit(1)}
                   aria-label="Raise Profit Factor">+</button>
               </div>
             </div>
-            <div className="rt-der"><div className="rt-der-v">{allTalents.length}</div><div className="rt-der-k">TALENTS</div></div>
+            <div className="rt-der">
+              <div className="rt-der-k top">TALENTS</div>
+              <div className="rt-der-v">{allTalents.length}</div>
+            </div>
             {/* XP is a running campaign total, so it gets steppers rather than
                 a field you have to select and retype. */}
             <div className="rt-xpgauge">
@@ -3043,7 +3048,10 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
               </div>
             </div>
             {psyRating > 0 && (
-              <div className="rt-der"><div className="rt-der-v">{psyRating}</div><div className="rt-der-k">PSY RATING</div></div>
+              <div className="rt-der">
+                <div className="rt-der-k top">PSY RATING</div>
+                <div className="rt-der-v">{psyRating}</div>
+              </div>
             )}
           </div>
         </div>

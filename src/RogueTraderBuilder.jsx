@@ -12,6 +12,11 @@ import {
 } from './psychic.js';
 import { rankForXp, romanRank, xpToNextRank, isStartingBudget, spendableXp, remainingXp } from './xp.js';
 import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
+import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
+import {
+  POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
+  allocationTotals, allocate, isComplete
+} from './points.js';
 import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
 
 /* ============================================================
@@ -591,6 +596,15 @@ const STEPS = [
   { id: 'career', label: 'Career', data: CAREERS }
 ];
 
+// The origin catalogue the sheet importer matches names against. Derived from
+// STEPS so it cannot drift from the data the builder itself offers.
+const SHEET_CATALOG = {
+  steps: STEPS.reduce((out, s) => {
+    out[s.id] = s.data.map(({ id, name }) => ({ id, name }));
+    return out;
+  }, {})
+};
+
 const MAGOS_PRESET = {
   name: 'Magos Linus-Theta 7',
   home: 'forge', birthright: 'savant', lure: 'renegade',
@@ -1077,6 +1091,35 @@ const CSS = `
 .rt-diff.on{color:#161004;border-color:var(--gold-lit);
   background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
 .rt-diff.on span{color:#3d2c06;}
+
+/* ---- import dialog ---- */
+.rt-import{width:min(560px,94vw);}
+.rt-import .rt-field{margin-bottom:7px;}
+.rt-import-tab{font-size:14px;}
+.rt-import-ta{min-height:90px;font-size:11.5px;color:var(--text);}
+.rt-import-foot{margin-top:14px;padding-top:12px;border-top:1px solid var(--brass-dim);
+  display:flex;justify-content:center;}
+.rt-importwarn{margin-bottom:10px;padding:9px 11px;font-size:13px;line-height:1.5;
+  border:1px solid var(--brass);border-left:3px solid var(--gold);
+  background:rgba(224,185,85,.1);color:var(--text);}
+.rt-importwarn p{margin:0 0 4px;}
+.rt-importwarn p:last-child{margin-bottom:0;}
+.rt-tabs-found{margin:10px 0;}
+.rt-import code{font-family:var(--mono);font-size:11px;color:var(--gold-lit);}
+
+/* ---- point-buy characteristics ---- */
+.rt-points{margin-top:4px;}
+.rt-pointsum{display:flex;align-items:baseline;gap:10px;margin-bottom:9px;}
+.rt-pointsleft{font-family:var(--display);font-size:15px;font-weight:600;
+  letter-spacing:.06em;color:var(--gold-lit);}
+.rt-pointsleft.done{color:var(--green);}
+.rt-pointrow{display:flex;align-items:center;gap:8px;padding:6px 3px;
+  border-bottom:1px solid rgba(143,224,168,.09);}
+.rt-pointrow:last-child{border-bottom:0;}
+.rt-pointbase{font-family:var(--mono);font-size:10.5px;color:var(--dim);}
+.rt-pointadd{font-family:var(--mono);font-size:11px;min-width:28px;text-align:right;
+  color:var(--gold-lit);}
+@media (pointer:coarse){.rt-pointrow{padding:9px 3px;}}
 
 /* ---- psychic panel ---- */
 .rt-headbtn.psy{border-color:var(--warp);color:var(--warp);
@@ -1738,6 +1781,15 @@ export default function RogueTraderBuilder({ me }) {
   // every premade, and any starting Explorer who used their 500 at creation —
   // would otherwise show that allowance as still available.
   const [spentAdj, setSpentAdj] = useState(0);
+  // Imported sheets: characteristics/wounds/fate stated outright rather than
+  // derived. Null means this character was built here and derives normally.
+  const [finalTotals, setFinalTotals] = useState(null);
+  const [finalWounds, setFinalWounds] = useState(null);
+  const [finalFate, setFinalFate] = useState(null);
+  // Point-buy: 25 base plus an allocation from a pool of 100. Feeds `rolls`,
+  // since the result is a pre-modifier value exactly like a 2d10+25 roll.
+  const [pointAlloc, setPointAlloc] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
   const [psyRating, setPsyRating] = useState(0);   // 0 = not a psyker
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
@@ -1773,6 +1825,9 @@ export default function RogueTraderBuilder({ me }) {
         setDamage(s.damage || 0); setWoundBonus(s.woundBonus || 0);
         setFateAdj(s.fateAdj || 0); setProfitAdj(s.profitAdj || 0);
         setSpentAdj(s.spentAdj || 0);
+        setFinalTotals(s.finalTotals || null);
+        setFinalWounds(s.finalWounds ?? null); setFinalFate(s.finalFate ?? null);
+        setPointAlloc(s.pointAlloc || null);
         setAvatar(s.avatar || null); setExtras(readExtras(s.extras));
         setPsyRating(s.psyRating || 0);
         if (typeof s.xp === 'number') setXp(s.xp);
@@ -1788,13 +1843,15 @@ export default function RogueTraderBuilder({ me }) {
       try {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-          fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx
+          fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
+          finalTotals, finalWounds, finalFate, pointAlloc
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
   }, [name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-      fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx, loaded]);
+      fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
+      finalTotals, finalWounds, finalFate, pointAlloc, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -1830,16 +1887,23 @@ export default function RogueTraderBuilder({ me }) {
   const home = build.picked.home;
   const career = build.picked.career;
 
+  // An imported sheet may carry FINAL characteristics, which already include
+  // origin modifiers and advances. Those are used verbatim — applying mods on
+  // top would count the origin path twice.
   const totals = useMemo(() => {
+    if (finalTotals) return finalTotals;
     if (!rolls) return null;
     const t = {};
     CHAR_KEYS.forEach((k) => { t[k] = (rolls[k] || 0) + (build.mods[k] || 0); });
     return t;
-  }, [rolls, build.mods]);
+  }, [finalTotals, rolls, build.mods]);
 
   const tBonus = totals ? Math.floor(totals.t / 10) : null;
-  const wounds = (tBonus != null && woundRoll != null)
-    ? tBonus * 2 + woundRoll + build.bonusWounds : null;
+  // An imported sheet states its wounds outright; a built one derives them.
+  const wounds = finalWounds != null
+    ? finalWounds
+    : (tBonus != null && woundRoll != null
+      ? tBonus * 2 + woundRoll + build.bonusWounds : null);
 
   // wounds is the origin-path maximum; ws carries the playable state on top
   const ws = woundState(wounds, woundBonus, damage);
@@ -1857,7 +1921,11 @@ export default function RogueTraderBuilder({ me }) {
   // These MUST stay below fatePoints and profitFactor. Declared above them
   // they still build clean, then throw "Cannot access before initialization"
   // at runtime on every render — const has no hoisted value to read.
-  const fateShown = fatePoints == null ? null : Math.max(0, fatePoints + fateAdj);
+  // An imported sheet states its Fate outright, exactly as it does its wounds.
+  // Without this the parsed value was stored, persisted and then ignored, and
+  // the sheet showed the origin-path derivation instead.
+  const fateBase = finalFate != null ? finalFate : fatePoints;
+  const fateShown = fateBase == null ? null : Math.max(0, fateBase + fateAdj);
   const profitShown = Math.max(0, profitFactor + profitAdj);
 
   /* ---- actions ---- */
@@ -1876,6 +1944,47 @@ export default function RogueTraderBuilder({ me }) {
   };
   const rerollOne = (k) => setRolls((p) => ({ ...p, [k]: 25 + d(10) + d(10) }));
 
+  /* ---- point-buy: 25 base, a pool of 100 ---- */
+
+  const startPointBuy = () => {
+    const alloc = emptyAllocation();
+    setPointAlloc(alloc);
+    setFinalTotals(null);
+    setRolls(allocationTotals(alloc));
+    if (woundRoll == null) setWoundRoll(home ? home.woundDie() : d(5));
+    if (fateRoll == null) setFateRoll(d(10));
+  };
+
+  const spendPoint = (k, n) => setPointAlloc((prev) => {
+    const next = allocate(prev || emptyAllocation(), k, n);
+    if (next !== prev) setRolls(allocationTotals(next));
+    return next;
+  });
+
+  /* ---- importing a character from a sheet ---- */
+
+  const applySheet = (s) => {
+    setName(s.name || '');
+    setSel(s.sel || {});
+    setChoices(s.choices || {});
+    setRolls(s.rolls || null);
+    setFinalTotals(s.finalTotals || null);
+    setPointAlloc(null);
+    setWoundRoll(s.woundRoll ?? null);
+    setFateRoll(s.fateRoll ?? null);
+    setFinalWounds(s.finalWounds ?? null);
+    setFinalFate(s.finalFate ?? null);
+    setDamage(s.damage || 0);
+    setWoundBonus(s.woundBonus || 0);
+    setPsyRating(s.psyRating || 0);
+    if (typeof s.xp === 'number') setXp(s.xp);
+    setAvatar(s.avatar && s.avatar.src ? { src: s.avatar.src, framing: DEFAULT_FRAMING } : null);
+    setExtras(readExtras(s.extras));
+    setFateAdj(0); setProfitAdj(0); setSpentAdj(0);
+    setCharId(null);
+    setStepIx(7);
+  };
+
   const loadPreset = () => {
     setName(MAGOS_PRESET.name);
     setSel({
@@ -1892,6 +2001,7 @@ export default function RogueTraderBuilder({ me }) {
     setName(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
     setDamage(0); setWoundBonus(0);
     setFateAdj(0); setProfitAdj(0); setSpentAdj(0);
+    setFinalTotals(null); setFinalWounds(null); setFinalFate(null); setPointAlloc(null);
     setPsyRating(0); setXp(STARTING_XP_DEFAULT);
     setAvatar(null); setExtras(EMPTY_EXTRAS);
     setStepIx(0);
@@ -1909,7 +2019,8 @@ export default function RogueTraderBuilder({ me }) {
       career: career ? career.name : null,
       updatedAt: Date.now(),
       state: { name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-               fateAdj, profitAdj, spentAdj, psyRating, xp }
+               fateAdj, profitAdj, spentAdj, psyRating, xp,
+               finalTotals, finalWounds, finalFate, pointAlloc }
     });
     if (!writeRoster(next)) {
       setRosterErr('Could not save — browser storage is full. A large portrait is the usual cause.');
@@ -1935,6 +2046,10 @@ export default function RogueTraderBuilder({ me }) {
     setFateAdj(s.fateAdj || 0);
     setProfitAdj(s.profitAdj || 0);
     setSpentAdj(s.spentAdj || 0);
+    setFinalTotals(s.finalTotals || null);
+    setFinalWounds(s.finalWounds ?? null);
+    setFinalFate(s.finalFate ?? null);
+    setPointAlloc(s.pointAlloc || null);
     setAvatar(s.avatar || null);
     setExtras(readExtras(s.extras));
     setPsyRating(s.psyRating || 0);
@@ -2036,7 +2151,7 @@ export default function RogueTraderBuilder({ me }) {
             showIntro={stepIx === 0}
             name={name}
             setName={setName}
-            onPreset={loadPreset}
+            onImport={() => setImportOpen(true)}
           />
         )}
 
@@ -2044,6 +2159,8 @@ export default function RogueTraderBuilder({ me }) {
           <CharacteristicsPane
             rolls={rolls} totals={totals} mods={build.mods}
             rollAll={rollAll} rerollOne={rerollOne} picked={build.picked}
+            pointAlloc={pointAlloc} onStartPoints={startPointBuy} onSpendPoint={spendPoint}
+            finalTotals={finalTotals}
             home={home} wounds={ws ? ws.max : null} fatePoints={fateShown}
             profitFactor={profitShown} tBonus={tBonus}
           />
@@ -2100,6 +2217,22 @@ export default function RogueTraderBuilder({ me }) {
           onSave={saveCharacter} onOpen={openCharacter}
           onDelete={deleteCharacter} onNew={newCharacter}
           onClose={() => setRosterOpen(false)}
+        />
+      )}
+
+      {importOpen && (
+        <ImportDialog
+          onApply={applySheet}
+          onImportMany={(s) => {
+            const id = newId();
+            const next = upsert(roster, {
+              id, name: s.name, career: null, updatedAt: Date.now(), state: s
+            });
+            writeRoster(next);
+            setRoster(next);
+          }}
+          onPreset={loadPreset}
+          onClose={() => setImportOpen(false)}
         />
       )}
 
@@ -2366,6 +2499,166 @@ function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onCl
           <button className="rt-opt" onClick={signOut}>Sign out</button>
         </div>
       )}
+    </dialog>
+  );
+}
+
+/* ---------------------------- IMPORT DIALOG ----------------------------
+   Loads a character from a Google Sheet. The fetch goes through /api/sheet
+   because Google sends no CORS headers, so `npm run dev` — which has no /api
+   — falls back to pasting the CSV, and that path always works. */
+
+function ImportDialog({ onApply, onImportMany, onPreset, onClose }) {
+  const dialogRef = useRef(null);
+  const [source, setSource] = useState('');
+  const [tab, setTab] = useState('');
+  const [paste, setPaste] = useState('');
+  const [tabs, setTabs] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  const [warnings, setWarnings] = useState([]);
+
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  const id = sheetIdFrom(source);
+
+  // Vite's dev server has no serverless runtime: it answers /api/sheet with
+  // the FILE ITSELF, as text/javascript with a 200. Checking only res.ok lets
+  // that JavaScript source reach the CSV parser, which then fails in a way
+  // that says nothing useful — so the content type is checked too.
+  const API_MISSING = 'The /api/sheet helper is not running here — a plain '
+    + '`npm run dev` has no serverless functions. Use `vercel dev`, or the '
+    + 'deployed site, or paste the CSV below.';
+
+  const callApi = async (params, expect) => {
+    const res = await fetch(`/api/sheet?${new URLSearchParams(params)}`);
+    if (!res.ok) {
+      throw new Error(res.status === 404
+        ? 'Sheet or tab not found. Is it shared with "anyone with the link"?'
+        : `Could not reach the sheet (${res.status}).`);
+    }
+    const type = res.headers.get('content-type') || '';
+    if (!type.includes(expect === 'json' ? 'json' : 'csv')) throw new Error(API_MISSING);
+    return expect === 'json' ? res.json() : res.text();
+  };
+
+  const fetchCsv = (tabName) =>
+    callApi(tabName ? { id, tab: tabName } : { id }, 'csv');
+
+  const applyCsv = (text, label) => {
+    const { state, warnings: w } = parseCharacterSheet(parseCsv(text), SHEET_CATALOG);
+    if (!state.name && !state.finalTotals && !state.rolls) {
+      setErr(`${label || 'That sheet'} did not look like a character sheet.`);
+      return false;
+    }
+    setWarnings(w);
+    onApply(state);
+    return true;
+  };
+
+  const loadOne = async () => {
+    setErr(''); setWarnings([]); setBusy('one');
+    try {
+      if (applyCsv(await fetchCsv(tab.trim()), 'That tab')) close();
+    } catch (e) { setErr(e.message); } finally { setBusy(''); }
+  };
+
+  const listTabs = async () => {
+    setErr(''); setBusy('tabs');
+    try {
+      setTabs((await callApi({ id, tabs: '1' }, 'json')).tabs || []);
+    } catch (e) { setErr(e.message); } finally { setBusy(''); }
+  };
+
+  const importAll = async () => {
+    setErr(''); setBusy('all');
+    const done = [], failed = [];
+    try {
+      for (const name of tabs) {
+        try {
+          const { state } = parseCharacterSheet(parseCsv(await fetchCsv(name)), SHEET_CATALOG);
+          if (state.name) { onImportMany(state); done.push(state.name); }
+          else failed.push(name);
+        } catch { failed.push(name); }
+      }
+      setWarnings([
+        `Saved ${done.length} character${done.length === 1 ? '' : 's'} to the roster.`,
+        ...(failed.length ? [`Skipped: ${failed.join(', ')}`] : [])
+      ]);
+    } finally { setBusy(''); }
+  };
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer rt-import" onClose={onClose}
+      aria-label="Load character">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">Load character</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+
+      {err && <div className="rt-warn">{err}</div>}
+      {warnings.length > 0 && (
+        <div className="rt-importwarn">
+          {warnings.map((w, i) => <p key={i}>{w}</p>)}
+        </div>
+      )}
+
+      <div className="rt-conds-h">Google Sheet</div>
+      <input className="rt-field" value={source} onChange={(e) => setSource(e.target.value)}
+        placeholder="Paste the sheet link, or just its id" />
+      {source && !id && <p className="rt-psynote">That is not a Google Sheets link or id.</p>}
+
+      <input className="rt-field rt-import-tab" value={tab} onChange={(e) => setTab(e.target.value)}
+        placeholder="Tab name — leave blank for the first tab" />
+
+      <div className="rt-btnrow">
+        <button className="rt-btn" disabled={!id || busy} onClick={loadOne}>
+          {busy === 'one' ? 'Loading…' : 'Load this tab'}
+        </button>
+        <button className="rt-btn ghost" disabled={!id || busy} onClick={listTabs}>
+          {busy === 'tabs' ? 'Listing…' : 'List tabs'}
+        </button>
+      </div>
+
+      {tabs && (
+        <div className="rt-tabs-found">
+          <div className="rt-conds-h">{tabs.length} tab{tabs.length === 1 ? '' : 's'}</div>
+          <ul className="rt-addl">
+            {tabs.map((t) => (
+              <li key={t}>
+                <button className="rt-addi" disabled={!!busy}
+                  onClick={() => { setTab(t); }}>{t}</button>
+              </li>
+            ))}
+          </ul>
+          <button className="rt-btn wide" disabled={!!busy} onClick={importAll}>
+            {busy === 'all' ? 'Importing…' : `Import all ${tabs.length} to the roster`}
+          </button>
+        </div>
+      )}
+
+      <div className="rt-conds-h">Or paste the sheet as CSV</div>
+      <p className="rt-psynote">
+        File → Download → CSV, then paste it here. This needs no server, so it
+        works under <code>npm run dev</code> where /api is not available.
+      </p>
+      <textarea className="rt-ta rt-import-ta" value={paste}
+        onChange={(e) => setPaste(e.target.value)}
+        placeholder="Field,Value…" />
+      <button className="rt-btn wide" disabled={!paste.trim()}
+        onClick={() => { setErr(''); setWarnings([]); if (applyCsv(paste, 'That CSV')) close(); }}>
+        Load from pasted CSV
+      </button>
+
+      <div className="rt-import-foot">
+        <button className="rt-opt" onClick={() => { onPreset(); close(); }}>
+          Load the example character
+        </button>
+      </div>
     </dialog>
   );
 }
@@ -2803,7 +3096,7 @@ const STEP_LEAD = {
   career: 'Your role aboard the ship. This decides your starting Skills, Talents and gear.'
 };
 
-function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name, setName, onPreset }) {
+function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name, setName, onImport }) {
   return (
     <div>
       {showIntro && (
@@ -2815,7 +3108,7 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
             onChange={(e) => setName(e.target.value)}
           />
           <div className="rt-btnrow">
-            <button className="rt-btn ghost" onClick={onPreset}>Load Magos Linus-Theta 7</button>
+            <button className="rt-btn ghost" onClick={onImport}>Load character</button>
           </div>
         </div>
       )}
@@ -2839,22 +3132,54 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
 
 /* ----------------------- CHARACTERISTICS PANE ----------------------- */
 
-function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wounds, fatePoints, profitFactor, tBonus, picked }) {
+function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wounds, fatePoints,
+  profitFactor, tBonus, picked, pointAlloc, onStartPoints, onSpendPoint, finalTotals }) {
+  const remaining = pointAlloc ? pointsRemaining(pointAlloc) : POINT_POOL;
   return (
     <div>
       <h2 className="rt-h2">Characteristics</h2>
       <p className="rt-lead">
-        Each characteristic is 2d10 + 25, then your Origin Path modifiers are applied on top.
-        Reroll any single line if the dice have been unkind.
+        {finalTotals
+          ? 'These characteristics came from an imported sheet and already include Origin Path modifiers and advances, so nothing further is applied on top.'
+          : pointAlloc
+            ? `Every characteristic starts at ${POINT_BASE}. Distribute ${POINT_POOL} points across the nine, then your Origin Path modifiers are applied on top.`
+            : 'Each characteristic is 2d10 + 25, then your Origin Path modifiers are applied on top. Reroll any single line if the dice have been unkind.'}
       </p>
 
-      {!rolls && (
+      {!rolls && !finalTotals && (
         <>
           {!home && <p className="rt-empty" style={{ marginBottom: 12 }}>
             Pick a Home World first so Wounds and Fate Points can be worked out.
           </p>}
-          <button className="rt-btn wide" onClick={rollAll}>Roll characteristics</button>
+          <div className="rt-btnrow">
+            <button className="rt-btn" onClick={rollAll}>Roll 2d10+25</button>
+            <button className="rt-btn ghost" onClick={onStartPoints}>Spend {POINT_POOL} points</button>
+          </div>
         </>
+      )}
+
+      {pointAlloc && totals && (
+        <div className="rt-points">
+          <div className="rt-pointsum">
+            <span className={'rt-pointsleft' + (remaining === 0 ? ' done' : '')}>
+              {remaining} of {POINT_POOL} points left
+            </span>
+            {isComplete(pointAlloc) && <span className="rt-psynote">Pool fully spent.</span>}
+          </div>
+          {CHAR_KEYS.map((k) => (
+            <div className="rt-pointrow" key={k}>
+              <span className="rt-code" data-g={charGroup(k)}>{CHAR_SHORT[k]}</span>
+              <span className="rt-cname">{CHAR_NAMES[k]}</span>
+              <span className="rt-pointbase">{POINT_BASE}</span>
+              <span className="rt-pointadd">+{pointAlloc[k] || 0}</span>
+              <button className="rt-adjb" onClick={() => onSpendPoint(k, -1)}
+                disabled={!(pointAlloc[k] > 0)} aria-label={'Take a point back from ' + CHAR_NAMES[k]}>{'−'}</button>
+              <button className="rt-adjb" onClick={() => onSpendPoint(k, 1)}
+                disabled={remaining <= 0} aria-label={'Spend a point on ' + CHAR_NAMES[k]}>+</button>
+              <span className="rt-cval">{totals[k]}</span>
+            </div>
+          ))}
+        </div>
       )}
 
       {rolls && totals && (

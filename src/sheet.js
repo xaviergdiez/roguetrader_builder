@@ -127,7 +127,8 @@ export function parseCharacterSheet(rows, catalog) {
     const value = String(row[1] || '').trim();
     const note = String(row[2] || '').trim();
     if (!field) continue;
-    if (field.startsWith('#')) { section = key(field.replace(/[#—–-]/g, '')); continue; }
+    // strip the "# — NAME —" decoration down to the section name
+    if (field.startsWith('#')) { section = key(field.replace(/[-#—–]/g, '')); continue; }
     if (key(field) === 'field') continue;
     if (!value) continue;
     entries.push({ field, value, note, section });

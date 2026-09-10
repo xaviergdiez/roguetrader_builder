@@ -10,7 +10,8 @@ import {
   risksPhenomena, psyRatingInfo, disciplineSlots, thoughtSendingKm,
   describePower, manifest, sustainPenalty, DISCIPLINES, ALL_TECHNIQUES
 } from './psychic.js';
-import { rankForXp, xpToNextRank, isStartingBudget } from './xp.js';
+import { rankForXp, xpToNextRank, isStartingBudget, spendableXp, remainingXp } from './xp.js';
+import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
 import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
 
 /* ============================================================
@@ -1146,12 +1147,46 @@ const CSS = `
 .rt-powers .rt-psynote{color:var(--parch-dim);}
 .rt-discs{margin-top:14px;padding-top:12px;border-top:1px solid rgba(109,87,38,.4);}
 
-/* ---- rank / xp gauge ---- */
-.rt-xpgauge{flex:1 1 96px;min-width:96px;}
-.rt-xpin{width:100%;margin-top:5px;padding:3px 4px;text-align:center;
-  font-family:var(--mono);font-size:10px;color:var(--brass-lit);
-  background:rgba(0,0,0,.4);border:1px solid var(--brass-dim);}
+/* ---- xp gauge: a running campaign total, stepped rather than retyped ---- */
+.rt-xpgauge{flex:2 1 180px;min-width:160px;display:flex;flex-direction:column;
+  justify-content:center;padding:9px 8px;
+  border:1px solid var(--brass);
+  background:linear-gradient(180deg,#241d0f,#0d1109);
+  box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
+.rt-xpin{flex:1;min-width:0;text-align:center;padding:4px 2px;
+  font-family:var(--display);font-size:19px;font-weight:600;
+  color:var(--gold-lit);background:rgba(0,0,0,.4);border:1px solid var(--brass-dim);}
 .rt-xpin:focus{outline:none;border-color:var(--gold);}
+.rt-xpin::-webkit-outer-spin-button,.rt-xpin::-webkit-inner-spin-button{
+  -webkit-appearance:none;margin:0;}
+.rt-xpleft{font-family:var(--mono);font-size:9px;letter-spacing:.14em;
+  color:var(--green-dim);}
+.rt-xpleft.over{color:var(--bad);}
+
+/* ---- advances tab ---- */
+.rt-advsum{margin:0 0 12px;font-size:13.5px;color:var(--parch-dim);}
+.rt-advsum b{color:var(--parch-ink);font-weight:600;}
+.rt-over{color:var(--crimson);font-weight:600;}
+.rt-advrank{margin-bottom:14px;}
+.rt-advrank.locked{opacity:.5;}
+.rt-advlist{list-style:none;margin:0;padding:0;}
+.rt-adv{display:flex;flex-wrap:wrap;align-items:center;gap:7px;
+  padding:6px 2px;border-bottom:1px solid rgba(109,87,38,.28);}
+.rt-adv-n{flex:1;min-width:120px;font-size:14.5px;color:var(--parch-ink);}
+.rt-adv.owned .rt-adv-n{font-weight:600;}
+.rt-adv-c{font-family:var(--mono);font-size:11px;color:#6d5726;min-width:34px;text-align:right;}
+.rt-adv-b{flex:none;cursor:pointer;padding:4px 11px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:#4a3f28;border:1px solid var(--brass);background:rgba(120,98,54,.14);
+  transition:background .14s,color .14s;}
+.rt-adv-b:hover:not(:disabled){background:rgba(120,98,54,.3);color:var(--parch-ink);}
+.rt-adv-b:disabled{opacity:.35;cursor:default;}
+.rt-adv.owned .rt-adv-b{border-color:var(--crimson);color:#8a2c1e;
+  background:rgba(165,42,30,.12);}
+.rt-adv-p{flex-basis:100%;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.05em;color:#8a6f31;}
+.rt-adv.blocked .rt-adv-p{color:var(--crimson);}
+@media (pointer:coarse){.rt-adv-b{padding:9px 14px;}}
 
 /* conditional modifiers from traits — off by default, applied per test */
 .rt-conds{margin-bottom:9px;}
@@ -1313,7 +1348,9 @@ const CSS = `
    portrait instead of a full-width bar with a separate row underneath */
 .rt-idstats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:stretch;}
 .rt-idstats .rt-der{flex:1 1 78px;min-width:78px;}
-.rt-wgauge{flex:3 1 240px;min-width:210px;display:flex;flex-direction:column;
+/* wounds and XP share the strip, so wounds gives up the width it used to take
+   for itself — both are two-row controls now */
+.rt-wgauge{flex:2 1 190px;min-width:170px;display:flex;flex-direction:column;
   justify-content:center;padding:9px 8px;
   border:1px solid var(--brass);
   background:linear-gradient(180deg,#241d0f,#0d1109);
@@ -1881,6 +1918,13 @@ export default function RogueTraderBuilder({ me }) {
   const removeExtra = (kind, value) =>
     setExtras((p) => ({ ...p, [kind]: p[kind].filter((v) => v !== value) }));
 
+  const buyAdvance = (a) => setExtras((p) => (
+    p.advances.some((x) => x.name === a.name) ? p
+      : { ...p, advances: [...p.advances, { name: a.name, type: a.type, cost: a.cost, rank: a.rank }] }
+  ));
+  const refundAdvance = (name) =>
+    setExtras((p) => ({ ...p, advances: p.advances.filter((x) => x.name !== name) }));
+
   const stepDone = (i) => {
     if (i < 6) return !!sel[STEPS[i].id];
     if (i === 6) return !!rolls;
@@ -1970,6 +2014,7 @@ export default function RogueTraderBuilder({ me }) {
             avatar={avatar} setAvatar={setAvatar}
             extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
+            onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance}
           />
         )}
       </div>
@@ -2034,7 +2079,9 @@ export default function RogueTraderBuilder({ me }) {
 const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
 const AUTOSAVE_KEY = 'rt:current';
 const STARTING_XP_DEFAULT = 5000;   // a starting Explorer, per the rank table
-const EMPTY_EXTRAS = { skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [] };
+// advances are objects ({name, type, cost, rank}), not names — the cost has to
+// travel with them so spent XP can be summed and refunded
+const EMPTY_EXTRAS = { skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [], advances: [] };
 // merges a stored extras object over the empty shape, so an older save that
 // predates a category still loads
 const readExtras = (v) => ({ ...EMPTY_EXTRAS, ...(v || {}) });
@@ -2798,6 +2845,7 @@ const DOSSIER_TABS = [
   { id: 'traits', label: 'Traits' },
   { id: 'gear', label: 'Gear' },
   { id: 'powers', label: 'Powers' },
+  { id: 'advances', label: 'Advances' },
   { id: 'notes', label: 'Notes' }
 ];
 
@@ -2812,17 +2860,31 @@ const ADD_SOURCES = {
 
 function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
-  psyRating, onPsyRating, xp, onXp }) {
+  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance }) {
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
   const career = build.picked.career;
   // STEPS includes career, so build already folded its skills/talents/traits in
   // (and deduped them). Concatenating career.* again is what duplicated every
   // entry in these lists.
-  // origin-path entries first, then anything gained after creation
-  const allSkills = [...build.skills, ...extras.skills];
-  const allTalents = [...build.talents, ...extras.talents];
+  // Purchased advances land in whichever list matches their type, so the sheet
+  // reads as one thing rather than making you cross-reference the Advances tab.
+  const ofType = (...types) =>
+    extras.advances.filter((a) => types.includes(a.type)).map((a) => a.name);
+  const advSkills = ofType('Skill');
+  const advTalents = ofType('Talent');
+  const advPowers = ofType('Technique', 'Power');
+
+  const charRank = rankForXp(xp);
+  const careerAdvances = allAdvances(career ? career.name : '');
+  const spentXp = extras.advances.reduce((n, a) => n + (a.cost || 0), 0);
+  const remaining = remainingXp(xp, spentXp);
+
+  // origin-path entries first, then free additions, then purchased advances
+  const allSkills = [...build.skills, ...extras.skills, ...advSkills];
+  const allTalents = [...build.talents, ...extras.talents, ...advTalents];
   const allTraits = [...build.traits, ...extras.traits];
+  const allPowers = [...extras.powers, ...advPowers];
   const allNotes = [...build.notes, ...extras.notes];
   const gearCount =
     (career ? parseGear(career.gear).flat().filter((l) => !extras.gearDropped.includes(l)).length : 0)
@@ -2830,7 +2892,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
 
   const listFor = (kind) => ({
     skills: allSkills, talents: allTalents, traits: allTraits,
-    gear: extras.gear, powers: extras.powers, notes: allNotes
+    gear: extras.gear, powers: allPowers, notes: allNotes
   }[kind] || []);
 
   const counts = {
@@ -2839,7 +2901,8 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
     talents: allTalents.length,
     traits: allTraits.length,
     gear: gearCount,
-    powers: extras.powers.length,
+    powers: allPowers.length,
+    advances: extras.advances.length,
     notes: allNotes.length
   };
 
@@ -2882,17 +2945,32 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
             <div className="rt-der"><div className="rt-der-v">{fatePoints ?? '\u2014'}</div><div className="rt-der-k">FATE</div></div>
             <div className="rt-der"><div className="rt-der-v">{profitFactor}</div><div className="rt-der-k">PROFIT</div></div>
             <div className="rt-der"><div className="rt-der-v">{allTalents.length}</div><div className="rt-der-k">TALENTS</div></div>
-            <div className="rt-der rt-xpgauge">
-              <div className="rt-der-v">{rankForXp(xp)}</div>
-              <div className="rt-der-k">RANK</div>
-              <input className="rt-xpin" type="number" min="0" step="100" value={xp}
-                onChange={(e) => onXp(Math.max(0, parseInt(e.target.value, 10) || 0))}
-                aria-label="Experience points"
-                title={isStartingBudget(xp)
-                  ? 'Within the 4,500-5,000 XP starting allowance'
-                  : (xpToNextRank(xp) != null
-                    ? xpToNextRank(xp).toLocaleString() + ' XP to the next rank'
-                    : 'Rank 8 — no further thresholds')} />
+            {/* XP is a running campaign total, so it gets steppers rather than
+                a field you have to select and retype. */}
+            <div className="rt-xpgauge">
+              <div className="rt-wrow">
+                <button className="rt-wbtn" disabled={xp <= 0}
+                  onClick={() => onXp(Math.max(0, xp - 100))}
+                  aria-label="Remove 100 XP">{'−'}</button>
+                <input className="rt-xpin" type="number" min="0" step="100" value={xp}
+                  onChange={(e) => onXp(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  aria-label="Experience points"
+                  title={isStartingBudget(xp)
+                    ? 'Within the 4,500-5,000 XP starting allowance'
+                    : (xpToNextRank(xp) != null
+                      ? xpToNextRank(xp).toLocaleString() + ' XP to the next rank'
+                      : 'Rank 8 — no further thresholds')} />
+                <button className="rt-wbtn" onClick={() => onXp(xp + 100)}
+                  aria-label="Award 100 XP">+</button>
+              </div>
+              <div className="rt-wfoot">
+                <span className="rt-der-k">XP · RANK {charRank}</span>
+                <span className={'rt-xpleft' + (remaining < 0 ? ' over' : '')}>
+                  {remaining < 0
+                    ? (-remaining).toLocaleString() + ' OVER'
+                    : remaining.toLocaleString() + ' LEFT'}
+                </span>
+              </div>
             </div>
             {psyRating > 0 && (
               <div className="rt-der"><div className="rt-der-v">{psyRating}</div><div className="rt-der-k">PSY RATING</div></div>
@@ -3005,11 +3083,14 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
 
             {psyRating <= 0
               ? <p className="rt-empty">Not a psyker. Raise the Psy Rating to record disciplines and powers.</p>
-              : extras.powers.length
+              : allPowers.length
                 ? <ul className="rt-list rt-2col">
-                  {extras.powers.map((p, i) => (
+                  {allPowers.map((p, i) => (
                     <Entry key={i} text={describePower(p)}
-                      onRemove={() => onRemoveExtra('powers', p)} />
+                      /* advance-bought powers are refunded from the Advances
+                         tab, so only hand-added ones get a remove button */
+                      onRemove={extras.powers.includes(p)
+                        ? () => onRemoveExtra('powers', p) : undefined} />
                   ))}
                 </ul>
                 : <p className="rt-empty">No powers recorded yet.</p>}
@@ -3025,6 +3106,71 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
               </div>
             )}
           </div>
+        )}
+
+        {tab === 'advances' && (
+          careerAdvances ? (
+            <div className="rt-advances">
+              <p className="rt-advsum">
+                <b>{spentXp.toLocaleString()}</b> spent of {spendableXp(xp).toLocaleString()} spendable
+                {' · '}
+                <span className={remaining < 0 ? 'rt-over' : ''}>
+                  {remaining < 0
+                    ? (-remaining).toLocaleString() + ' over budget'
+                    : remaining.toLocaleString() + ' remaining'}
+                </span>
+                {' · Rank '}{charRank}
+              </p>
+
+              {Array.from({ length: MAX_TABLED_RANK }, (_, i) => i + 1).map((r) => {
+                const rows = careerAdvances.filter((a) => a.rank === r);
+                if (!rows.length) return null;
+                const rankLocked = r > charRank;
+                return (
+                  <div key={r} className={'rt-advrank' + (rankLocked ? ' locked' : '')}>
+                    <div className="rt-sect-h">
+                      Rank {r}{rankLocked ? ' — not yet reached' : ''}
+                    </div>
+                    <ul className="rt-advlist">
+                      {rows.map((a) => {
+                        const st = advanceStatus(a, {
+                          rank: charRank, remaining, totals, owned: extras.advances
+                        });
+                        const why = st.owned ? null
+                          : st.lockedByRank ? `Rank ${a.rank} required`
+                            : st.unmetChars.length
+                              ? 'Needs ' + st.unmetChars.map((c) => c.key.toUpperCase() + ' ' + c.min).join(', ')
+                              : st.unaffordable ? 'Not enough XP' : null;
+                        return (
+                          <li key={a.name}
+                            className={'rt-adv' + (st.owned ? ' owned' : '') + (st.blocked ? ' blocked' : '')}>
+                            <span className="rt-adv-n">{a.name}</span>
+                            <span className="rt-entry-c">{a.type}</span>
+                            <span className="rt-adv-c">{a.cost}</span>
+                            <button className="rt-adv-b" disabled={st.blocked}
+                              onClick={() => (st.owned ? onRefundAdvance(a.name) : onBuyAdvance(a))}>
+                              {st.owned ? 'Refund' : 'Buy'}
+                            </button>
+                            {(why || st.namedPrereqs.length > 0) && (
+                              <span className="rt-adv-p">
+                                {why || 'Requires ' + st.namedPrereqs.join(', ')}
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="rt-empty">
+              {career
+                ? 'No advance table for this career. The eight core careers are covered; alternate and xenos paths are not.'
+                : 'Choose a career to see its advance tables.'}
+            </p>
+          )
         )}
 
         {tab === 'notes' && (

@@ -48,6 +48,11 @@ export const isStartingBudget = (xp) =>
 export const spendableXp = (total) =>
   Math.max(0, Math.floor(total || 0) - STARTING_XP.baseline);
 
+// What is left after purchases. Deliberately allowed to go negative: a sheet
+// that has overspent should say so rather than clamp to zero and look fine.
+export const remainingXp = (total, spent) =>
+  spendableXp(total) - Math.max(0, Math.floor(spent || 0));
+
 /* --------------------------- characteristic advances ---------------------------
    Each advance raises a characteristic by +5. What it costs depends on where
    that characteristic sits in the career's scheme.                            */

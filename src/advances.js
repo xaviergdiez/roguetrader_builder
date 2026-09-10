@@ -332,6 +332,18 @@ export function advancesFor(career, rank) {
 
 export const MAX_TABLED_RANK = 4;
 
+// Every advance a career can offer, each carrying the rank it sits at, so the
+// UI can group them without re-deriving that. null for a career with no table.
+export function allAdvances(career) {
+  const base = baseCareer(career);
+  if (!base) return null;
+  const out = [];
+  for (let rank = 1; rank <= MAX_TABLED_RANK; rank++) {
+    for (const a of CAREER_ADVANCES[base][rank] || []) out.push({ ...a, rank });
+  }
+  return out;
+}
+
 /* ------------------------------ prerequisites ------------------------------
    Characteristic requirements are checkable against a sheet; talent and skill
    requirements are named, so they are returned for a human to confirm.      */
@@ -364,4 +376,27 @@ export function unmetCharPrereqs(text, totals) {
   const failed = chars.filter((c) => (totals[c.key] || 0) < c.min);
   if (anyOf && failed.length < chars.length) return [];
   return failed;
+}
+
+/* Whether a character may take an advance, and if not, why not.
+   Three things block a purchase outright, and all three are rules rather than
+   preferences: a table above your rank is unreachable, an unmet characteristic
+   requirement disqualifies you, and you cannot spend XP you do not have.
+   Named prerequisites (talents, skills) are returned for a human to confirm
+   rather than enforced, since the sheet does not always record them. */
+export function advanceStatus(advance, ctx) {
+  const { rank = 1, remaining = 0, totals = null, owned = [] } = ctx || {};
+  const isOwned = owned.some((o) => o.name === advance.name);
+  const unmetChars = unmetCharPrereqs(advance.prereq, totals);
+  const lockedByRank = advance.rank > rank;
+  const unaffordable = advance.cost > remaining;
+  return {
+    owned: isOwned,
+    lockedByRank,
+    unaffordable,
+    unmetChars,
+    namedPrereqs: parsePrereq(advance.prereq).others,
+    // owned advances are always removable, so blocking only applies to buying
+    blocked: !isOwned && (lockedByRank || unaffordable || unmetChars.length > 0)
+  };
 }

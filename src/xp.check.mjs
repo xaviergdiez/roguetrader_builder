@@ -47,6 +47,15 @@ assert.equal(STARTING_XP.baseline, 4500);
 assert.equal(STARTING_XP.spendable, 500);
 assert.equal(STARTING_XP.baseline + STARTING_XP.spendable, STARTING_XP.total);
 
+const { remainingXp } = await import('./xp.js');
+assert.equal(remainingXp(5000, 0), 500);
+assert.equal(remainingXp(5000, 200), 300);
+assert.equal(remainingXp(5000, 500), 0);
+assert.equal(remainingXp(5000, 700), -200,
+  'overspend must surface as negative, not clamp to zero and look compliant');
+assert.equal(remainingXp(7500, 400), 2600);
+assert.equal(remainingXp(5000, null), 500);
+
 assert.equal(spendableXp(5000), 500, 'a fresh Explorer has 500 to spend, not 5,000');
 assert.equal(spendableXp(4500), 0, 'the bare baseline buys nothing');
 assert.equal(spendableXp(7500), 3000, 'the initial 500 plus 2,500 earned in play');

@@ -88,6 +88,62 @@ assert.equal(unmetCharPrereqs('BS 60 or WS 60', totals).length, 2);
 assert.deepEqual(unmetCharPrereqs('Mechanicus Implants', totals), []);
 assert.deepEqual(unmetCharPrereqs('Int 30', null), []);
 
+/* --- flattening and purchase eligibility ------------------------------- */
+
+const { allAdvances, advanceStatus } = await import('./advances.js');
+
+const expl = allAdvances('Explorator');
+assert.equal(allAdvances('Eldar Corsair'), null, 'no table, no list');
+// every entry carries the rank it came from, and ranks run 1..4 in order
+assert.deepEqual([...new Set(expl.map((a) => a.rank))], [1, 2, 3, 4]);
+assert.equal(expl.find((a) => a.name === 'Tech-Use').rank, 1);
+assert.equal(expl.find((a) => a.name === 'Tech-Use +10').rank, 2);
+// alternate ranks resolve to the base career's list
+assert.equal(allAdvances('Explorator (Alternate Rank: Acolyte of Abraxas)').length, expl.length);
+
+const techUse = expl.find((a) => a.name === 'Tech-Use');            // r1, 100
+const techUse10 = expl.find((a) => a.name === 'Tech-Use +10');      // r2, 200
+const knock = expl.find((a) => a.name === 'Technical Knock');       // r1, 200, Int 30
+const rich = { rank: 1, remaining: 500, totals: { int: 42 }, owned: [] };
+
+// affordable, in rank, prerequisite met
+let st = advanceStatus(techUse, rich);
+assert.equal(st.blocked, false);
+assert.equal(st.owned, false);
+
+// a table above your rank is unreachable however much XP you hold
+st = advanceStatus(techUse10, { ...rich, remaining: 99999 });
+assert.equal(st.lockedByRank, true);
+assert.equal(st.blocked, true, 'XP cannot buy past your rank');
+// and reachable once the rank catches up
+assert.equal(advanceStatus(techUse10, { ...rich, rank: 2 }).lockedByRank, false);
+
+// cannot spend XP you do not have
+st = advanceStatus(techUse, { ...rich, remaining: 50 });
+assert.equal(st.unaffordable, true);
+assert.equal(st.blocked, true);
+// exactly enough is enough
+assert.equal(advanceStatus(techUse, { ...rich, remaining: 100 }).unaffordable, false);
+
+// an unmet characteristic requirement disqualifies
+st = advanceStatus(knock, { ...rich, totals: { int: 25 } });
+assert.deepEqual(st.unmetChars, [{ key: 'int', min: 30 }]);
+assert.equal(st.blocked, true);
+assert.equal(advanceStatus(knock, { ...rich, totals: { int: 30 } }).blocked, false,
+  'meeting the minimum exactly is enough');
+
+// named prerequisites are surfaced, not enforced
+const logis = expl.find((a) => a.name === 'Logis Implant');   // Mechanicus Implants
+st = advanceStatus(logis, rich);
+assert.deepEqual(st.namedPrereqs, ['Mechanicus Implants']);
+assert.equal(st.blocked, false, 'a named prerequisite must not block the purchase');
+
+// an owned advance is never blocked, so it stays removable even when the
+// character could no longer afford or qualify for it
+st = advanceStatus(techUse10, { rank: 1, remaining: 0, totals: {}, owned: [{ name: 'Tech-Use +10' }] });
+assert.equal(st.owned, true);
+assert.equal(st.blocked, false, 'owned advances must remain refundable');
+
 const total = Object.values(CAREER_ADVANCES)
   .reduce((n, ranks) => n + Object.values(ranks).reduce((m, l) => m + l.length, 0), 0);
 console.log('advances: all checks passed (%d careers, %d advances)',

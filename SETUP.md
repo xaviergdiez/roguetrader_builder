@@ -96,6 +96,7 @@ unverified, so an unverified account cannot claim your `OWNER_EMAIL`.
 | `UPSTASH_REDIS_REST_URL` / `_TOKEN` | Upstash integration | sessions and user records |
 | `GOOGLE_CLIENT_ID` / `_SECRET` | step 3 | sign-in |
 | `OWNER_EMAIL` | step 3 | signup gate — delete to open registration |
+| `GEMINI_API_KEY` | you | portrait generation — without it that one button returns 503 |
 
 Mirror them into `.env.local` for `vercel dev`. See [.env.example](.env.example).
 
@@ -148,29 +149,51 @@ resolved to a non-empty value. See `redisConfigFromEnv()` in
 - **Upstash free tier**: 10k commands/day. This app is nowhere near it — a
   sign-in is a handful of commands and the sheet itself is stored client-side.
 
+## Portraits
+
+[api/generate-avatar.js](api/generate-avatar.js) posts to Gemini and returns the
+image bytes; the browser re-encodes to a 768px JPEG data URL before storing it.
+The prompt is built server-side in [lib/prompt.js](lib/prompt.js) from the
+character's origin path — each of the 38 origin options carries a visual phrase,
+so two Explorators with different birthrights do not get the same portrait. The
+client never supplies the prompt, so a signed-in caller cannot turn the endpoint
+into a general-purpose image generator on your key.
+
+The endpoint is behind sign-in because every call costs money. Without
+`GEMINI_API_KEY` it returns 503 and the button reports it.
+
+## Where characters are stored
+
+Signed in, the roster lives on your Google account via
+[api/characters.js](api/characters.js) and follows you between devices. Signed
+out — and under a plain `npm run dev`, which has no serverless functions — it
+falls back to `localStorage` in that one browser. The roster dialog says which
+of the two is in use.
+
+The split matters: a small `{id, name, career}` index sits on the user record
+and each character's body has its own Redis key (`charKey` in
+[lib/storage.js](lib/storage.js)), because Upstash caps a record at 1MB and a
+portrait is a few hundred KB. One list holding every character would break at a
+handful of them. The index is fetched on load; a character's body only when you
+open it.
+
+On first sign-in from a browser that already has local characters, they are
+copied up to the account and the local copy is left in place.
+
 ## Not built yet
 
-Both are marked with `ponytail:` comments where they would slot in.
+Marked with a `ponytail:` comment where it would slot in.
 
-- **Portrait generation.** The GenAI button in the dossier is deliberately
-  disabled. It needs a `generate-avatar` endpoint and a `GEMINI_API_KEY`; see
-  `api/generate-avatar.js` in `shadow-run_builder` for the shape.
-- **Per-account characters.** Signing in gates the app, but the roster is still
-  `localStorage`, so characters are per-browser rather than per-account. Making
-  them server-side means an `api/characters.js` plus the character-key helpers
-  in `lib/storage.js`; swapping `readRoster`/`writeRoster` in
-  [src/roster.js](src/roster.js) for `fetch` calls is the only client change.
+- **Aeldari and Ork characters.** Parked: the origin material is in *Into the
+  Storm*, which is not in the shared Drive folder.
 
 ## Self-checks
 
 No test framework. Each non-trivial pure module has a runnable check:
 
 ```bash
-node lib/auth.check.mjs
-node src/framing.check.mjs
-node src/roster.check.mjs
-node src/gear.check.mjs
-node src/wounds.check.mjs
-node src/dice.check.mjs
-node src/effects.check.mjs
+for f in src/*.check.mjs lib/*.check.mjs; do node "$f" || echo "FAIL $f"; done
 ```
+
+Listing them individually here only went stale — that loop finds whatever
+exists.

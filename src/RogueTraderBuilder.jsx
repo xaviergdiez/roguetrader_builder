@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
-import { readRoster, writeRoster, upsert, remove as removeChar, newId } from './roster.js';
+import { readRoster, writeRoster, upsert, remove as removeChar, newId,
+  cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
 import { parseGear, gearInfo, CRAFT, GEAR } from './gear.js';
 import { woundState, applyDamage, adjustMax } from './wounds.js';
 import { roll1d100, resolveTest, DIFFICULTIES } from './dice.js';
@@ -869,10 +870,14 @@ const CSS = `
 
 /* ------------------------------ HEADER ------------------------------ */
 
+/* Fully opaque, and the top padding carries the status-bar inset: the old
+   gradient ended at 95% alpha, which let the dossier show through the bar as
+   it scrolled past, and without the inset the strip behind an iOS status bar
+   is page content rather than header. */
 .rt-head{position:sticky;top:0;z-index:20;
-  background:linear-gradient(180deg,#101a14 72%,rgba(16,26,20,.95));
+  background:linear-gradient(180deg,#101a14 72%,#0f1813);
   border-bottom:1px solid var(--brass-dim);
-  padding:11px 14px 10px;
+  padding:calc(11px + env(safe-area-inset-top)) 14px 10px;
   box-shadow:0 10px 26px -18px #000;}
 .rt-head::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
   background:linear-gradient(90deg,transparent,var(--brass-dim) 18%,var(--brass-lit) 50%,var(--brass-dim) 82%,transparent);
@@ -918,6 +923,8 @@ const CSS = `
   background:linear-gradient(180deg,var(--gold-lit),var(--gold));
   animation:rt-pulse 1.5s ease-in-out infinite;}
 @keyframes rt-pulse{50%{filter:brightness(1.22);}}
+/* Generation takes several seconds; the disabled dimming alone reads as broken. */
+.rt-picon.busy{animation:rt-pulse 1.1s ease-in-out infinite;opacity:.75;}
 
 /* ---------------------------- STEP RAIL ----------------------------
    Inactive tabs are recessed glass; the active one lifts into a
@@ -1191,8 +1198,7 @@ const CSS = `
 .rt-discs{margin-top:14px;padding-top:12px;border-top:1px solid rgba(109,87,38,.4);}
 
 /* ---- xp gauge: a running campaign total, stepped rather than retyped ---- */
-.rt-xpgauge{flex:2 1 180px;min-width:160px;display:flex;flex-direction:column;
-  justify-content:center;padding:9px 8px;
+.rt-xpgauge{padding:9px 8px;
   border:1px solid var(--brass);
   background:linear-gradient(180deg,#241d0f,#0d1109);
   box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
@@ -1279,10 +1285,18 @@ const CSS = `
 
 /* the brass gauges — wounds, fate, profit factor */
 .rt-derived{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0;}
-/* the strip stretches its children to the tallest control, so these have to
-   centre their own content or they hang at the top of the box */
+/* Every gauge in the strip shares one skeleton so they line up across the row:
+   label pinned to the top, value centred in the space left over, controls
+   pinned to the bottom. Before this, three cells had their label on top and
+   two had it underneath, and the numbers sat at whatever height their own box
+   produced. The auto/1fr/auto rows are what keep the three bands aligned
+   cell to cell. */
+   minmax(0,1fr) for the column, because a grid column defaults to max-content
+   and the widest label ("RANK I · 2,000 to II") then pushed the XP gauge's
+   contents straight out of its own border. */
+.rt-der,.rt-wgauge,.rt-xpgauge{display:grid;
+  grid-template-columns:minmax(0,1fr);grid-template-rows:auto 1fr auto;}
 .rt-der{text-align:center;padding:11px 6px 9px;
-  display:flex;flex-direction:column;justify-content:center;
   border:1px solid var(--brass);
   background:linear-gradient(180deg,#241d0f,#0d1109);
   box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
@@ -1298,6 +1312,7 @@ const CSS = `
 .rt-adjb:disabled{opacity:.3;cursor:default;}
 @media (pointer:coarse){.rt-adjb{width:30px;height:30px;font-size:15px;}}
 .rt-der-v{font-family:var(--display);font-size:24px;font-weight:600;line-height:1.1;
+  align-self:center;                     /* centre in the 1fr band, see .rt-der */
   color:var(--gold-lit);text-shadow:0 0 18px rgba(224,185,85,.35);}
 .rt-der-k{font-family:var(--mono);font-size:9px;color:var(--brass-lit);
   letter-spacing:.16em;margin-top:3px;opacity:.8;}
@@ -1326,7 +1341,9 @@ const CSS = `
 
 /* stretch, so the portrait column runs the full height of the block beside
    it instead of leaving a gap under the icons on narrow screens */
-.rt-idcard{display:flex;gap:14px;align-items:stretch;margin-bottom:16px;}
+/* flex-start, so a portrait taller than the identity block beside it does not
+   drag the gauges into a stretched column. */
+.rt-idcard{display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;}
 .rt-idtext{flex:1;min-width:0;}
 
 .rt-intro{margin-bottom:18px;}
@@ -1393,28 +1410,36 @@ const CSS = `
 .rt-framer-stage:active{cursor:grabbing;}
 .rt-framer-stage img{position:absolute;inset:0;width:100%;height:100%;display:block;
   user-select:none;-webkit-user-drag:none;}
-.rt-port-pf{position:absolute;right:-9px;top:-9px;width:38px;height:38px;
-  display:grid;place-items:center;align-content:center;border-radius:50%;
-  font-family:var(--display);font-size:14px;font-weight:700;line-height:1;
-  color:var(--gold-lit);
-  background:radial-gradient(circle at 50% 30%,#3b3120,#15110a);
-  border:1px solid var(--brass-lit);
-  box-shadow:0 0 14px -3px rgba(224,185,85,.6);}
-.rt-port-pf span{display:block;font-family:var(--mono);font-size:6.5px;
-  letter-spacing:.14em;color:var(--brass-lit);opacity:.85;margin-top:1px;}
+/* ponytail: the PF badge that used to hang off the portrait corner is gone —
+   Profit Factor has its own gauge in the strip, and the badge overlapped the
+   name. Don't reintroduce it. */
 
 /* one strip: wounds gauge + the brass gauges, filling the row beside the
    portrait instead of a full-width bar with a separate row underneath */
-.rt-idstats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:stretch;}
-.rt-idstats .rt-der{flex:1 1 78px;min-width:78px;}
+/* Tiles that wrap, with a ceiling on each: uncapped flex-grow stretched a
+   five-cell row across the full width and turned the XP gauge into a banner.
+   The bases add up past the space available at every width the dossier uses,
+   so the row fills and wraps rather than leaving a ragged tail. */
+/* Three rows, every row the same total width:
+     WOUNDS
+     FATE | PROFIT | TALENTS
+     XP
+   The three middle tiles are one column each, so together with the two gaps
+   they come to exactly the width of the full-width rows above and below.
+   A wrapping flex row could not hold that shape — the tiles kept landing
+   wherever they fit. */
+.rt-idstats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;
+  align-items:stretch;}
+.rt-idstats > .rt-wgauge,.rt-idstats > .rt-xpgauge,.rt-idstats > .rt-der.wide{
+  grid-column:1 / -1;}
+.rt-idstats .rt-der{min-width:0;}
 /* wounds and XP share the strip, so wounds gives up the width it used to take
    for itself — both are two-row controls now */
-.rt-wgauge{flex:2 1 190px;min-width:170px;display:flex;flex-direction:column;
-  justify-content:center;padding:9px 8px;
+.rt-wgauge{padding:9px 8px;
   border:1px solid var(--brass);
   background:linear-gradient(180deg,#241d0f,#0d1109);
   box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
-.rt-wrow{display:flex;align-items:stretch;gap:6px;}
+.rt-wrow{display:flex;align-items:stretch;gap:6px;align-self:center;width:100%;}
 .rt-wbtn{flex:none;width:32px;cursor:pointer;font-size:17px;line-height:1;
   border:1px solid var(--brass-dim);color:var(--gold-lit);background:rgba(6,12,8,.6);
   transition:border-color .14s,color .14s;}
@@ -1432,8 +1457,11 @@ const CSS = `
 .rt-wbar > b{position:absolute;inset:0;display:grid;place-items:center;
   font-family:var(--mono);font-size:11px;font-weight:500;letter-spacing:.12em;
   color:#eaf6ee;text-shadow:0 1px 3px rgba(0,0,0,.9);}
-.rt-wfoot{display:flex;align-items:center;justify-content:space-between;
-  gap:8px;margin-top:6px;}
+/* Above its bar, not below: these two used to carry their label underneath
+   while the other gauges carried it on top, so no two labels in the strip sat
+   on the same line. */
+.rt-whead{display:flex;align-items:center;justify-content:space-between;
+  gap:8px;margin-bottom:6px;min-height:14px;}
 .rt-wgauge.down .rt-der-k{color:var(--bad);opacity:1;}
 .rt-wmax{display:flex;align-items:center;gap:5px;
   font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--brass-lit);}
@@ -1460,7 +1488,10 @@ const CSS = `
 /* One column, capped to a readable measure. Grid left dead voids under the
    short section; multi-column fixed the voids but broke top alignment and
    scrambled reading order. A sheet reads better as a single document column. */
-.rt-dossier{max-width:880px;}
+/* Was capped at 880px inside a wrap that reaches 1200, which left the whole
+   dossier hugging the left edge with a 320px void beside it while the step rail
+   and header above ran the full width. It shares their edges now. */
+.rt-dossier{width:100%;}
 
 /* ---- dossier tabs: raised parchment cartouches over one panel ---- */
 .rt-dtabs{display:flex;flex-wrap:wrap;gap:4px;position:relative;z-index:2;
@@ -1584,7 +1615,8 @@ const CSS = `
 /* ------------------------------ BOTTOM NAV ------------------------------ */
 
 .rt-nav{position:fixed;left:0;right:0;bottom:0;z-index:25;
-  background:linear-gradient(180deg,rgba(11,17,13,.96),#0b110d);
+  /* opaque for the same reason as the header — see .rt-head */
+  background:linear-gradient(180deg,#0d130f,#0b110d);
   border-top:1px solid var(--brass-dim);
   backdrop-filter:blur(7px);
   padding:10px 14px;padding-bottom:calc(10px + env(safe-area-inset-bottom));}
@@ -1663,9 +1695,31 @@ const CSS = `
   color:#f0b09a;border:1px solid var(--crimson);
   border-left:3px solid var(--rust);background:#1e0c07;}
 
+/* Same shape as rt-warn, brass instead of crimson: a confirmation dressed as a
+   warning reads as a failure. */
+.rt-note{padding:11px 12px;margin-bottom:12px;font-size:13.5px;line-height:1.55;
+  color:var(--bone);border:1px solid var(--brass);
+  border-left:3px solid var(--gold);background:#0b1512;}
+
 /* ============================= RESPONSIVE =============================
    Mobile-first single column. The tab rail is kept at every size — it
    just stops scrolling once the tabs fit. */
+
+/* Phone: the portrait leads, centred, and everything else wraps underneath.
+   Beside the stats it was a 126px column stretched by align-items:stretch to
+   whatever height the gauges came to — measured 112x307, a strip. An earlier
+   pass asked for that full-height column; stacking replaces it. */
+@media (max-width:699px){
+  .rt-idcard{flex-direction:column;align-items:center;gap:13px;}
+  .rt-portrait-wrap{width:min(236px,64vw);}
+  /* flex:none so the frame follows the image instead of the row height, and a
+     portrait aspect so it cannot be stretched into a strip again */
+  .rt-port-img{flex:none;aspect-ratio:3 / 4;min-height:0;font-size:56px;}
+  .rt-idtext{width:100%;}
+  .rt-h2{text-align:center;font-size:25px;}
+  .rt-h2::after{background:linear-gradient(90deg,transparent,var(--brass) 50%,transparent);}
+  .rt-lead{text-align:center;margin-bottom:14px;}
+}
 
 @media (max-width:399px){
   .rt-croll{display:none;}                       /* raw roll is the first to go */
@@ -1676,13 +1730,16 @@ const CSS = `
 @media (min-width:700px){
   .rt-2col{grid-template-columns:repeat(2,1fr);}
   .rt-idcard{gap:18px;}
-  .rt-portrait-wrap{width:170px;}
-  .rt-port-img{min-height:200px;font-size:64px;}
+  /* the portrait is the character, so it leads the dossier at every size */
+  .rt-portrait-wrap{width:212px;}
+  .rt-port-img{min-height:250px;font-size:64px;}
   /* a name field has no business being 1100px wide */
   .rt-intro{max-width:520px;}
 }
 
 @media (min-width:900px){
+  .rt-portrait-wrap{width:264px;}
+  .rt-port-img{min-height:320px;font-size:78px;}
   .rt-wrap{max-width:1040px;padding-bottom:120px;}
   .rt-head-in,.rt-nav-in{max-width:1040px;}
   .rt-steps{justify-content:flex-start;flex-wrap:wrap;overflow-x:visible;}
@@ -1763,7 +1820,7 @@ function OptionCard({ item, selected, onSelect, choices, onChoose }) {
 
 /* ============================== THE APP ============================== */
 
-export default function RogueTraderBuilder({ me }) {
+export default function RogueTraderBuilder({ me, cloud }) {
   const [name, setName] = useState('');
   const [sel, setSel] = useState({});          // stepId -> optionId
   const [choices, setChoices] = useState({});  // choiceId -> option label
@@ -1804,6 +1861,8 @@ export default function RogueTraderBuilder({ me }) {
   const [navOpen, setNavOpen] = useState(false);
   const [psyOpen, setPsyOpen] = useState(false);
   const [rosterErr, setRosterErr] = useState('');
+  const [rosterNote, setRosterNote] = useState('');   // success, not a failure
+  const [rosterBusy, setRosterBusy] = useState(false);
   const [voxOpen, setVoxOpen] = useState(false);
   const [voxText, setVoxText] = useState('');
   const [loaded, setLoaded] = useState(false);
@@ -2009,31 +2068,91 @@ export default function RogueTraderBuilder({ me }) {
 
   /* ---- roster: save / open / delete / start fresh ---- */
 
-  useEffect(() => { setRoster(readRoster()); }, []);
+  useEffect(() => {
+    if (!cloud) { setRoster(readRoster()); return; }
+    let live = true;
+    (async () => {
+      try {
+        let list = await cloudList();
+        // First sign-in from a browser that already holds a roster: move it up,
+        // so the characters do not look lost. The local copy is left in place
+        // as a fallback rather than deleted.
+        const local = readRoster();
+        if (list.length === 0 && local.length > 0) {
+          let moved = 0;
+          for (const c of local) {
+            try { await cloudPut(c); moved++; } catch { /* reported by the count */ }
+          }
+          list = await cloudList();
+          if (live && moved) {
+            setRosterNote(`Moved ${moved} character${moved === 1 ? '' : 's'} `
+              + 'from this browser to your account.');
+          }
+        }
+        if (live) setRoster(list);
+      } catch (e) {
+        // Fall back to whatever this browser has rather than showing nothing.
+        if (live) { setRoster(readRoster()); setRosterErr(e.message); }
+      }
+    })();
+    return () => { live = false; };
+  }, [cloud]);
 
-  const saveCharacter = () => {
-    const id = charId || newId();
-    const next = upsert(roster, {
-      id,
-      name: name || 'Unnamed adept',
-      career: career ? career.name : null,
-      updatedAt: Date.now(),
-      state: { name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-               fateAdj, profitAdj, spentAdj, psyRating, xp,
-               finalTotals, finalWounds, finalFate, pointAlloc }
-    });
+  // Writes one character to whichever backend is live, returning the entry to
+  // keep in state (cloud mode returns metadata only — the body stays on the
+  // server) or throwing a message worth showing. Local mode re-reads storage
+  // instead of trusting `roster`, so a loop of imports cannot clobber the
+  // entries written earlier in the same tick.
+  const persist = async (entry) => {
+    if (cloud) return cloudPut(entry);
+    const next = upsert(readRoster(), entry);
     if (!writeRoster(next)) {
-      setRosterErr('Could not save — browser storage is full. A large portrait is the usual cause.');
-      return;
+      throw new Error('Could not save — browser storage is full. '
+        + 'A large portrait is the usual cause.');
     }
-    setRosterErr('');
-    setRoster(next);
-    setCharId(id);
+    return entry;
   };
 
-  const openCharacter = (id) => {
-    const c = roster.find((x) => x.id === id);
+  const saveCharacter = async () => {
+    const id = charId || newId();
+    setRosterBusy(true);
+    try {
+      const meta = await persist({
+        id,
+        name: name || 'Unnamed adept',
+        career: career ? career.name : null,
+        updatedAt: Date.now(),
+        state: { name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+                 fateAdj, profitAdj, spentAdj, psyRating, xp,
+                 finalTotals, finalWounds, finalFate, pointAlloc }
+      });
+      setRoster((prev) => upsert(prev, meta));
+      setCharId(id);
+      setRosterErr('');
+      setRosterNote(cloud ? 'Saved to your account.' : 'Saved in this browser.');
+    } catch (e) {
+      setRosterErr(e.message);
+    } finally {
+      setRosterBusy(false);
+    }
+  };
+
+  const openCharacter = async (id) => {
+    let c = roster.find((x) => x.id === id);
     if (!c) return;
+    // Cloud entries are metadata; the body is fetched on demand because the
+    // index holds every character and a portrait each would be megabytes.
+    if (!c.state && cloud) {
+      setRosterBusy(true);
+      try {
+        c = await cloudGet(id);
+      } catch (e) {
+        setRosterErr(e.message);
+        return false;                 // the dialog stays open on the message
+      } finally {
+        setRosterBusy(false);
+      }
+    }
     const s = c.state || {};
     setName(s.name || '');
     setSel(s.sel || {});
@@ -2056,20 +2175,38 @@ export default function RogueTraderBuilder({ me }) {
     setXp(typeof s.xp === 'number' ? s.xp : STARTING_XP_DEFAULT);
     setCharId(id);
     setRosterErr('');
+    setRosterNote('');
     setStepIx(7);
+    return true;
   };
 
-  const deleteCharacter = (id) => {
+  const deleteCharacter = async (id) => {
     const c = roster.find((x) => x.id === id);
     const label = c ? c.name : 'this character';
     if (!window.confirm(`Delete "${label}" permanently? This cannot be undone.`)) return;
-    const next = removeChar(roster, id);
-    writeRoster(next);
-    setRoster(next);
+    if (cloud) {
+      setRosterBusy(true);
+      try {
+        await cloudDelete(id);
+      } catch (e) {
+        setRosterErr(e.message);
+        return;
+      } finally {
+        setRosterBusy(false);
+      }
+      setRoster((prev) => removeChar(prev, id));
+    } else {
+      const next = removeChar(readRoster(), id);
+      writeRoster(next);
+      setRoster(next);
+    }
+    setRosterNote('');
     if (charId === id) setCharId(null);
   };
 
-  const newCharacter = () => { clearAll(); setCharId(null); setRosterErr(''); };
+  const newCharacter = () => {
+    clearAll(); setCharId(null); setRosterErr(''); setRosterNote('');
+  };
 
   const addExtra = (kind, value) =>
     setExtras((p) => (p[kind].includes(value) ? p : { ...p, [kind]: [...p[kind], value] }));
@@ -2214,6 +2351,7 @@ export default function RogueTraderBuilder({ me }) {
       {rosterOpen && (
         <RosterDialog
           roster={roster} currentId={charId} err={rosterErr} me={me}
+          cloud={cloud} note={rosterNote} busy={rosterBusy}
           onSave={saveCharacter} onOpen={openCharacter}
           onDelete={deleteCharacter} onNew={newCharacter}
           onClose={() => setRosterOpen(false)}
@@ -2223,13 +2361,11 @@ export default function RogueTraderBuilder({ me }) {
       {importOpen && (
         <ImportDialog
           onApply={applySheet}
-          onImportMany={(s) => {
-            const id = newId();
-            const next = upsert(roster, {
-              id, name: s.name, career: null, updatedAt: Date.now(), state: s
+          onImportMany={async (s) => {
+            const meta = await persist({
+              id: newId(), name: s.name, career: null, updatedAt: Date.now(), state: s
             });
-            writeRoster(next);
-            setRoster(next);
+            setRoster((prev) => upsert(prev, meta));
           }}
           onPreset={loadPreset}
           onClose={() => setImportOpen(false)}
@@ -2453,7 +2589,8 @@ async function signOut() {
   window.location.reload();
 }
 
-function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose, err, me }) {
+function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose,
+  err, me, cloud, note, busy }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -2469,6 +2606,15 @@ function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onCl
       </div>
 
       {err && <div className="rt-warn">{err}</div>}
+      {note && <div className="rt-note">{note}</div>}
+
+      {/* Where the roster lives is worth stating plainly: the localStorage-only
+          version looked broken across devices without explaining why. */}
+      <p className="rt-vox-hint">
+        {cloud
+          ? 'Saved to your account — these follow you to any device you sign in on.'
+          : 'Saved in this browser only. Sign in to reach them from another device.'}
+      </p>
 
       {roster.length === 0 ? (
         <p className="rt-vox-hint">
@@ -2478,11 +2624,13 @@ function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onCl
         <ul className="rt-roster-l">
           {roster.map((c) => (
             <li key={c.id} className={'rt-roster-i' + (c.id === currentId ? ' on' : '')}>
-              <button className="rt-roster-n" onClick={() => { onOpen(c.id); close(); }}>
+              <button className="rt-roster-n" disabled={busy}
+                onClick={async () => { if (await onOpen(c.id)) close(); }}>
                 <span className="rt-roster-nm">{c.name || 'Unnamed adept'}</span>
                 <span className="rt-roster-mt">{c.career || 'No career'}</span>
               </button>
-              <button className="rt-opt" onClick={() => onDelete(c.id)}>Delete</button>
+              <button className="rt-opt" disabled={busy}
+                onClick={() => onDelete(c.id)}>Delete</button>
             </li>
           ))}
         </ul>
@@ -2490,7 +2638,9 @@ function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onCl
 
       <div className="rt-btnrow">
         <button className="rt-btn ghost" onClick={() => { onNew(); close(); }}>New character</button>
-        <button className="rt-btn" onClick={onSave}>Save current</button>
+        <button className="rt-btn" onClick={onSave} disabled={busy}>
+          {busy ? 'Working…' : 'Save current'}
+        </button>
       </div>
 
       {me && (
@@ -2581,7 +2731,9 @@ function ImportDialog({ onApply, onImportMany, onPreset, onClose }) {
       for (const name of tabs) {
         try {
           const { state } = parseCharacterSheet(parseCsv(await fetchCsv(name)), SHEET_CATALOG);
-          if (state.name) { onImportMany(state); done.push(state.name); }
+          // Awaited: saving is a network call in cloud mode, and an unawaited
+          // rejection would be counted as a success and reported as one.
+          if (state.name) { await onImportMany(state); done.push(state.name); }
           else failed.push(name);
         } catch { failed.push(name); }
       }
@@ -2817,24 +2969,78 @@ function PsychicPanel({ psyRating, onPsyRating, willpower, onClose }) {
 
 /* ---------------------------- PORTRAIT PLATE ---------------------------- */
 
-function PortraitPlate({ name, profitFactor, avatar, setAvatar }) {
+// Gemini hands back roughly a 900KB portrait, which as a data URL is about
+// 1.2MB of localStorage — enough that a few saved characters trip the roster's
+// quota guard. Re-encoding to a 768px JPEG in the browser costs nothing and
+// avoids a server-side image dependency: measured around 200KB.
+// A plain `npm run dev` 404s /api/*, and when it answers it answers with the
+// SPA shell, so both shapes mean the same thing to the player.
+const API_ABSENT = 'Portrait generation needs the serverless functions, which '
+  + '`npm run dev` does not run. Use `vercel dev` or the deployed site.';
+
+async function shrinkToDataUrl(blob, max = 768, quality = 0.82) {
+  const bitmap = await createImageBitmap(blob);
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+  if (bitmap.close) bitmap.close();
+  return canvas.toDataURL('image/jpeg', quality);
+}
+
+function PortraitPlate({ name, profitFactor, avatar, setAvatar, identity }) {
   const fileRef = useRef(null);
   const [framerOpen, setFramerOpen] = useState(false);
   const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const onFile = (e) => {
+  const generate = async () => {
+    setErr(''); setBusy(true);
+    try {
+      const res = await fetch('/api/generate-avatar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(identity || {})
+      });
+      // A plain `npm run dev` has no serverless runtime and answers with the
+      // FILE as text/javascript and a 200, so the type is checked as well.
+      const type = res.headers.get('content-type') || '';
+      if (!res.ok) {
+        let why = `Generation failed (${res.status}).`;
+        if (type.includes('json')) {
+          try { why = (await res.json()).error || why; } catch { /* keep the status */ }
+        }
+        if (res.status === 401) why = 'Sign in first — portrait generation is behind sign-in.';
+        if (res.status === 404) why = API_ABSENT;
+        throw new Error(why);
+      }
+      if (!type.startsWith('image/')) throw new Error(API_ABSENT);
+      setAvatar({ src: await shrinkToDataUrl(await res.blob()), framing: DEFAULT_FRAMING });
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onFile = async (e) => {
     const file = e.target.files && e.target.files[0];
     e.target.value = '';                     // let the same file be picked twice
     if (!file) return;
     if (!file.type.startsWith('image/')) return setErr('That is not an image file.');
     if (file.size > MAX_AVATAR_BYTES) return setErr('Image is over 8 MB. Pick a smaller one.');
-    const reader = new FileReader();
-    reader.onerror = () => setErr('Could not read that file.');
-    reader.onload = () => {
+    try {
+      // Shrunk like a generated portrait rather than stored as-is: an 8MB
+      // upload is ~10.6MB as a data URL, which overflows both the localStorage
+      // quota and the roster service's per-character limit.
+      setAvatar({ src: await shrinkToDataUrl(file), framing: DEFAULT_FRAMING });
       setErr('');
-      setAvatar({ src: reader.result, framing: DEFAULT_FRAMING });
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      setErr('Could not read that image.');
+    }
   };
 
   return (
@@ -2845,9 +3051,6 @@ function PortraitPlate({ name, profitFactor, avatar, setAvatar }) {
             ? <img src={avatar.src} alt="" style={framingStyle(avatar.framing)}
                 onError={() => setAvatar(null)} />
             : <span aria-hidden="true">{(name || '').trim().charAt(0).toUpperCase() || '?'}</span>}
-        </div>
-        <div className="rt-port-pf" title="Profit Factor">
-          {profitFactor}<span>PF</span>
         </div>
       </div>
 
@@ -2867,11 +3070,9 @@ function PortraitPlate({ name, profitFactor, avatar, setAvatar }) {
             <path d="M7 2v14a1 1 0 0 0 1 1h14" /><path d="M2 7h14a1 1 0 0 1 1 1v14" />
           </svg>
         </button>
-        {/* ponytail: generation is a server call (see generate-avatar.js in
-            shadow-run_builder). Present but inert until that endpoint exists. */}
-        <button className="rt-picon" disabled
-          title="Generate a portrait — needs the generate-avatar endpoint, which is not built yet"
-          aria-label="Generate portrait (unavailable)">
+        <button className={'rt-picon' + (busy ? ' busy' : '')} onClick={generate} disabled={busy}
+          title={busy ? 'Generating…' : 'Generate a portrait from this character'}
+          aria-label="Generate portrait">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"
             strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 3.5 13.7 9l5.5 1.7-5.5 1.7L12 18l-1.7-5.6L4.8 10.7 10.3 9Z" />
@@ -3235,6 +3436,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
   const career = build.picked.career;
+  const pickedName = (id) => (build.picked[id] ? build.picked[id].name : '');
   // STEPS includes career, so build already folded its skills/talents/traits in
   // (and deduped them). Concatenating career.* again is what duplicated every
   // entry in these lists.
@@ -3257,9 +3459,11 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
   const allTraits = [...build.traits, ...extras.traits];
   const allPowers = [...extras.powers, ...advPowers];
   const allNotes = [...build.notes, ...extras.notes];
-  const gearCount =
-    (career ? parseGear(career.gear).flat().filter((l) => !extras.gearDropped.includes(l)).length : 0)
-    + extras.gear.length;
+  const allGear = [
+    ...(career ? parseGear(career.gear).flat().filter((l) => !extras.gearDropped.includes(l)) : []),
+    ...extras.gear
+  ];
+  const gearCount = allGear.length;
 
   const listFor = (kind) => ({
     skills: allSkills, talents: allTalents, traits: allTraits,
@@ -3281,7 +3485,22 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
     <div className="rt-dossier">
       <div className="rt-idcard">
         <PortraitPlate name={name} profitFactor={profitFactor}
-          avatar={avatar} setAvatar={setAvatar} />
+          avatar={avatar} setAvatar={setAvatar}
+          /* The whole origin path goes to the portrait generator, which turns
+             each choice into art direction — see lib/prompt.js. Imported sheets
+             keep Concept and Role in crew as notes; either gives it more. */
+          identity={{
+            name,
+            homeWorld: pickedName('home'),
+            birthright: pickedName('birthright'),
+            lure: pickedName('lure'),
+            trials: pickedName('trials'),
+            motivation: pickedName('motivation'),
+            career: pickedName('career'),
+            gear: allGear,
+            concept: (allNotes.find((n) => /^(Concept|Role in crew):/.test(n)) || '')
+              .replace(/^[^:]+:\s*/, '')
+          }} />
         <div className="rt-idtext">
           <h2 className="rt-h2">{name || 'Unnamed adept'}</h2>
           <p className="rt-lead">
@@ -3292,6 +3511,16 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
               separate row below it. One strip, no dead space. */}
           <div className="rt-idstats">
             <div className={'rt-wgauge' + (ws && ws.down ? ' down' : ws && ws.current / ws.max <= 0.34 ? ' low' : '')}>
+              <div className="rt-whead">
+                <span className="rt-der-k">{ws && ws.down ? 'DOWN' : 'WOUNDS'}</span>
+                <span className="rt-wmax">
+                  <button className="rt-wmaxb" onClick={() => onAdjustMax(-1)}
+                    disabled={!ws} aria-label="Lower maximum wounds">{'\u2212'}</button>
+                  MAX
+                  <button className="rt-wmaxb" onClick={() => onAdjustMax(1)}
+                    disabled={!ws} aria-label="Raise maximum wounds">+</button>
+                </span>
+              </div>
               <div className="rt-wrow">
                 <button className="rt-wbtn" onClick={() => onDamage(1)}
                   disabled={!ws || ws.down} aria-label="Take one wound">{'\u2212'}</button>
@@ -3301,16 +3530,6 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                 </div>
                 <button className="rt-wbtn" onClick={() => onDamage(-1)}
                   disabled={!ws || ws.taken === 0} aria-label="Heal one wound">+</button>
-              </div>
-              <div className="rt-wfoot">
-                <span className="rt-der-k">{ws && ws.down ? 'DOWN' : 'WOUNDS'}</span>
-                <span className="rt-wmax">
-                  <button className="rt-wmaxb" onClick={() => onAdjustMax(-1)}
-                    disabled={!ws} aria-label="Lower maximum wounds">{'\u2212'}</button>
-                  MAX
-                  <button className="rt-wmaxb" onClick={() => onAdjustMax(1)}
-                    disabled={!ws} aria-label="Raise maximum wounds">+</button>
-                </span>
               </div>
             </div>
             <div className="rt-der">
@@ -3341,6 +3560,21 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
             {/* XP is a running campaign total, so it gets steppers rather than
                 a field you have to select and retype. */}
             <div className="rt-xpgauge">
+              <div className="rt-whead">
+                <span className="rt-der-k" title={xpToNextRank(xp) != null
+                  ? xpToNextRank(xp).toLocaleString() + ' XP to Rank ' + romanRank(charRank + 1)
+                  : 'Rank VIII — no further thresholds'}>
+                  RANK {romanRank(charRank)}
+                  {xpToNextRank(xp) != null && (
+                    <span className="rt-nextrank"> · {xpToNextRank(xp).toLocaleString()} to {romanRank(charRank + 1)}</span>
+                  )}
+                </span>
+                <span className={'rt-xpleft' + (remaining < 0 ? ' over' : '')}>
+                  {remaining < 0
+                    ? (-remaining).toLocaleString() + ' OVER'
+                    : remaining.toLocaleString() + ' LEFT'}
+                </span>
+              </div>
               <div className="rt-wrow">
                 <button className="rt-wbtn" disabled={xp <= 0}
                   onClick={() => onXp(Math.max(0, xp - 100))}
@@ -3356,24 +3590,10 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                 <button className="rt-wbtn" onClick={() => onXp(xp + 100)}
                   aria-label="Award 100 XP">+</button>
               </div>
-              <div className="rt-wfoot">
-                <span className="rt-der-k" title={xpToNextRank(xp) != null
-                  ? xpToNextRank(xp).toLocaleString() + ' XP to Rank ' + romanRank(charRank + 1)
-                  : 'Rank VIII — no further thresholds'}>
-                  RANK {romanRank(charRank)}
-                  {xpToNextRank(xp) != null && (
-                    <span className="rt-nextrank"> · {xpToNextRank(xp).toLocaleString()} to {romanRank(charRank + 1)}</span>
-                  )}
-                </span>
-                <span className={'rt-xpleft' + (remaining < 0 ? ' over' : '')}>
-                  {remaining < 0
-                    ? (-remaining).toLocaleString() + ' OVER'
-                    : remaining.toLocaleString() + ' LEFT'}
-                </span>
-              </div>
             </div>
             {psyRating > 0 && (
-              <div className="rt-der">
+              /* its own full-width row, so every row of the strip lines up */
+              <div className="rt-der wide">
                 <div className="rt-der-k top">PSY RATING</div>
                 <div className="rt-der-v">{psyRating}</div>
               </div>

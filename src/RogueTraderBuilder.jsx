@@ -1236,10 +1236,22 @@ const CSS = `
 
 /* the brass gauges — wounds, fate, profit factor */
 .rt-derived{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0;}
+/* the strip stretches its children to the tallest control, so these have to
+   centre their own content or they hang at the top of the box */
 .rt-der{text-align:center;padding:11px 6px 9px;
+  display:flex;flex-direction:column;justify-content:center;
   border:1px solid var(--brass);
   background:linear-gradient(180deg,#241d0f,#0d1109);
   box-shadow:inset 0 1px 0 rgba(201,169,97,.16);}
+
+/* fate and profit change in play, so their label row carries steppers */
+.rt-adjrow{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:3px;}
+.rt-adjb{flex:none;width:20px;height:20px;line-height:1;cursor:pointer;font-size:12px;
+  border:1px solid var(--brass-dim);color:var(--gold-lit);background:rgba(6,12,8,.55);
+  transition:border-color .14s,color .14s;}
+.rt-adjb:hover:not(:disabled){border-color:var(--brass-lit);color:var(--bone);}
+.rt-adjb:disabled{opacity:.3;cursor:default;}
+@media (pointer:coarse){.rt-adjb{width:30px;height:30px;font-size:15px;}}
 .rt-der-v{font-family:var(--display);font-size:24px;font-weight:600;line-height:1.1;
   color:var(--gold-lit);text-shadow:0 0 18px rgba(224,185,85,.35);}
 .rt-der-k{font-family:var(--mono);font-size:9px;color:var(--brass-lit);
@@ -1714,6 +1726,16 @@ export default function RogueTraderBuilder({ me }) {
   const [woundRoll, setWoundRoll] = useState(null);
   const [damage, setDamage] = useState(0);       // wounds taken in play
   const [woundBonus, setWoundBonus] = useState(0); // level-ups, Sound Constitution
+  // Fate is spent and regained in play; Profit Factor shifts with the
+  // dynasty's fortunes. Stored as deltas on the derived values rather than
+  // absolutes, so changing the origin path still flows through.
+  const [fateAdj, setFateAdj] = useState(0);
+  const [profitAdj, setProfitAdj] = useState(0);
+  // XP spent before this sheet existed. The app only knows about advances
+  // bought through its own Advances tab, so a character created elsewhere —
+  // every premade, and any starting Explorer who used their 500 at creation —
+  // would otherwise show that allowance as still available.
+  const [spentAdj, setSpentAdj] = useState(0);
   const [psyRating, setPsyRating] = useState(0);   // 0 = not a psyker
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
@@ -1747,6 +1769,8 @@ export default function RogueTraderBuilder({ me }) {
         setName(s.name || ''); setSel(s.sel || {}); setChoices(s.choices || {});
         setRolls(s.rolls || null); setWoundRoll(s.woundRoll ?? null); setFateRoll(s.fateRoll ?? null);
         setDamage(s.damage || 0); setWoundBonus(s.woundBonus || 0);
+        setFateAdj(s.fateAdj || 0); setProfitAdj(s.profitAdj || 0);
+        setSpentAdj(s.spentAdj || 0);
         setAvatar(s.avatar || null); setExtras(readExtras(s.extras));
         setPsyRating(s.psyRating || 0);
         if (typeof s.xp === 'number') setXp(s.xp);
@@ -1762,13 +1786,13 @@ export default function RogueTraderBuilder({ me }) {
       try {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-          psyRating, xp, stepIx
+          fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
   }, [name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-      psyRating, xp, stepIx, loaded]);
+      fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -1815,6 +1839,13 @@ export default function RogueTraderBuilder({ me }) {
   const wounds = (tBonus != null && woundRoll != null)
     ? tBonus * 2 + woundRoll + build.bonusWounds : null;
 
+  // Fate and Profit Factor as actually played: the origin-path derivation plus
+  // whatever has been spent, burned or earned since. Both panes read these
+  // rather than the raw derived values, or the steppers move state that
+  // nothing displays.
+  const fateShown = fatePoints == null ? null : Math.max(0, fatePoints + fateAdj);
+  const profitShown = Math.max(0, profitFactor + profitAdj);
+
   // wounds is the origin-path maximum; ws carries the playable state on top
   const ws = woundState(wounds, woundBonus, damage);
   const takeDamage = (n) => setDamage((d) => applyDamage(d, n, ws ? ws.max : 0));
@@ -1854,6 +1885,7 @@ export default function RogueTraderBuilder({ me }) {
   const clearAll = () => {
     setName(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
     setDamage(0); setWoundBonus(0);
+    setFateAdj(0); setProfitAdj(0); setSpentAdj(0);
     setPsyRating(0); setXp(STARTING_XP_DEFAULT);
     setAvatar(null); setExtras(EMPTY_EXTRAS);
     setStepIx(0);
@@ -1871,7 +1903,7 @@ export default function RogueTraderBuilder({ me }) {
       career: career ? career.name : null,
       updatedAt: Date.now(),
       state: { name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-               psyRating, xp }
+               fateAdj, profitAdj, spentAdj, psyRating, xp }
     });
     if (!writeRoster(next)) {
       setRosterErr('Could not save — browser storage is full. A large portrait is the usual cause.');
@@ -1894,6 +1926,9 @@ export default function RogueTraderBuilder({ me }) {
     setFateRoll(s.fateRoll ?? null);
     setDamage(s.damage || 0);
     setWoundBonus(s.woundBonus || 0);
+    setFateAdj(s.fateAdj || 0);
+    setProfitAdj(s.profitAdj || 0);
+    setSpentAdj(s.spentAdj || 0);
     setAvatar(s.avatar || null);
     setExtras(readExtras(s.extras));
     setPsyRating(s.psyRating || 0);
@@ -2003,8 +2038,8 @@ export default function RogueTraderBuilder({ me }) {
           <CharacteristicsPane
             rolls={rolls} totals={totals} mods={build.mods}
             rollAll={rollAll} rerollOne={rerollOne} picked={build.picked}
-            home={home} wounds={ws ? ws.max : null} fatePoints={fatePoints}
-            profitFactor={profitFactor} tBonus={tBonus}
+            home={home} wounds={ws ? ws.max : null} fatePoints={fateShown}
+            profitFactor={profitShown} tBonus={tBonus}
           />
         )}
 
@@ -2012,11 +2047,14 @@ export default function RogueTraderBuilder({ me }) {
           <DossierPane
             name={name} build={build} totals={totals}
             ws={ws} onDamage={takeDamage} onAdjustMax={changeMax}
-            fatePoints={fatePoints} profitFactor={profitFactor}
+            fatePoints={fateShown} profitFactor={profitShown}
             avatar={avatar} setAvatar={setAvatar}
             extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
             onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance}
+            onFate={(n) => setFateAdj((a) => a + n)}
+            onProfit={(n) => setProfitAdj((a) => a + n)}
+            spentAdj={spentAdj} onSpentAdj={(n) => setSpentAdj((a) => Math.max(0, a + n))}
           />
         )}
       </div>
@@ -2862,7 +2900,7 @@ const ADD_SOURCES = {
 
 function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
-  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance }) {
+  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onFate, onProfit, spentAdj = 0, onSpentAdj }) {
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
   const career = build.picked.career;
@@ -2879,7 +2917,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
 
   const charRank = rankForXp(xp);
   const careerAdvances = allAdvances(career ? career.name : '');
-  const spentXp = extras.advances.reduce((n, a) => n + (a.cost || 0), 0);
+  const spentXp = extras.advances.reduce((n, a) => n + (a.cost || 0), 0) + spentAdj;
   const remaining = remainingXp(xp, spentXp);
 
   // origin-path entries first, then free additions, then purchased advances
@@ -2944,8 +2982,27 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                 </span>
               </div>
             </div>
-            <div className="rt-der"><div className="rt-der-v">{fatePoints ?? '\u2014'}</div><div className="rt-der-k">FATE</div></div>
-            <div className="rt-der"><div className="rt-der-v">{profitFactor}</div><div className="rt-der-k">PROFIT</div></div>
+            <div className="rt-der">
+              <div className="rt-der-v">{fatePoints ?? '\u2014'}</div>
+              <div className="rt-adjrow">
+                <button className="rt-adjb" onClick={() => onFate(-1)}
+                  disabled={fatePoints == null || fatePoints <= 0}
+                  aria-label="Spend a Fate Point">{'\u2212'}</button>
+                <span className="rt-der-k">FATE</span>
+                <button className="rt-adjb" onClick={() => onFate(1)}
+                  disabled={fatePoints == null} aria-label="Regain a Fate Point">+</button>
+              </div>
+            </div>
+            <div className="rt-der">
+              <div className="rt-der-v">{profitFactor}</div>
+              <div className="rt-adjrow">
+                <button className="rt-adjb" onClick={() => onProfit(-1)}
+                  disabled={profitFactor <= 0} aria-label="Lower Profit Factor">{'\u2212'}</button>
+                <span className="rt-der-k">PROFIT</span>
+                <button className="rt-adjb" onClick={() => onProfit(1)}
+                  aria-label="Raise Profit Factor">+</button>
+              </div>
+            </div>
             <div className="rt-der"><div className="rt-der-v">{allTalents.length}</div><div className="rt-der-k">TALENTS</div></div>
             {/* XP is a running campaign total, so it gets steppers rather than
                 a field you have to select and retype. */}
@@ -3130,6 +3187,19 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                 </span>
                 {' · Rank '}{romanRank(charRank)}
               </p>
+
+              <div className="rt-psyrow">
+                <span className="rt-origin-k">Spent before this sheet</span>
+                <button className="rt-wmaxb" disabled={spentAdj <= 0}
+                  onClick={() => onSpentAdj(-50)} aria-label="Reduce XP already spent">{'−'}</button>
+                <b className="rt-psyval">{spentAdj.toLocaleString()}</b>
+                <button className="rt-wmaxb" onClick={() => onSpentAdj(50)}
+                  aria-label="Increase XP already spent">+</button>
+                <span className="rt-psynote">
+                  XP spent at creation or outside the app. A starting Explorer who
+                  already used their allowance records 500 here, leaving nothing.
+                </span>
+              </div>
 
               {Array.from({ length: MAX_TABLED_RANK }, (_, i) => i + 1).map((r) => {
                 const rows = careerAdvances.filter((a) => a.rank === r);

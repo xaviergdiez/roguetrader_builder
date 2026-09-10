@@ -5,6 +5,12 @@ import { parseGear, gearInfo, CRAFT, GEAR } from './gear.js';
 import { woundState, applyDamage, adjustMax } from './wounds.js';
 import { roll1d100, resolveTest, DIFFICULTIES } from './dice.js';
 import { conditionalsFor } from './effects.js';
+import {
+  MODES as PSY_MODES, MAX_PUSH, effectivePsyRating, phenomenaModifier,
+  risksPhenomena, psyRatingInfo, disciplineSlots, thoughtSendingKm,
+  describePower, manifest, sustainPenalty, DISCIPLINES, ALL_TECHNIQUES
+} from './psychic.js';
+import { rankForXp, xpToNextRank, isStartingBudget } from './xp.js';
 import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
 
 /* ============================================================
@@ -773,6 +779,8 @@ const CSS = `
   --crimson:#a52a1e; --rust:#c0552a; --bad:#e8998b;
   /* the machine speaking — plasma cyan, off the ambient green */
   --vox:#7fe8d8; --vox-deep:#08201d;
+  /* the warp gets its own accent so psychic results never read as vox or gold */
+  --warp:#b892e6; --warp-deep:#1b1230;
 
   --display:"Cinzel","Trajan Pro","EB Garamond",Palatino,Georgia,serif;
   --serif:"EB Garamond","Iowan Old Style",Palatino,Georgia,serif;
@@ -1068,6 +1076,82 @@ const CSS = `
 .rt-diff.on{color:#161004;border-color:var(--gold-lit);
   background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
 .rt-diff.on span{color:#3d2c06;}
+
+/* ---- psychic panel ---- */
+.rt-headbtn.psy{border-color:var(--warp);color:var(--warp);
+  background:linear-gradient(180deg,#241a3a,#120c1e);}
+.rt-psypanel{width:min(520px,94vw);
+  background:linear-gradient(180deg,#1b1230,#0a0713 60%);
+  border-color:var(--warp);}
+.rt-psypanel::backdrop{background:rgba(6,3,12,.85);}
+.rt-warp-t{color:var(--warp);text-shadow:0 0 20px rgba(184,146,230,.45);}
+.rt-warp-k{color:#9a7fd0;}
+.rt-warp-v{color:var(--warp);}
+.rt-manifest{margin-top:12px;color:var(--warp);border-color:var(--warp);
+  background:linear-gradient(180deg,#2c1f4c,#150e26);
+  text-shadow:0 0 16px rgba(184,146,230,.5);}
+
+.rt-psyres{margin-top:9px;padding:8px 10px;
+  border-left:2px solid var(--brass-dim);background:rgba(0,0,0,.35);opacity:.66;}
+.rt-psyres.last{opacity:1;background:rgba(0,0,0,.5);}
+.rt-psyres.ok{border-left-color:var(--green);}
+.rt-psyres.no{border-left-color:var(--crimson);}
+.rt-psyres-h{display:flex;align-items:baseline;gap:9px;}
+.rt-psyres-h > b{font-family:var(--display);font-size:19px;font-weight:600;min-width:32px;
+  color:var(--bone);}
+.rt-psyres.ok .rt-psyres-h > b{color:var(--green);}
+.rt-psyres.no .rt-psyres-h > b{color:var(--bad);}
+.rt-psyres-o{flex:1;text-align:right;font-family:var(--mono);font-size:10px;
+  letter-spacing:.06em;color:var(--text);}
+
+.rt-warpres{margin-top:7px;padding:7px 9px;
+  border:1px solid rgba(184,146,230,.4);background:rgba(27,18,48,.6);}
+.rt-warpres.perils{border-color:var(--crimson);background:rgba(40,10,10,.55);}
+.rt-warpres-k{font-family:var(--mono);font-size:9px;letter-spacing:.14em;
+  text-transform:uppercase;color:#9a7fd0;margin-bottom:3px;}
+.rt-warpres.perils .rt-warpres-k{color:var(--bad);}
+.rt-warpres > b{font-family:var(--display);font-size:13.5px;font-weight:600;
+  letter-spacing:.04em;color:var(--warp);}
+.rt-warpres.perils > b{color:#f0a08e;}
+.rt-warpres > p{margin:4px 0 0;font-size:13px;line-height:1.5;color:var(--text);}
+
+/* ---- Focus Power manifestation, on the Willpower row only ---- */
+.rt-psy{margin-bottom:10px;padding:9px 10px;
+  border:1px solid var(--brass-dim);border-left:2px solid var(--vox);
+  background:rgba(8,32,29,.5);}
+.rt-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;}
+.rt-mode{cursor:pointer;padding:7px 4px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.1em;text-transform:uppercase;
+  color:var(--dim);border:1px solid var(--brass-dim);background:rgba(6,12,8,.6);
+  transition:color .14s,border-color .14s;}
+.rt-mode:hover{color:var(--text);border-color:var(--brass);}
+.rt-mode.on{color:#04140f;border-color:var(--vox);
+  background:linear-gradient(180deg,var(--vox),#4fb8a6);}
+.rt-pushrow{display:flex;align-items:center;gap:6px;margin-top:7px;}
+.rt-pushb{width:34px;cursor:pointer;padding:4px 0;
+  font-family:var(--mono);font-size:11px;
+  color:var(--dim);border:1px solid var(--brass-dim);background:rgba(6,12,8,.6);}
+.rt-pushb.on{color:#161004;border-color:var(--gold-lit);
+  background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
+.rt-psyline{margin:8px 0 0;font-family:var(--mono);font-size:11px;color:var(--text);}
+.rt-psyline b{color:var(--vox);font-size:13px;}
+.rt-psynote{font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+  color:var(--dim);margin:4px 0 0;line-height:1.45;}
+
+/* ---- powers tab ---- */
+.rt-psyrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+.rt-psyrow .rt-origin-k{margin-right:0;}
+.rt-psyval{min-width:26px;text-align:center;font-family:var(--display);
+  font-size:20px;font-weight:600;color:#6d5726;}
+.rt-powers .rt-psynote{color:var(--parch-dim);}
+.rt-discs{margin-top:14px;padding-top:12px;border-top:1px solid rgba(109,87,38,.4);}
+
+/* ---- rank / xp gauge ---- */
+.rt-xpgauge{flex:1 1 96px;min-width:96px;}
+.rt-xpin{width:100%;margin-top:5px;padding:3px 4px;text-align:center;
+  font-family:var(--mono);font-size:10px;color:var(--brass-lit);
+  background:rgba(0,0,0,.4);border:1px solid var(--brass-dim);}
+.rt-xpin:focus{outline:none;border-color:var(--gold);}
 
 /* conditional modifiers from traits — off by default, applied per test */
 .rt-conds{margin-bottom:9px;}
@@ -1591,6 +1675,8 @@ export default function RogueTraderBuilder({ me }) {
   const [woundRoll, setWoundRoll] = useState(null);
   const [damage, setDamage] = useState(0);       // wounds taken in play
   const [woundBonus, setWoundBonus] = useState(0); // level-ups, Sound Constitution
+  const [psyRating, setPsyRating] = useState(0);   // 0 = not a psyker
+  const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
   const [stepIx, setStepIx] = useState(0);     // 0..5 origin, 6 characteristics, 7 dossier
   const [avatar, setAvatar] = useState(null);  // { src, framing }
@@ -1601,6 +1687,7 @@ export default function RogueTraderBuilder({ me }) {
   const [charId, setCharId] = useState(null);  // null = unsaved sheet
   const [rosterOpen, setRosterOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [psyOpen, setPsyOpen] = useState(false);
   const [rosterErr, setRosterErr] = useState('');
   const [voxOpen, setVoxOpen] = useState(false);
   const [voxText, setVoxText] = useState('');
@@ -1622,6 +1709,8 @@ export default function RogueTraderBuilder({ me }) {
         setRolls(s.rolls || null); setWoundRoll(s.woundRoll ?? null); setFateRoll(s.fateRoll ?? null);
         setDamage(s.damage || 0); setWoundBonus(s.woundBonus || 0);
         setAvatar(s.avatar || null); setExtras(readExtras(s.extras));
+        setPsyRating(s.psyRating || 0);
+        if (typeof s.xp === 'number') setXp(s.xp);
         if (typeof s.stepIx === 'number') setStepIx(s.stepIx);
       }
     } catch { /* nothing saved, or storage unavailable */ }
@@ -1633,12 +1722,14 @@ export default function RogueTraderBuilder({ me }) {
     const t = setTimeout(() => {
       try {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
-          name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras, stepIx
+          name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+          psyRating, xp, stepIx
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
-  }, [name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras, stepIx, loaded]);
+  }, [name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+      psyRating, xp, stepIx, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -1724,6 +1815,7 @@ export default function RogueTraderBuilder({ me }) {
   const clearAll = () => {
     setName(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
     setDamage(0); setWoundBonus(0);
+    setPsyRating(0); setXp(STARTING_XP_DEFAULT);
     setAvatar(null); setExtras(EMPTY_EXTRAS);
     setStepIx(0);
   };
@@ -1739,7 +1831,8 @@ export default function RogueTraderBuilder({ me }) {
       name: name || 'Unnamed adept',
       career: career ? career.name : null,
       updatedAt: Date.now(),
-      state: { name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras }
+      state: { name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+               psyRating, xp }
     });
     if (!writeRoster(next)) {
       setRosterErr('Could not save — browser storage is full. A large portrait is the usual cause.');
@@ -1764,6 +1857,8 @@ export default function RogueTraderBuilder({ me }) {
     setWoundBonus(s.woundBonus || 0);
     setAvatar(s.avatar || null);
     setExtras(readExtras(s.extras));
+    setPsyRating(s.psyRating || 0);
+    setXp(typeof s.xp === 'number' ? s.xp : STARTING_XP_DEFAULT);
     setCharId(id);
     setRosterErr('');
     setStepIx(7);
@@ -1819,6 +1914,8 @@ export default function RogueTraderBuilder({ me }) {
           </div>
           <div className="rt-head-btns">
             <button className="rt-headbtn" onClick={() => setRosterOpen(true)}>ROSTER</button>
+            <button className="rt-headbtn psy" onClick={() => setPsyOpen(true)}
+              title="Focus Power, Psychic Phenomena and Perils of the Warp">PSY</button>
             <button
               className={'rt-voxbtn' + (vox.speaking ? ' live' : '')}
               onClick={() => setVoxOpen(true)}
@@ -1872,6 +1969,7 @@ export default function RogueTraderBuilder({ me }) {
             fatePoints={fatePoints} profitFactor={profitFactor}
             avatar={avatar} setAvatar={setAvatar}
             extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
+            psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
           />
         )}
       </div>
@@ -1914,6 +2012,14 @@ export default function RogueTraderBuilder({ me }) {
         />
       )}
 
+      {psyOpen && (
+        <PsychicPanel
+          psyRating={psyRating} onPsyRating={setPsyRating}
+          willpower={totals ? totals.wp : 0}
+          onClose={() => setPsyOpen(false)}
+        />
+      )}
+
       {voxOpen && (
         <VoxPanel
           vox={vox} text={voxText} setText={setVoxText}
@@ -1927,7 +2033,8 @@ export default function RogueTraderBuilder({ me }) {
 
 const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
 const AUTOSAVE_KEY = 'rt:current';
-const EMPTY_EXTRAS = { skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [] };
+const STARTING_XP_DEFAULT = 5000;   // a starting Explorer, per the rank table
+const EMPTY_EXTRAS = { skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [] };
 // merges a stored extras object over the empty shape, so an older save that
 // predates a category still loads
 const readExtras = (v) => ({ ...EMPTY_EXTRAS, ...(v || {}) });
@@ -2165,6 +2272,158 @@ function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onCl
           <span className="rt-signed-e">{me.email}</span>
           <button className="rt-opt" onClick={signOut}>Sign out</button>
         </div>
+      )}
+    </dialog>
+  );
+}
+
+/* ---------------------------- PSYCHIC PANEL ----------------------------
+   The psyker's counterpart to the vox: choose a strength mode, make the Focus
+   Power test, and read whatever the warp sends back. Every rule lives in
+   psychic.js — this gathers the inputs and renders the outcome, nothing more. */
+
+const PSY_LOG_MAX = 5;
+
+function PsychicPanel({ psyRating, onPsyRating, willpower, onClose }) {
+  const dialogRef = useRef(null);
+  const [mode, setMode] = useState('unfettered');
+  const [push, setPush] = useState(1);
+  const [sustained, setSustained] = useState(0);
+  const [mod, setMod] = useState(0);
+  const [log, setLog] = useState([]);
+
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  const info = PSY_MODES.find((m) => m.id === mode) || PSY_MODES[1];
+  const effective = effectivePsyRating(psyRating, mode, push);
+  const sustainMod = sustainPenalty(sustained);
+  const target = (willpower || 0) + mod + sustainMod;
+  const pushMod = phenomenaModifier(mode, push);
+
+  const go = () => setLog((p) => [
+    { ...manifest({ psyRating, mode, push, willpower: willpower || 0, modifier: mod, sustained }),
+      id: newId() },
+    ...p
+  ].slice(0, PSY_LOG_MAX));
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer rt-psypanel" onClose={onClose}
+      aria-label="Psychic manifestation">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t rt-warp-t">Psychic Manifestation</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+
+      <div className="rt-psyrow">
+        <span className="rt-origin-k rt-warp-k">Psy Rating</span>
+        <button className="rt-wmaxb" disabled={psyRating <= 0}
+          onClick={() => onPsyRating(Math.max(0, psyRating - 1))}
+          aria-label="Lower Psy Rating">{'−'}</button>
+        <b className="rt-psyval rt-warp-v">{psyRating}</b>
+        <button className="rt-wmaxb" onClick={() => onPsyRating(psyRating + 1)}
+          aria-label="Raise Psy Rating">+</button>
+        {psyRating > 0 && (
+          <span className="rt-psynote">
+            {disciplineSlots(psyRating)} discipline{disciplineSlots(psyRating) > 1 ? 's' : ''}
+            {' · '}Thought Sending {thoughtSendingKm(psyRating)} km
+          </span>
+        )}
+      </div>
+
+      {psyRating <= 0 ? (
+        <p className="rt-vox-hint">
+          Not a psyker. Raise the Psy Rating above zero to manifest powers.
+        </p>
+      ) : (
+        <>
+          <div className="rt-conds-h">Strength mode</div>
+          <div className="rt-modes">
+            {PSY_MODES.map((m) => (
+              <button key={m.id} className={'rt-mode' + (mode === m.id ? ' on' : '')}
+                onClick={() => setMode(m.id)} aria-pressed={mode === m.id}>{m.label}</button>
+            ))}
+          </div>
+          {mode === 'push' && (
+            <div className="rt-pushrow">
+              <span className="rt-origin-k">Push by</span>
+              {Array.from({ length: MAX_PUSH }, (_, i) => i + 1).map((p) => (
+                <button key={p} className={'rt-pushb' + (push === p ? ' on' : '')}
+                  onClick={() => setPush(p)} aria-pressed={push === p}>+{p}</button>
+              ))}
+            </div>
+          )}
+          <p className="rt-psynote">{info.note}</p>
+
+          <div className="rt-conds-h">Power difficulty</div>
+          <div className="rt-diffs">
+            {DIFFICULTIES.map((d) => (
+              <button key={d.label} className={'rt-diff' + (mod === d.mod ? ' on' : '')}
+                onClick={() => setMod(d.mod)} aria-pressed={mod === d.mod}>
+                {d.label}<span>{d.mod > 0 ? '+' : ''}{d.mod}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="rt-pushrow">
+            <span className="rt-origin-k">Sustaining</span>
+            <button className="rt-wmaxb" disabled={sustained <= 0}
+              onClick={() => setSustained(Math.max(0, sustained - 1))}
+              aria-label="Fewer sustained powers">{'−'}</button>
+            <b className="rt-psyval">{sustained}</b>
+            <button className="rt-wmaxb" onClick={() => setSustained(sustained + 1)}
+              aria-label="More sustained powers">+</button>
+            {sustainMod < 0 && <span className="rt-psynote">{sustainMod} to all tests</span>}
+          </div>
+
+          <p className="rt-psyline">
+            Channelling at <b>{effective}</b> of {psyRating}
+            {' · '}Focus Power target <b>{target}</b>
+            {pushMod > 0
+              ? <> · Phenomena at <b>+{pushMod}</b></>
+              : !risksPhenomena(mode) && <> · no Phenomena risk</>}
+          </p>
+
+          <button className="rt-speak rt-manifest" onClick={go}>Focus Power</button>
+
+          {log.map((r, i) => (
+            <div key={r.id} className={'rt-psyres' + (r.focus.success ? ' ok' : ' no') + (i === 0 ? ' last' : '')}>
+              <div className="rt-psyres-h">
+                <b>{r.focus.roll}</b>
+                <span className="rt-rollr-v">vs {r.target}</span>
+                <span className="rt-psyres-o">
+                  {r.focus.success ? 'Manifested' : 'Failed'}
+                  {r.focus.degrees > 0 && ` · ${r.focus.degrees} ${r.focus.success ? 'DoS' : 'DoF'}`}
+                  {' · PR '}{r.effective}
+                </span>
+              </div>
+
+              {r.phenomena ? (
+                <div className="rt-warpres">
+                  <div className="rt-warpres-k">
+                    Psychic Phenomena — d100 {r.phenomena.roll}
+                    {r.phenomena.modifier > 0 && ` + ${r.phenomena.modifier} = ${r.phenomena.total}`}
+                  </div>
+                  <b>{r.phenomena.result.name}</b>
+                  <p>{r.phenomena.result.effect}</p>
+                </div>
+              ) : (
+                <p className="rt-psynote">No Psychic Phenomena.</p>
+              )}
+
+              {r.perils && (
+                <div className="rt-warpres perils">
+                  <div className="rt-warpres-k">Perils of the Warp — d100 {r.perils.roll}</div>
+                  <b>{r.perils.result.name}</b>
+                  <p>{r.perils.result.effect}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </>
       )}
     </dialog>
   );
@@ -2538,6 +2797,7 @@ const DOSSIER_TABS = [
   { id: 'talents', label: 'Talents' },
   { id: 'traits', label: 'Traits' },
   { id: 'gear', label: 'Gear' },
+  { id: 'powers', label: 'Powers' },
   { id: 'notes', label: 'Notes' }
 ];
 
@@ -2546,11 +2806,13 @@ const ADD_SOURCES = {
   talents: { title: 'Add a talent',   options: Object.keys(TALENTS) },
   traits:  { title: 'Add a trait',    options: [] },
   gear:    { title: 'Add equipment',  options: Object.keys(GEAR) },
+  powers:  { title: 'Add a psychic power', options: ALL_TECHNIQUES },
   notes:   { title: 'Add a note',     options: [] }
 };
 
 function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
-  avatar, setAvatar, extras, onAddExtra, onRemoveExtra }) {
+  avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
+  psyRating, onPsyRating, xp, onXp }) {
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
   const career = build.picked.career;
@@ -2568,7 +2830,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
 
   const listFor = (kind) => ({
     skills: allSkills, talents: allTalents, traits: allTraits,
-    gear: extras.gear, notes: allNotes
+    gear: extras.gear, powers: extras.powers, notes: allNotes
   }[kind] || []);
 
   const counts = {
@@ -2577,6 +2839,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
     talents: allTalents.length,
     traits: allTraits.length,
     gear: gearCount,
+    powers: extras.powers.length,
     notes: allNotes.length
   };
 
@@ -2619,6 +2882,21 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
             <div className="rt-der"><div className="rt-der-v">{fatePoints ?? '\u2014'}</div><div className="rt-der-k">FATE</div></div>
             <div className="rt-der"><div className="rt-der-v">{profitFactor}</div><div className="rt-der-k">PROFIT</div></div>
             <div className="rt-der"><div className="rt-der-v">{allTalents.length}</div><div className="rt-der-k">TALENTS</div></div>
+            <div className="rt-der rt-xpgauge">
+              <div className="rt-der-v">{rankForXp(xp)}</div>
+              <div className="rt-der-k">RANK</div>
+              <input className="rt-xpin" type="number" min="0" step="100" value={xp}
+                onChange={(e) => onXp(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                aria-label="Experience points"
+                title={isStartingBudget(xp)
+                  ? 'Within the 4,500-5,000 XP starting allowance'
+                  : (xpToNextRank(xp) != null
+                    ? xpToNextRank(xp).toLocaleString() + ' XP to the next rank'
+                    : 'Rank 8 — no further thresholds')} />
+            </div>
+            {psyRating > 0 && (
+              <div className="rt-der"><div className="rt-der-v">{psyRating}</div><div className="rt-der-k">PSY RATING</div></div>
+            )}
           </div>
         </div>
       </div>
@@ -2698,6 +2976,55 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
                 onRemove={(v) => onRemoveExtra('gear', v)}
                 onDrop={(v) => onAddExtra('gearDropped', v)} />
             : <p className="rt-empty">Choose a career to be issued equipment, or add your own.</p>
+        )}
+
+        {tab === 'powers' && (
+          <div className="rt-powers">
+            <div className="rt-psyrow">
+              <span className="rt-origin-k">Psy Rating</span>
+              <button className="rt-wmaxb" disabled={psyRating <= 0}
+                onClick={() => onPsyRating(Math.max(0, psyRating - 1))}
+                aria-label="Lower Psy Rating">{'−'}</button>
+              <b className="rt-psyval">{psyRating}</b>
+              <button className="rt-wmaxb" onClick={() => onPsyRating(psyRating + 1)}
+                aria-label="Raise Psy Rating">+</button>
+              {psyRating > 0 && (
+                <span className="rt-psynote">
+                  {disciplineSlots(psyRating)} discipline{disciplineSlots(psyRating) > 1 ? 's' : ''}
+                  {' · '}Thought Sending {thoughtSendingKm(psyRating)} km
+                </span>
+              )}
+            </div>
+
+            {psyRating > 0 && psyRatingInfo(psyRating) && (
+              <div className="rt-entry-d">
+                <p>{psyRatingInfo(psyRating).effect}</p>
+                <p className="rt-entry-s">{psyRatingInfo(psyRating).risk}</p>
+              </div>
+            )}
+
+            {psyRating <= 0
+              ? <p className="rt-empty">Not a psyker. Raise the Psy Rating to record disciplines and powers.</p>
+              : extras.powers.length
+                ? <ul className="rt-list rt-2col">
+                  {extras.powers.map((p, i) => (
+                    <Entry key={i} text={describePower(p)}
+                      onRemove={() => onRemoveExtra('powers', p)} />
+                  ))}
+                </ul>
+                : <p className="rt-empty">No powers recorded yet.</p>}
+
+            {psyRating > 0 && (
+              <div className="rt-discs">
+                <div className="rt-sect-h">Disciplines</div>
+                <ul className="rt-list rt-2col">
+                  {DISCIPLINES.map((d) => (
+                    <Entry key={d.id} text={`${d.name}: ${d.focus} Basic Technique — ${d.basic}: ${d.basicEffect}`} />
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
 
         {tab === 'notes' && (

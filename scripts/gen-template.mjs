@@ -1,6 +1,9 @@
 // Generates the character-import CSV template straight from the app's own data,
 // so the option lists in the Notes column cannot drift out of sync.
 import fs from 'node:fs';
+// the discipline list comes from the app's own psychic data, so the template's
+// accepted values cannot drift from what the sheet will actually understand
+import { DISCIPLINES } from '../src/psychic.js';
 
 const src = fs.readFileSync('src/RogueTraderBuilder.jsx', 'utf8').split('const CSS =')[0];
 
@@ -134,6 +137,12 @@ row('Fate roll', 2, '1d10, read against your Home World fate table.');
 row('# — IN PLAY —', '', 'Leave blank for a fresh character.');
 row('Damage taken', 4, 'Wounds lost so far. Current wounds = max - this.');
 row('Wound bonus', 1, 'Extra maximum wounds from advances (Sound Constitution, level-ups).');
+
+row('# — PROGRESSION —', '', 'Rank is derived from XP, not entered: 0-6,999 is Rank 1, 7,000-9,999 Rank 2, and so on.');
+row('XP total', 5000, 'A starting Explorer is built on 4,500-5,000 XP.');
+row('Psy rating', '', 'Blank or 0 for a non-psyker. 3 unlocks a second discipline.');
+row('Psychic disciplines', '', DISCIPLINES.map((d) => d.name).join(' | '));
+row('Psychic powers', '', 'Semicolon separated, e.g. ' + [DISCIPLINES[0].basic, DISCIPLINES[3].techniques[0]].join('; '));
 
 row('# — GAINED AFTER CREATION —', '', 'Semicolon separated. Origin-path entries come across automatically; list only additions.');
 row('Extra skills', 'Barter (Fel)', 'e.g. Awareness (Per); Dodge (Ag)');

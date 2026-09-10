@@ -1,0 +1,82 @@
+// Self-check for XP, rank and advance costs. Run: node src/xp.check.mjs
+import assert from 'node:assert/strict';
+import {
+  RANKS, STARTING_XP, rankForXp, xpToNextRank, isStartingBudget,
+  advanceCost, cumulativeAdvanceCost, advancesBetween,
+  ADVANCE_LEVELS, ADVANCE_STEP, CHAR_ADVANCE_COST
+} from './xp.js';
+
+// rank boundaries — off-by-one here would misreport every sheet
+assert.equal(rankForXp(0), 1);
+assert.equal(rankForXp(5000), 1, 'a starting Explorer is Rank 1');
+assert.equal(rankForXp(6999), 1);
+assert.equal(rankForXp(7000), 2, 'the boundary belongs to the higher rank');
+assert.equal(rankForXp(9999), 2);
+assert.equal(rankForXp(10000), 3);
+assert.equal(rankForXp(28999), 7);
+assert.equal(rankForXp(29000), 8);
+assert.equal(rankForXp(999999), 8, 'Rank 8 is open-ended');
+
+// nonsense input degrades to Rank 1 rather than throwing
+assert.equal(rankForXp(null), 1);
+assert.equal(rankForXp(-500), 1);
+
+// the ladder has no gaps or overlaps
+for (let i = 1; i < RANKS.length; i++) {
+  assert.equal(RANKS[i].min, RANKS[i - 1].max + 1,
+    'gap or overlap between rank ' + RANKS[i - 1].rank + ' and ' + RANKS[i].rank);
+}
+
+// distance to the next rank
+assert.equal(xpToNextRank(6999), 1);
+assert.equal(xpToNextRank(5000), 2000);
+assert.equal(xpToNextRank(29000), null, 'nothing beyond Rank 8');
+
+// the starting allowance
+assert.equal(isStartingBudget(5000), true);
+assert.equal(isStartingBudget(4500), true);
+assert.equal(isStartingBudget(4499), false);
+assert.equal(isStartingBudget(7500), false, 'the 7,500 XP Rogue Trader is over the standard budget');
+assert.equal(STARTING_XP.max, 5000);
+
+// advance costs by tier
+assert.equal(advanceCost('primary', 'simple'), 100);
+assert.equal(advanceCost('secondary', 'simple'), 250);
+assert.equal(advanceCost('tertiary', 'expert'), 1500);
+assert.equal(advanceCost('primary', 'nonesuch'), null);
+assert.equal(advanceCost('nonesuch', 'simple'), null);
+
+// cost rises with each successive advance in the same characteristic
+const primary = ADVANCE_LEVELS.map((l) => advanceCost('primary', l));
+for (let i = 1; i < primary.length; i++) {
+  assert.ok(primary[i] > primary[i - 1], 'primary costs must increase');
+}
+// and a tertiary advance is never cheaper than a primary one
+for (const l of ADVANCE_LEVELS) {
+  assert.ok(advanceCost('tertiary', l) >= advanceCost('primary', l));
+}
+
+// cumulative: 100 + 250 + 500 + 750
+assert.equal(cumulativeAdvanceCost('primary', 1), 100);
+assert.equal(cumulativeAdvanceCost('primary', 2), 350);
+assert.equal(cumulativeAdvanceCost('primary', 4), 1600);
+assert.equal(cumulativeAdvanceCost('primary', 0), 0);
+// past the published levels there is no cost, so say so instead of guessing
+assert.equal(cumulativeAdvanceCost('primary', 5), null);
+
+// how many +5 steps separate two values
+assert.equal(ADVANCE_STEP, 5);
+assert.equal(advancesBetween(30, 45), 3);
+assert.equal(advancesBetween(30, 30), 0);
+assert.equal(advancesBetween(40, 30), 0, 'a decrease is not an advance');
+assert.equal(advancesBetween(30, 43), 3, 'a partial step still costs a whole advance');
+
+// every tier defines every level
+for (const tier of Object.keys(CHAR_ADVANCE_COST)) {
+  for (const l of ADVANCE_LEVELS) {
+    assert.equal(typeof advanceCost(tier, l), 'number', tier + '/' + l);
+  }
+}
+
+console.log('xp: all checks passed (%d ranks, %d tiers)',
+  RANKS.length, Object.keys(CHAR_ADVANCE_COST).length);

@@ -24,6 +24,29 @@ import {
   assert.equal(matchOption([], 'Imperial World'), null);
 }
 
+/* ---- decimals from an .xlsx export are not multiplied by ten ---- */
+{
+  const steps = { home: [], birthright: [], lure: [], trials: [], motivation: [], career: [] };
+  const rows = [
+    ['# — FINAL CHARACTERISTICS —', ''],
+    ['Weapon Skill', '28.0'], ['Ballistic Skill', '35.0'], ['Strength', '31.0'],
+    ['Toughness', '38.0'], ['Agility', '33.0'], ['Intelligence', '38.0'],
+    ['Perception', '36.0'], ['Willpower', '48.0'], ['Fellowship', '28.0'],
+    ['# — DERIVED —', ''],
+    ['Final wounds', '12.0'], ['Final fate points', '3.0'], ['Psy rating', '3.0'],
+    ['XP total', '5,000 XP'], ['Name', 'Sanctioned Psyker']
+  ];
+  const { state } = parseCharacterSheet(rows, { steps });
+
+  assert.deepEqual(state.finalTotals, {
+    ws: 28, bs: 35, s: 31, t: 38, ag: 33, int: 38, per: 36, wp: 48, fel: 28
+  }, 'a trailing .0 must not become a trailing zero');
+  assert.equal(state.finalWounds, 12);
+  assert.equal(state.finalFate, 3);
+  assert.equal(state.psyRating, 3);
+  assert.equal(state.xp, 5000, 'thousands separators are still dropped');
+}
+
 /* ---- a flattened tab is detected, not half-parsed ---- */
 {
   const flat = [[

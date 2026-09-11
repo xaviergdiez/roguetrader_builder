@@ -54,8 +54,17 @@ export function parseCsv(text) {
 
 const key = (s) => String(s || '').trim().toLowerCase();
 
+// First number in the value, as an integer.
+//
+// Deleting every non-digit — which this used to do — silently multiplies a
+// decimal by ten: an .xlsx export writes whole numbers as "28.0", and
+// stripping the point made that 280, so every characteristic on an imported
+// sheet came out ten times too large. Thousands separators are still dropped
+// so "5,000 XP" reads as 5000.
 const num = (v) => {
-  const n = parseInt(String(v || '').replace(/[^\d-]/g, ''), 10);
+  const m = String(v ?? '').replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
+  if (!m) return null;
+  const n = Math.round(Number(m[0]));
   return Number.isFinite(n) ? n : null;
 };
 

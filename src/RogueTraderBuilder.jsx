@@ -2544,6 +2544,15 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // leaving the dossier re-arms the collapsed control bar for next time
   useEffect(() => { if (!onDossier) setNavOpen(false); }, [onDossier]);
 
+  // Vox-Synthesiser is Explorator flavour (a Magos' binary-cant vox-caster);
+  // Psy is the Focus Power / Phenomena / Perils reference, of no use to a
+  // character with no psychic powers to manifest. Closing the panel when its
+  // condition goes false covers a career or Psy Rating change made while open.
+  const voxAvailable = career?.id === 'explorator';
+  const psyAvailable = psyRating > 0;
+  useEffect(() => { if (!voxAvailable) setVoxOpen(false); }, [voxAvailable]);
+  useEffect(() => { if (!psyAvailable) setPsyOpen(false); }, [psyAvailable]);
+
   /* ---------------------------- render ---------------------------- */
   return (
     <div className="rt-root">
@@ -2565,14 +2574,19 @@ export default function RogueTraderBuilder({ me, cloud }) {
           </div>
           <div className="rt-head-btns">
             <button className="rt-headbtn" onClick={() => setRosterOpen(true)}>ROSTER</button>
-            <button className="rt-headbtn psy" onClick={() => setPsyOpen(true)}
-              title="Focus Power, Psychic Phenomena and Perils of the Warp">PSY</button>
-            <button
-              className={'rt-voxbtn' + (vox.speaking ? ' live' : '')}
-              onClick={() => setVoxOpen(true)}
-            >
-              {vox.speaking ? '\u25CF VOX' : 'VOX'}
-            </button>
+            {psyAvailable && (
+              <button className="rt-headbtn psy" onClick={() => setPsyOpen(true)}
+                title="Focus Power, Psychic Phenomena and Perils of the Warp">PSY</button>
+            )}
+            {voxAvailable && (
+              <button
+                className={'rt-voxbtn' + (vox.speaking ? ' live' : '')}
+                onClick={() => setVoxOpen(true)}
+                title="Vox-Synthesiser: an Explorator's binary-cant vox-caster"
+              >
+                {vox.speaking ? '\u25CF VOX' : 'VOX'}
+              </button>
+            )}
           </div>
         </div>
       </header>

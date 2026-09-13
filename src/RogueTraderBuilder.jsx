@@ -214,6 +214,87 @@ const HOME_WORLDS = [
     woundDie: () => d(5) + 12,
     woundText: 'Toughness Bonus + 1d5+12',
     fateTable: [[7, 1], [10, 2]]
+  },
+  {
+    id: 'kroot',
+    name: 'Kroot',
+    blurb: 'Avian hunters shaped by millennia of consuming the genetic essence of the fallen. Their battlefield awareness and wilderness instincts are without equal.',
+    xenos: true,
+    mods: { s: 5, t: 5, ag: 5, int: -5, per: 10, fel: -10 },
+    skills: [
+      'Awareness', 'Climb', 'Concealment', 'Dodge',
+      'Speak Language (Kroot, Low Gothic)', 'Shadowing', 'Silent Move', 'Survival'
+    ],
+    talents: [
+      'Basic Weapon Training (Universal)', 'Melee Weapon Training (Universal)',
+      'Heightened Senses (Sight, Hearing)', 'Fieldcraft'
+    ],
+    traits: [
+      'Unnatural Perception (×2): Perception Bonus is doubled for sensory, tracking and wilderness survival tests.',
+      'Eater of Flesh: consuming a defeated foe’s raw flesh allows the Kroot to absorb genetic traits, unlocking Kindred Advances on the career table.',
+      'Fieldcraft: +10 to Concealment, Shadowing and Silent Move tests; base movement is doubled in natural wilderness terrain.',
+      'Natural Weapons (Beak & Claws): counts as armed unarmed, dealing 1d10 + SB Rending damage.',
+      'Non-Imperial: −10 on tests involving Imperial lore, customs or interactions with non-Xenophile humans.',
+      'Speak Not Unto the Alien: −10 to Fellowship tests when interacting with Imperial citizens.',
+      'Cybernetic Rejection: each Imperial bionic implant inflicts a permanent −10 to Toughness.'
+    ],
+    woundMult: 1,
+    woundDie: () => d(5) + 11,
+    woundText: 'Toughness Bonus + 1d5+11',
+    fateTable: [[7, 1], [10, 2]]
+  },
+  {
+    id: 'drukhari',
+    name: 'Drukhari',
+    blurb: 'Raiders from Commorragh who sustain their immortal lives through inflicted suffering. Lethal and graceful, they feed on agony as others breathe air.',
+    xenos: true,
+    mods: { ws: 5, bs: 5, t: -5, ag: 10, per: 5, fel: -5 },
+    skills: [
+      'Acrobatics', 'Awareness', 'Common Lore (Dark Eldar)', 'Dodge',
+      'Intimidate', 'Speak Language (Dark Eldar, Low Gothic)', 'Pilot (Flyers)', 'Silent Move'
+    ],
+    talents: [
+      'Ambidextrous', 'Catfall', 'Exotic Weapon Training (Splinter Pistol, Splinter Rifle)',
+      'Heightened Senses (Sight, Hearing)', 'Leap Up', 'Melee Weapon Training (Universal)', 'Sprint'
+    ],
+    traits: [
+      'Unnatural Agility (×2): Agility Bonus is doubled for movement, initiative and evasion.',
+      'Soul Thirst: must regularly witness or inflict pain; doing so restores Fate Points, heals Wounds and wards off decay.',
+      'Matchless Grace: ignore movement penalties for difficult terrain when Running or Charging.',
+      'Keen Senses: possesses innate Darkvision and Night Vision, ignoring sight penalties in complete darkness.',
+      'Non-Imperial: −10 on tests involving Imperial lore, customs or interactions with non-Xenophile humans.',
+      'Speak Not Unto the Alien: −10 to Fellowship tests when interacting with Imperial citizens.',
+      'Cybernetic Rejection: each Imperial bionic implant inflicts a permanent −10 to Toughness.'
+    ],
+    woundMult: 1,
+    woundDie: () => d(5) + 7,
+    woundText: 'Toughness Bonus + 1d5+7',
+    fateTable: [[7, 1], [10, 2]]
+  },
+  {
+    id: 'tau',
+    name: "T'au",
+    blurb: "Disciplined Fire Caste soldiers fighting for the Greater Good. Patient, precise, and deeply alien in how they understand war.",
+    xenos: true,
+    mods: { ws: -5, bs: 5, per: 5, wp: 5, fel: -5 },
+    skills: [
+      'Awareness', 'Common Lore (Tau Empire)', 'Dodge',
+      'Speak Language (Tau, Low Gothic)', 'Logic', 'Scholastic Lore (Tactica Tau)', 'Tech-Use'
+    ],
+    talents: [
+      'Exotic Weapon Training (Pulse Weapons)', 'Marksman', 'Nerves of Steel'
+    ],
+    traits: [
+      'For the Greater Good: +10 to all tests when coordinating target fire or executing tactical commands with allies targeting the same enemy.',
+      'Poor Melee Vision: permanent −10 penalty to all Weapon Skill tests, Parries and close-quarters manoeuvres.',
+      'Non-Imperial: −10 on tests involving Imperial lore, customs or interactions with non-Xenophile humans.',
+      'Speak Not Unto the Alien: −10 to Fellowship tests when interacting with Imperial citizens.',
+      'Cybernetic Rejection: each Imperial bionic implant inflicts a permanent −10 to Toughness.'
+    ],
+    woundMult: 1,
+    woundDie: () => d(5) + 8,
+    woundText: "Toughness Bonus + 1d5+8",
+    fateTable: [[7, 1], [10, 2]]
   }
 ];
 
@@ -659,6 +740,30 @@ const CAREERS = [
     skills: [],
     talents: [],
     gear: 'Heavy Leather Armour (AP 3 body, legs); Choppa; Slugga or Shoota (3 spare magazines); 1d5 Stikkbombs; Shiny Gubbinz.'
+  },
+  {
+    id: 'krootmercenary',
+    name: 'Kroot Mercenary',
+    blurb: 'A contract hunter and tracker who sells their skills to void-farers. Invaluable in wilderness, barely understood anywhere else. Xenos path from Into the Storm.',
+    skills: [],
+    talents: [],
+    gear: 'Kroot Rifle (with mono-blade attachment); Kroot Leather Armour (AP 2 body, arms, legs); Meat Hook; Shamanic gubbinz and trophies.'
+  },
+  {
+    id: 'drukharibeliever',
+    name: 'Drukhari Kabalite Warrior',
+    blurb: "A piratical raider from Commorragh who brings the dark city's cruelty to the Koronus Expanse. Xenos path from The Soul Reaver.",
+    skills: [],
+    talents: [],
+    gear: 'Kabalite Armour (AP 4 all); Splinter Rifle or Splinter Pistol; Agoniser or Power Blade; Combat Drug Injector; Dark Silk Void Robes.'
+  },
+  {
+    id: 'taufirewarrior',
+    name: "T'au Fire Warrior",
+    blurb: "A Fire Caste soldier spreading the Greater Good beyond the Third Sphere. Exceptional at ranged combat and coordinated fire. Xenos path from the Tau Character Guide.",
+    skills: [],
+    talents: [],
+    gear: "Tau Recon Combat Armour (AP 5 all); Pulse Rifle or Pulse Carbine; Pulse Pistol; Bonding Knife; Micro-bead; Markerlight."
   }
 ];
 

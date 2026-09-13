@@ -56,6 +56,19 @@ export const CONDITIONALS = {
   ork: [
     { from: 'Non-Imperial', mod: -10, chars: ['int', 'fel'], when: 'tests involving Imperial lore, customs or social interactions with non-Xenophile humans' },
     { from: 'Speak Not Unto the Alien', mod: -10, chars: ['fel'], when: 'Fellowship tests with Imperial citizens' }
+  ],
+  kroot: [
+    { from: 'Non-Imperial', mod: -10, chars: ['int', 'fel'], when: 'tests involving Imperial lore, customs or social interactions with non-Xenophile humans' },
+    { from: 'Speak Not Unto the Alien', mod: -10, chars: ['fel'], when: 'Fellowship tests with Imperial citizens' }
+  ],
+  drukhari: [
+    { from: 'Non-Imperial', mod: -10, chars: ['int', 'fel'], when: 'tests involving Imperial lore, customs or social interactions with non-Xenophile humans' },
+    { from: 'Speak Not Unto the Alien', mod: -10, chars: ['fel'], when: 'Fellowship tests with Imperial citizens' }
+  ],
+  tau: [
+    { from: 'Non-Imperial', mod: -10, chars: ['int', 'fel'], when: 'tests involving Imperial lore, customs or social interactions with non-Xenophile humans' },
+    { from: 'Poor Melee Vision', mod: -10, chars: ['ws'], when: 'Weapon Skill tests, Parries and close-quarters manoeuvres' },
+    { from: 'Speak Not Unto the Alien', mod: -10, chars: ['fel'], when: 'Fellowship tests with Imperial citizens' }
   ]
 };
 

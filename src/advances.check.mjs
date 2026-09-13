@@ -5,22 +5,29 @@ import {
   parsePrereq, unmetCharPrereqs, MAX_TABLED_RANK
 } from './advances.js';
 
-// eight core careers plus two xenos paths (Eldar Corsair, Ork Freebooter)
+// eight core careers plus five xenos paths
 assert.deepEqual(CAREERS_WITH_TABLES.slice().sort(),
-  ['Arch-Militant', 'Astropath Transcendent', 'Eldar Corsair', 'Explorator', 'Missionary',
-   'Navigator', 'Ork Freebooter', 'Rogue Trader', 'Seneschal', 'Void-Master']);
+  ['Arch-Militant', 'Astropath Transcendent', 'Drukhari Kabalite Warrior', 'Eldar Corsair',
+   'Explorator', 'Kroot Mercenary', 'Missionary', 'Navigator', 'Ork Freebooter',
+   'Rogue Trader', 'Seneschal', "T'au Fire Warrior", 'Void-Master']);
 
-// every career covers ranks 1-4, and every entry is well formed — a typo in a
-// cost or type would otherwise pass silently into the UI
+// Core careers cover ranks 1-4; xenos careers may extend to rank 8.
+// Every career must start at rank 1 and cover at least ranks 1-4.
+const VALID_TYPES = ['Skill', 'Talent', 'Technique', 'Power', 'Trait'];
 for (const [career, ranks] of Object.entries(CAREER_ADVANCES)) {
-  assert.deepEqual(Object.keys(ranks).map(Number), [1, 2, 3, 4], career + ': ranks');
+  const rankNums = Object.keys(ranks).map(Number).sort((a, b) => a - b);
+  assert.equal(rankNums[0], 1, career + ': must start at rank 1');
+  assert.ok(rankNums.length >= 4, career + ': must have at least 4 ranks');
+  // ranks must be consecutive
+  for (let i = 1; i < rankNums.length; i++) {
+    assert.equal(rankNums[i], rankNums[i - 1] + 1, career + ': ranks must be consecutive');
+  }
   for (const [rank, list] of Object.entries(ranks)) {
     assert.ok(list.length, career + ' rank ' + rank + ' is empty');
     for (const a of list) {
       const where = `${career} r${rank} ${a.name}`;
       assert.ok(a.name && typeof a.name === 'string', where + ': name');
-      assert.ok(['Skill', 'Talent', 'Technique', 'Power'].includes(a.type),
-        where + ': type ' + a.type);
+      assert.ok(VALID_TYPES.includes(a.type), where + ': type ' + a.type);
       assert.ok(Number.isInteger(a.cost) && a.cost > 0, where + ': cost');
       assert.ok(a.prereq === null || typeof a.prereq === 'string', where + ': prereq');
     }
@@ -30,6 +37,9 @@ for (const [career, ranks] of Object.entries(CAREER_ADVANCES)) {
 // a career outside the table returns null, distinguishable from a rank with no entries
 assert.ok(Array.isArray(advancesFor('Eldar Corsair', 1)), 'Eldar Corsair has a table');
 assert.ok(Array.isArray(advancesFor('Ork Freebooter', 1)), 'Ork Freebooter has a table');
+assert.ok(Array.isArray(advancesFor('Kroot Mercenary', 1)), 'Kroot Mercenary has a table');
+assert.ok(Array.isArray(advancesFor('Drukhari Kabalite Warrior', 1)), 'Drukhari Kabalite Warrior has a table');
+assert.ok(Array.isArray(advancesFor("T'au Fire Warrior", 1)), "T'au Fire Warrior has a table");
 assert.equal(advancesFor('Ork Weirdboy', 1), null);
 assert.ok(Array.isArray(advancesFor('Explorator', 1)));
 assert.ok(Array.isArray(advancesFor('Seneschal', 1)));
@@ -56,7 +66,7 @@ assert.equal(advancesFor('Missionary', 1).find((a) => a.name === 'Pure Faith').c
 assert.equal(advancesFor('Void-Master', 3).find((a) => a.name === 'Ace Pilot').prereq, 'Ag 40, Pilot');
 // the Navigator table introduces a fourth advance type
 assert.equal(advancesFor('Navigator', 1).find((a) => a.name === 'Navigator Power (Novice)').type, 'Power');
-assert.equal(MAX_TABLED_RANK, 4);
+assert.equal(MAX_TABLED_RANK, 8);
 
 // prerequisite parsing
 assert.deepEqual(parsePrereq('Int 30'), { chars: [{ key: 'int', min: 30 }], others: [], anyOf: false });

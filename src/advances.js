@@ -315,6 +315,29 @@ export const CAREER_ADVANCES = {
       A('Wall of Steel', 'Talent', 'Ag 35', 500),
       A('Infused Knowledge', 'Talent', 'Int 40', 500),
       A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    5: [
+      A('Concealment +10', 'Skill', 'Concealment', 200),
+      A('Shadowing +10', 'Skill', 'Shadowing', 200),
+      A('Dance of Death', 'Talent', 'Acrobatics +20, Ag 45', 500),
+      A('Eye of Vengeance', 'Talent', 'BS 50', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    6: [
+      A('Concealment +20', 'Skill', 'Concealment +10', 200),
+      A('Ghost-Walker', 'Talent', 'Silent Move +20', 500),
+      A('Target Selection', 'Talent', 'BS 50', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    7: [
+      A('Path of the Corsair Captain', 'Talent', 'Fel 40, Command +10', 500),
+      A("Assassin's Strike", 'Talent', 'Ag 40, Acrobatics', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    8: [
+      A('Avatar of Finesse', 'Trait', 'Ag 55, WS 50', 1000),
+      A('Void Predator', 'Talent', 'Navigation (Stellar) +20', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
     ]
   },
 
@@ -390,6 +413,192 @@ export const CAREER_ADVANCES = {
       A('Lightning Attack', 'Talent', 'Swift Attack', 500),
       A('Die Hard', 'Talent', 'WP 40', 500),
       A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    5: [
+      A('Common Lore (Orks) +20', 'Skill', 'Common Lore (Orks) +10', 200),
+      A("Kaptin's Command", 'Talent', 'Intimidate +20', 500),
+      A('Crushing Strife', 'Talent', 'S 50', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    6: [
+      A('Bigger is Better', 'Talent', 'T 50', 500),
+      A('Overwhelming Power', 'Talent', 'Mighty Blow', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    7: [
+      A("Da Real Waaagh! Boss", 'Talent', 'S 50, T 50, Intimidate +20', 500),
+      A('Brutal Charge', 'Talent', 'S 45', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    8: [
+      A('Green Tide Incarnate', 'Trait', 'S 55, T 55', 1000),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ]
+  },
+
+  'Kroot Mercenary': {
+    1: [
+      A('Climb +10', 'Skill', 'Climb', 200),
+      A('Concealment +10', 'Skill', 'Concealment', 200),
+      A('Dodge +10', 'Skill', 'Dodge', 200),
+      A('Shadowing +10', 'Skill', 'Shadowing', 200),
+      A('Silent Move +10', 'Skill', 'Silent Move', 200),
+      A('Survival +10', 'Skill', 'Survival', 200),
+      A('Stalker Kindred', 'Talent', 'Eater of Flesh', 500),
+      A('Hyper-Evolved Kindred', 'Talent', 'Eater of Flesh', 500),
+      A('Swift Attack', 'Talent', 'WS 35', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    2: [
+      A('Concealment +20', 'Skill', 'Concealment +10', 200),
+      A('Shadowing +20', 'Skill', 'Shadowing +10', 200),
+      A('Silent Move +20', 'Skill', 'Silent Move +10', 200),
+      A('Survival +20', 'Skill', 'Survival +10', 200),
+      A('Boldhead Kindred', 'Talent', 'Eater of Flesh', 500),
+      A('Jaded', 'Talent', 'WP 30', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Tracking', 'Skill', null, 200),
+      A('Tracking +10', 'Skill', 'Tracking', 200),
+      A('Rapid Reload', 'Talent', null, 200),
+      A('Hard Target', 'Talent', 'Ag 40', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    4: [
+      A('Tracking +20', 'Skill', 'Tracking +10', 200),
+      A('True Grit', 'Talent', 'T 40', 500),
+      A('Lightning Attack', 'Talent', 'Swift Attack', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    5: [
+      A("Hunter's Eye", 'Talent', 'Per 40, Tracking +10', 500),
+      A('Master Tracker', 'Talent', 'Survival +20', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    6: [
+      A('Apex Predator Kindred', 'Talent', 'Eater of Flesh', 500),
+      A('Silent Death', 'Talent', 'Silent Move +20', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    7: [
+      A('Shamanic Calling', 'Talent', 'WP 45, Boldhead Kindred', 500),
+      A('Death from Above', 'Talent', 'Ag 45, Climb +20', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    8: [
+      A('Chroot-Shaper Legend', 'Trait', 'Per 55, S 50, T 50', 1000),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ]
+  },
+
+  'Drukhari Kabalite Warrior': {
+    1: [
+      A('Acrobatics +10', 'Skill', 'Acrobatics', 200),
+      A('Awareness +10', 'Skill', 'Awareness', 200),
+      A('Dodge +10', 'Skill', 'Dodge', 200),
+      A('Intimidate +10', 'Skill', 'Intimidate', 200),
+      A('Silent Move +10', 'Skill', 'Silent Move', 200),
+      A('Poisoner', 'Talent', 'Int 35', 200),
+      A('Swift Attack', 'Talent', 'WS 35', 500),
+      A('Two-Weapon Wielder (Ballistic)', 'Talent', 'Ag 35, BS 35', 500),
+      A('Two-Weapon Wielder (Melee)', 'Talent', 'Ag 35, WS 35', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    2: [
+      A('Acrobatics +20', 'Skill', 'Acrobatics +10', 200),
+      A('Dodge +20', 'Skill', 'Dodge +10', 200),
+      A('Silent Move +20', 'Skill', 'Silent Move +10', 200),
+      A('Intimidate +20', 'Skill', 'Intimidate +10', 200),
+      A('Counter-Attack', 'Talent', 'WS 40', 500),
+      A('Hard Target', 'Talent', 'Ag 40', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Navigation (Stellar)', 'Skill', null, 200),
+      A('Preternatural Speed', 'Talent', 'WS 40, Ag 50', 500),
+      A('Step Aside', 'Talent', 'Ag 40, Dodge', 500),
+      A('Bladestorm', 'Talent', 'WS 40', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    4: [
+      A('Navigation (Stellar) +10', 'Skill', 'Navigation (Stellar)', 200),
+      A('Master at Arms', 'Talent', 'WS 50', 500),
+      A('Wall of Steel', 'Talent', 'Ag 35', 500),
+      A('Lightning Attack', 'Talent', 'Swift Attack', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    5: [
+      A('Torture Archon', 'Talent', 'Intimidate +20, Interrogation +10', 500),
+      A('Splinter Volley Master', 'Talent', 'BS 50', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    6: [
+      A('Sybarite', 'Talent', 'WS 50', 500),
+      A('Shadow-Weaver', 'Talent', 'Ag 50, Silent Move +20', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    7: [
+      A('Kabal Lord', 'Talent', 'Fel 45', 500),
+      A('Soul Harvester', 'Talent', 'Agony Mastery', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    8: [
+      A('True Kin Nightmare', 'Trait', 'Ag 55, WS 50', 1000),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ]
+  },
+
+  "T'au Fire Warrior": {
+    1: [
+      A('Awareness +10', 'Skill', 'Awareness', 200),
+      A('Dodge +10', 'Skill', 'Dodge', 200),
+      A('Tech-Use +10', 'Skill', 'Tech-Use', 200),
+      A('Logic +10', 'Skill', 'Logic', 200),
+      A('Deadeye Shot', 'Talent', 'BS 30', 200),
+      A('Rapid Reload', 'Talent', null, 200),
+      A('Target Selection', 'Talent', 'BS 50', 500),
+      A('Sharpshooter', 'Talent', 'BS 40', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    2: [
+      A('Awareness +20', 'Skill', 'Awareness +10', 200),
+      A('Dodge +20', 'Skill', 'Dodge +10', 200),
+      A('Tech-Use +20', 'Skill', 'Tech-Use +10', 200),
+      A('Logic +20', 'Skill', 'Logic +10', 200),
+      A('Crack Shot', 'Talent', 'BS 40', 200),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Scholastic Lore (Tactica Tau) +10', 'Skill', 'Scholastic Lore (Tactica Tau)', 200),
+      A('Medicae', 'Skill', null, 200),
+      A('Mighty Shot', 'Talent', 'BS 40', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    4: [
+      A('Medicae +10', 'Skill', 'Medicae', 200),
+      A('Precision Weapon Training (Universal)', 'Talent', 'BS 50', 500),
+      A('Hip Shooting', 'Talent', 'BS 40, Ag 40', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    5: [
+      A('Spotter Master', 'Talent', 'Per 40, Markerlight', 500),
+      A('Pulse Barrage', 'Talent', 'BS 50', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    6: [
+      A("Shas'ui Veteran", 'Talent', 'BS 50, Scholastic Lore (Tactica Tau) +10', 500),
+      A('Shield Array Master', 'Talent', 'Tech-Use +20', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    7: [
+      A("Shas'vre Commander", 'Talent', 'Fel 45, Command +20', 500),
+      A('Unmatched Precision', 'Talent', 'BS 55', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    8: [
+      A("Paragon of the Mont'ka", 'Trait', 'BS 60, Per 50', 1000),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
     ]
   }
 };
@@ -412,7 +621,8 @@ export function advancesFor(career, rank) {
   return table[rank] || [];
 }
 
-export const MAX_TABLED_RANK = 4;
+// Core careers cover ranks 1-4; xenos careers extend to rank 8.
+export const MAX_TABLED_RANK = 8;
 
 // Every advance a career can offer, each carrying the rank it sits at, so the
 // UI can group them without re-deriving that. null for a career with no table.

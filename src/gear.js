@@ -97,7 +97,28 @@ export const GEAR = {
   'stikkbombs': { kind: 'Thrown', stats: 'SB×3 · S/–/– · 2d10 X · Pen 0 · Blast (3)', desc: 'Crude grenades packed with scrap metal and explosive. Always thrown in quantity.' },
   'heavy leather armour': { kind: 'Armour', stats: 'AP 3 · body, legs', desc: 'Thick hides stitched together with wire and faith. Not pretty, but it stops a blade and nobody complains.' },
   'squig-hide armour': { kind: 'Armour', stats: 'AP 3 · body, legs', desc: 'Cured hide from a squig. Tough, pungent, and entirely characteristic of its wearer.' },
-  'shiny gubbinz': { desc: 'A collection of trophies, shiny trinkets and scavenged machine parts. Meaningless to others; priceless to an Ork.' }
+  'shiny gubbinz': { desc: 'A collection of trophies, shiny trinkets and scavenged machine parts. Meaningless to others; priceless to an Ork.' },
+
+  /* ---- kroot gear ---- */
+  'kroot rifle': { kind: 'Basic', stats: '80m · S/2/– · 1d10+3 R · Pen 2 · Clip 8 · Primitive', desc: 'A long-barrelled rifle grown and shaped from kroot biotechnology, fitted with a mono-edged blade for close combat.' },
+  'kroot leather armour': { kind: 'Armour', stats: 'AP 2 · body, arms, legs', desc: 'Trophies and hide sewn into a functional harness. Light, flexible, and decorated with the bones of the fallen.' },
+  'meat hook': { desc: 'A curved blade on a length of cord or chain. Used to drag prey, scale rough surfaces or threaten a captive.' },
+
+  /* ---- drukhari gear ---- */
+  'kabalite armour': { kind: 'Armour', stats: 'AP 4 · all', desc: 'Living polymer mesh bonded to shards of hardened dark matter. Light as silk and harder than ceramite.' },
+  'splinter rifle': { kind: 'Basic', stats: '80m · S/3/5 · 1d10+3 R · Pen 4 · Clip 40 · Toxic (2)', desc: 'Fires crystallised toxin shards refined in Commorragh. Each sliver carries a paralytic or lethal compound.' },
+  'splinter pistol': { kind: 'Pistol', stats: '30m · S/3/– · 1d10+3 R · Pen 4 · Clip 35 · Toxic (2)', desc: 'The standard Drukhari sidearm. Compact, elegant, and laced with suffering in every shard.' },
+  'agoniser': { kind: 'Melee', stats: '1d10+3 E · Pen 0 · Flexible, Shocking', desc: 'A whip or blade wreathed in tortured energies. Every contact sends agony through the target, ignoring armour.' },
+  'combat drug injector': { desc: 'A wrist-mounted reservoir of Drukhari combat stimulants administered mid-fight to enhance speed, strength or pain tolerance.' },
+  'dark silk void robes': { desc: 'Woven from material predating the Fall. Provides modest vacuum protection and some resistance to warp radiation.' },
+
+  /* ---- t'au gear ---- */
+  'tau recon combat armour': { kind: 'Armour', stats: 'AP 5 · all', desc: 'Lightweight Earth Caste composite armour integrating tactical systems and full environmental sealing.' },
+  'pulse rifle': { kind: 'Basic', stats: "150m · S/2/– · 2d10+4 E · Pen 4 · Clip 36 · Reliable", desc: "The signature weapon of the T'au Fire Caste. Fires hyper-accelerated plasma pulses at remarkable range." },
+  'pulse carbine': { kind: 'Basic', stats: '60m · S/2/4 · 2d10+4 E · Pen 4 · Clip 24 · Reliable', desc: 'A shorter pulse weapon for mobile troops. Sacrifices range for rate of fire and easier handling.' },
+  'pulse pistol': { kind: 'Pistol', stats: '30m · S/2/– · 2d10+2 E · Pen 4 · Clip 12 · Reliable', desc: 'A compact pulse weapon for officers and frontline specialists.' },
+  'bonding knife': { kind: 'Melee', stats: '1d5 R · Pen 0 · Primitive', desc: "A ritual blade carried by bonded Fire Caste warriors. Worn as a mark of honour and used only in extremis." },
+  'markerlight': { desc: "A target designator that paints enemies with a tracking beam. Other T'au weapons guided by the beam gain significant accuracy bonuses." }
 };
 
 export const QUALITY_RE = /^(poor|common|good|best)\s+/i;

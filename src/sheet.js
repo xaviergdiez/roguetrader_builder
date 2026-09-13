@@ -200,7 +200,7 @@ export function parseCharacterSheet(rows, catalog) {
   }
 
   const state = {
-    name: '', gender: '', sel: {}, choices: {},
+    name: '', gender: '', background: '', sel: {}, choices: {},
     rolls: null,          // pre-modifier 2d10+25, template sheets only
     finalTotals: null,    // final characteristics, converted sheets only
     woundRoll: null, fateRoll: null,
@@ -226,6 +226,7 @@ export function parseCharacterSheet(rows, catalog) {
       continue;
     }
     if (k === 'portrait url') { state.avatar = { src: value, framing: null }; continue; }
+    if (k === 'background') { state.background = value; continue; }
 
     // "Career" is the step in a template sheet, but a descriptive label in a
     // converted one, which carries "Career (origin step)" separately.

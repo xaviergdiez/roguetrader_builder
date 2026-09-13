@@ -4,6 +4,7 @@ Field,Value,Notes / accepted values
 Name,Magos Linus-Theta 7,Free text.
 Gender,,Male | Female | Other
 Portrait URL,,"Optional. Direct link to an image, or leave blank."
+Background,,"Optional. Leave blank and the app drafts one from the origin path below; fill this in to override it."
 # — ORIGIN PATH —,,"Human careers only. Xenos careers (Eldar Corsair | Ork Freebooter | Kroot Mercenary | Drukhari Kabalite Warrior | T'au Fire Warrior) skip this entire section — leave Home World through Motivation blank."
 Home World,Forge World,Death World | Void Born | Forge World | Hive World | Imperial World | Noble Born
 Birthright,Savant,Scavenger | Scapegrace | Stubjack | Child of the Creed | Savant | Vaunted

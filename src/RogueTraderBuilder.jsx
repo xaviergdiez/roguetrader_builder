@@ -19,6 +19,7 @@ import {
   allocationTotals, allocate, isComplete
 } from './points.js';
 import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
+import { buildLore } from './lore.js';
 
 /* ============================================================
    ROGUE TRADER : ORIGIN PATH COGITATOR
@@ -1549,6 +1550,19 @@ const CSS = `
 .rt-idcard{display:flex;gap:14px;align-items:flex-start;margin-bottom:16px;}
 .rt-idtext{flex:1;min-width:0;}
 
+.rt-lore{margin-bottom:18px;padding-top:14px;border-top:1px solid var(--brass-dim);}
+.rt-lore-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;}
+.rt-lore-l{font-family:var(--mono);font-size:10px;letter-spacing:.16em;color:var(--brass);}
+.rt-lore-regen{flex:none;background:transparent;border:1px solid var(--brass-dim);
+  color:var(--dim);font-family:var(--serif);font-size:12px;padding:4px 10px;
+  border-radius:3px;cursor:pointer;transition:border-color .15s,color .15s;}
+.rt-lore-regen:hover{border-color:var(--gold);color:var(--gold-lit);}
+.rt-lore-ta{width:100%;min-height:96px;resize:vertical;padding:10px 12px;
+  font-family:var(--serif);font-size:14.5px;line-height:1.62;color:var(--text);
+  background:transparent;border:1px solid var(--brass-dim);border-radius:3px;}
+.rt-lore-ta::placeholder{color:var(--dim);}
+.rt-lore-ta:focus{outline:none;border-color:var(--gold);}
+
 .rt-intro{margin-bottom:18px;}
 .rt-portrait-wrap{flex:none;width:126px;display:flex;flex-direction:column;}
 .rt-portrait{position:relative;width:100%;flex:1;display:flex;flex-direction:column;
@@ -2107,6 +2121,9 @@ function OptionCard({ item, selected, onSelect, choices, onChoose }) {
 export default function RogueTraderBuilder({ me, cloud }) {
   const [name, setName] = useState('');
   const [gender, setGender] = useState(''); // 'Male' | 'Female' | 'Other' | ''
+  // A free-text background the player can overwrite. Blank means "show the
+  // auto-generated placeholder" rather than "no background" — see lore.js.
+  const [background, setBackground] = useState('');
   const [sel, setSel] = useState({});          // stepId -> optionId
   const [choices, setChoices] = useState({});  // choiceId -> option label
   const [rolls, setRolls] = useState(null);    // characteristic base values
@@ -2164,7 +2181,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
       const raw = localStorage.getItem(AUTOSAVE_KEY);
       if (raw) {
         const s = JSON.parse(raw);
-        setName(s.name || ''); setGender(s.gender || ''); setSel(s.sel || {}); setChoices(s.choices || {});
+        setName(s.name || ''); setGender(s.gender || ''); setBackground(s.background || '');
+        setSel(s.sel || {}); setChoices(s.choices || {});
         setRolls(s.rolls || null); setWoundRoll(s.woundRoll ?? null); setFateRoll(s.fateRoll ?? null);
         setDamage(s.damage || 0); setWoundBonus(s.woundBonus || 0);
         setFateAdj(s.fateAdj || 0); setProfitAdj(s.profitAdj || 0);
@@ -2186,14 +2204,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
     const t = setTimeout(() => {
       try {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
-          name, gender, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+          name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
           fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
           finalTotals, finalWounds, finalFate, pointAlloc
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
-  }, [name, gender, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+  }, [name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
       fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
       finalTotals, finalWounds, finalFate, pointAlloc, loaded]);
 
@@ -2315,6 +2333,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const applySheet = (s) => {
     setName(s.name || '');
     setGender(s.gender || '');
+    setBackground(s.background || '');
     setSel(s.sel || {});
     setChoices(s.choices || {});
     setRolls(s.rolls || null);
@@ -2348,7 +2367,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
   };
 
   const clearAll = () => {
-    setName(''); setGender(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
+    setName(''); setGender(''); setBackground(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
     setDamage(0); setWoundBonus(0);
     setFateAdj(0); setProfitAdj(0); setSpentAdj(0);
     setFinalTotals(null); setFinalWounds(null); setFinalFate(null); setPointAlloc(null);
@@ -2413,7 +2432,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         name: name || 'Unnamed adept',
         career: career ? career.name : null,
         updatedAt: Date.now(),
-        state: { name, gender, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+        state: { name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
                  fateAdj, profitAdj, spentAdj, psyRating, xp,
                  finalTotals, finalWounds, finalFate, pointAlloc }
       });
@@ -2447,6 +2466,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
     const s = c.state || {};
     setName(s.name || '');
     setGender(s.gender || '');
+    setBackground(s.background || '');
     setSel(s.sel || {});
     setChoices(s.choices || {});
     setRolls(s.rolls || null);
@@ -2603,7 +2623,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
         {stepIx === 7 && (
           <DossierPane
-            name={name} gender={gender} build={build} totals={totals}
+            name={name} gender={gender} background={background} setBackground={setBackground}
+            build={build} totals={totals}
             ws={ws} onDamage={takeDamage} onAdjustMax={changeMax}
             fatePoints={fateShown} profitFactor={profitShown}
             avatar={avatar} setAvatar={setAvatar}
@@ -3884,7 +3905,7 @@ const ADD_SOURCES = {
   notes:   { title: 'Add a note',     options: [] }
 };
 
-function DossierPane({ name, gender, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
+function DossierPane({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
   psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onFate, onProfit, spentAdj = 0, onSpentAdj }) {
   const [tab, setTab] = useState('skills');
@@ -3935,6 +3956,26 @@ function DossierPane({ name, gender, build, totals, ws, onDamage, onAdjustMax, f
     notes: allNotes.length
   };
 
+  // Shared by the portrait generator (lib/prompt.js, an image prompt) and the
+  // background placeholder below (src/lore.js, prose) — same origin path, two
+  // different renderings of it.
+  const identity = {
+    name,
+    gender,
+    homeWorld: pickedName('home'),
+    birthright: pickedName('birthright'),
+    lure: pickedName('lure'),
+    trials: pickedName('trials'),
+    motivation: pickedName('motivation'),
+    career: pickedName('career'),
+    gear: allGear,
+    concept: (allNotes.find((n) => /^(Concept|Role in crew):/.test(n)) || '')
+      .replace(/^[^:]+:\s*/, '')
+  };
+  // Blank means "still following the origin path" — the moment the player
+  // types anything, that text sticks even if the origin path changes later.
+  const bio = background || buildLore(identity);
+
   return (
     <div className="rt-dossier">
       <div className="rt-idcard">
@@ -3943,19 +3984,7 @@ function DossierPane({ name, gender, build, totals, ws, onDamage, onAdjustMax, f
           /* The whole origin path goes to the portrait generator, which turns
              each choice into art direction — see lib/prompt.js. Imported sheets
              keep Concept and Role in crew as notes; either gives it more. */
-          identity={{
-            name,
-            gender,
-            homeWorld: pickedName('home'),
-            birthright: pickedName('birthright'),
-            lure: pickedName('lure'),
-            trials: pickedName('trials'),
-            motivation: pickedName('motivation'),
-            career: pickedName('career'),
-            gear: allGear,
-            concept: (allNotes.find((n) => /^(Concept|Role in crew):/.test(n)) || '')
-              .replace(/^[^:]+:\s*/, '')
-          }} />
+          identity={identity} />
         <div className="rt-idtext">
           <h2 className="rt-h2">{name || 'Unnamed adept'}</h2>
           <p className="rt-lead">
@@ -4056,6 +4085,29 @@ function DossierPane({ name, gender, build, totals, ws, onDamage, onAdjustMax, f
             )}
           </div>
         </div>
+      </div>
+
+      {/* Auto-drafted from the origin path (src/lore.js) the same way the
+          portrait prompt is, but in prose rather than art direction. Typing
+          here overrides the draft for good; clearing it back to empty hands
+          drafting back to the origin path. */}
+      <div className="rt-lore">
+        <div className="rt-lore-h">
+          <span className="rt-lore-l">BACKGROUND</span>
+          {background && (
+            <button className="rt-lore-regen" onClick={() => setBackground('')}
+              title="Discard your edits and redraft from the origin path">
+              Redraft from origin path
+            </button>
+          )}
+        </div>
+        <textarea
+          className="rt-lore-ta"
+          value={bio}
+          onChange={(e) => setBackground(e.target.value)}
+          placeholder="A drafted background will appear here once an origin path is chosen."
+          aria-label="Character background"
+        />
       </div>
 
       {totals && (

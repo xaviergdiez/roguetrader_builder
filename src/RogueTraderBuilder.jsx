@@ -16,7 +16,7 @@ import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
   POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
-  allocationTotals, allocate, isComplete
+  allocationTotals, allocate, isComplete, grantable
 } from './points.js';
 import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
 import { buildLore } from './lore.js';
@@ -3744,7 +3744,8 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
               <button className="rt-adjb" onClick={() => onSpendPoint(k, -1)}
                 disabled={!(pointAlloc[k] > 0)} aria-label={'Take a point back from ' + CHAR_NAMES[k]}>{'−'}</button>
               <button className="rt-adjb" onClick={() => onSpendPoint(k, 1)}
-                disabled={remaining <= 0} aria-label={'Spend a point on ' + CHAR_NAMES[k]}>+</button>
+                disabled={!grantable(pointAlloc, k, 1)}
+                aria-label={'Spend a point on ' + CHAR_NAMES[k]}>+</button>
               <span className="rt-cval">{totals[k]}</span>
             </div>
           ))}

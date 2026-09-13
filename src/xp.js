@@ -3,16 +3,19 @@
 // Source of truth: the Rogue Trader career advance tables supplied for this
 // project. Pure: see xp.check.mjs.
 
-// Cumulative XP thresholds. Rank 8 is open-ended.
+// Cumulative XP thresholds. Rank 8 is open-ended. A starting Explorer enters
+// play at 5,000 XP, which is Rank 1's own floor — nobody is ever meant to
+// hold less than that — so rankForXp/xpToNextRank clamp anything below it up
+// to Rank 1 rather than extending the table down to 0.
 export const RANKS = [
-  { rank: 1, min: 0, max: 6999 },
+  { rank: 1, min: 5000, max: 6999 },
   { rank: 2, min: 7000, max: 9999 },
   { rank: 3, min: 10000, max: 12999 },
   { rank: 4, min: 13000, max: 16999 },
   { rank: 5, min: 17000, max: 20999 },
   { rank: 6, min: 21000, max: 24999 },
-  { rank: 7, min: 25000, max: 28999 },
-  { rank: 8, min: 29000, max: Infinity }
+  { rank: 7, min: 25000, max: 29999 },
+  { rank: 8, min: 30000, max: Infinity }
 ];
 
 // A starting Rank 1 Explorer enters play at 5,000 XP total, but that total is
@@ -34,16 +37,21 @@ export function romanRank(n) {
   return ROMAN_RANKS[i] || String(i);
 }
 
+// Below Rank 1's own floor (5,000 XP — nobody is meant to hold less)
+// clamps up to Rank 1 rather than falling through to Rank 8 by default.
+const rankBucket = (n) => RANKS.find((r) => n >= r.min && n <= r.max)
+  || (n < RANKS[0].min ? RANKS[0] : RANKS[RANKS.length - 1]);
+
 export function rankForXp(xp) {
   const n = Math.max(0, Math.floor(xp || 0));
-  return (RANKS.find((r) => n >= r.min && n <= r.max) || RANKS[RANKS.length - 1]).rank;
+  return rankBucket(n).rank;
 }
 
 // XP still to earn before the next rank. null once Rank 8 is reached.
 export function xpToNextRank(xp) {
   const n = Math.max(0, Math.floor(xp || 0));
-  const here = RANKS.find((r) => n >= r.min && n <= r.max);
-  if (!here || here.max === Infinity) return null;
+  const here = rankBucket(n);
+  if (here.max === Infinity) return null;
   return here.max + 1 - n;
 }
 

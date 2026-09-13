@@ -7,15 +7,19 @@ import {
 } from './xp.js';
 
 // rank boundaries — off-by-one here would misreport every sheet
-assert.equal(rankForXp(0), 1);
-assert.equal(rankForXp(5000), 1, 'a starting Explorer is Rank 1');
+assert.equal(rankForXp(5000), 1, 'a starting Explorer is Rank 1 — 5,000 is the floor');
 assert.equal(rankForXp(6999), 1);
 assert.equal(rankForXp(7000), 2, 'the boundary belongs to the higher rank');
 assert.equal(rankForXp(9999), 2);
 assert.equal(rankForXp(10000), 3);
-assert.equal(rankForXp(28999), 7);
-assert.equal(rankForXp(29000), 8);
+assert.equal(rankForXp(29999), 7);
+assert.equal(rankForXp(30000), 8);
 assert.equal(rankForXp(999999), 8, 'Rank 8 is open-ended');
+
+// below the 5,000 floor: clamps up to Rank 1 rather than falling through to
+// Rank 8 (the old "no match found" default) or extending the table to 0
+assert.equal(rankForXp(0), 1);
+assert.equal(rankForXp(4999), 1);
 
 // nonsense input degrades to Rank 1 rather than throwing
 assert.equal(rankForXp(null), 1);
@@ -35,12 +39,13 @@ assert.deepEqual(RANKS.map((r) => romanRank(r.rank)),
 assert.equal(romanRank(rankForXp(5000)), 'I');
 assert.equal(romanRank(rankForXp(6999)), 'I');
 assert.equal(romanRank(rankForXp(7000)), 'II', 'the threshold flips the numeral');
-assert.equal(romanRank(rankForXp(29000)), 'VIII');
+assert.equal(romanRank(rankForXp(30000)), 'VIII');
 
 // distance to the next rank
 assert.equal(xpToNextRank(6999), 1);
 assert.equal(xpToNextRank(5000), 2000);
-assert.equal(xpToNextRank(29000), null, 'nothing beyond Rank 8');
+assert.equal(xpToNextRank(0), 7000, 'below the floor, the next milestone is still Rank 2');
+assert.equal(xpToNextRank(30000), null, 'nothing beyond Rank 8');
 
 // the starting allowance
 assert.equal(isStartingBudget(5000), true);

@@ -107,8 +107,8 @@ const { allAdvances, advanceStatus } = await import('./advances.js');
 const expl = allAdvances('Explorator');
 assert.ok(Array.isArray(allAdvances('Eldar Corsair')), 'Eldar Corsair has a table');
 assert.ok(Array.isArray(allAdvances('Ork Freebooter')), 'Ork Freebooter has a table');
-// every entry carries the rank it came from, and ranks run 1..4 in order
-assert.deepEqual([...new Set(expl.map((a) => a.rank))], [1, 2, 3, 4]);
+// every entry carries the rank it came from, and ranks run 1..8 in order
+assert.deepEqual([...new Set(expl.map((a) => a.rank))], [1, 2, 3, 4, 5, 6, 7, 8]);
 assert.equal(expl.find((a) => a.name === 'Tech-Use').rank, 1);
 assert.equal(expl.find((a) => a.name === 'Tech-Use +10').rank, 2);
 // alternate ranks resolve to the base career's list

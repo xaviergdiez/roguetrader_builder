@@ -201,6 +201,9 @@ export const CAREER_ADVANCES = {
   },
 
   'Navigator': {
+    // Warp Eye Powers (Novice): Lidless Stare, Seek the Path, In Touch with the Stream
+    // Warp Eye Powers (Adept):  Gaze into the Abyss, Held in the Gaze, Steer Through the Madness
+    // Warp Eye Powers (Master): Tears of the Emperor + mastered forms of the above
     1: [
       A('Navigation (Warp)', 'Skill', null, 100),
       A('Navigation (Stellar)', 'Skill', null, 100),
@@ -209,30 +212,40 @@ export const CAREER_ADVANCES = {
       A('Scholastic Lore (Astromancy)', 'Skill', null, 100),
       A('Pistol Weapon Training (Universal)', 'Talent', null, 500),
       A('Navigator', 'Talent', null, 200),
-      A('Navigator Power (Novice)', 'Power', null, 200),
-      A('Warp Sense', 'Talent', 'Psyniscience, WP 30', 200)
+      A('Warp Sense', 'Talent', 'Psyniscience, WP 30', 200),
+      A('Lidless Stare (Novice)', 'Power', null, 200),
+      A('Seek the Path (Novice)', 'Power', null, 200),
+      A('In Touch with the Stream (Novice)', 'Power', null, 200)
     ],
     2: [
       A('Navigation (Warp) +10', 'Skill', 'Navigation (Warp)', 200),
       A('Psyniscience +10', 'Skill', 'Psyniscience', 200),
       A('Forbidden Lore (Warp) +10', 'Skill', 'Forbidden Lore (Warp)', 200),
-      A('Navigator Power (Novice/Adept)', 'Power', 'Navigator Power', 200),
       A('Resistance (Fear)', 'Talent', null, 200),
       A('Foresight', 'Talent', 'Int 30', 200),
-      A('Sound Constitution (x2)', 'Talent', null, 200)
+      A('Sound Constitution (x2)', 'Talent', null, 200),
+      A('Gaze into the Abyss (Novice)', 'Power', 'Navigator, WP 30', 200),
+      A('Held in the Gaze (Novice)', 'Power', 'Lidless Stare (Novice)', 200),
+      A('Steer Through the Madness (Novice)', 'Power', 'Navigator, WP 30', 200)
     ],
     3: [
       A('Navigation (Warp) +20', 'Skill', 'Navigation (Warp) +10', 200),
       A('Psyniscience +20', 'Skill', 'Psyniscience +10', 200),
-      A('Navigator Power (Adept)', 'Power', 'Novice Power', 300),
-      A('Gaze into the Abyss', 'Power', 'Navigator', 300),
-      A('Inured to the Warp', 'Talent', 'WP 40', 500)
+      A('Inured to the Warp', 'Talent', 'WP 40', 500),
+      A('Lidless Stare (Adept)', 'Power', 'Lidless Stare (Novice)', 300),
+      A('Seek the Path (Adept)', 'Power', 'Seek the Path (Novice)', 300),
+      A('Gaze into the Abyss (Adept)', 'Power', 'Gaze into the Abyss (Novice)', 300),
+      A('Held in the Gaze (Adept)', 'Power', 'Held in the Gaze (Novice)', 300),
+      A('Steer Through the Madness (Adept)', 'Power', 'Steer Through the Madness (Novice)', 300)
     ],
     4: [
       A('Scholastic Lore (Astromancy) +20', 'Skill', 'Scholastic Lore (Astromancy) +10', 200),
-      A('Navigator Power (Master)', 'Power', 'Adept Power', 500),
       A('Master Navigator', 'Talent', 'Navigation (Warp) +20', 500),
-      A('Unshakeable Faith', 'Talent', null, 500)
+      A('Unshakeable Faith', 'Talent', null, 500),
+      A('Lidless Stare (Master)', 'Power', 'Lidless Stare (Adept)', 500),
+      A('In Touch with the Stream (Adept)', 'Power', 'In Touch with the Stream (Novice)', 400),
+      A('Tears of the Emperor (Novice)', 'Power', 'WP 40, Navigator', 400),
+      A('Steer Through the Madness (Master)', 'Power', 'Steer Through the Madness (Adept)', 500)
     ]
   },
 

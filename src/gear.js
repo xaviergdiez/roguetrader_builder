@@ -86,6 +86,11 @@ export const GEAR = {
   'navy uniform': { desc: 'Imperial Navy dress. Rank made visible, with all that follows.' },
   'silk headscarf': { desc: 'Fine silk, worn in the Nobilite manner.' },
   'nobilite signet': { desc: 'A house seal. Proof of bloodline, and a target for those who resent it.' },
+  'nobilite warp eye obscura': { desc: 'A finely crafted warded blindfold concealing the Navigator\u2019s third eye. +10 to Willpower Tests to suppress involuntary warp-sight.' },
+  'empyrean astrolabe': { desc: 'An ancient Nobilite instrument for reading warp currents. +10 to Navigation (Warp) Tests when used to divine the tides.' },
+  'nobilite force staff': { kind: 'Melee', stats: '1d10+2 I \u00B7 Pen 0 \u00B7 Balanced, Special', desc: 'A bonded Navigator\u2019s staff, tuned to the warp-eye. Treats the wielder as having the Melee Weapon Training (Primitive) Talent.' },
+  'void-suit of the nobilite': { kind: 'Armour', stats: 'AP 3 \u00B7 all', desc: 'Sealed void armour crafted to Nobilite standards, incorporating warp-shielding around the third eye and micro-bead vox.' },
+  'charting chrono': { desc: 'A precision timepiece calibrated for warp travel. Allows accurate dead-reckoning; +5 to Navigation (Stellar) Tests during translation phases.' },
   'emperor’s tarot deck': { desc: 'Cards read for guidance. The Imperium takes their readings seriously.' },
   'servo-skull familiar': { desc: 'A hovering, machine-spirited skull that follows you and carries out simple tasks.' },
 

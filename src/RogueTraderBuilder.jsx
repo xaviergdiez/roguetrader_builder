@@ -700,12 +700,27 @@ const CAREERS = [
   {
     id: 'navigator',
     name: 'Navigator',
-    blurb: 'A mutant of ancient and protected stock. Without your third eye the ship goes nowhere.',
+    blurb: 'A scion of the Navis Nobilite, born with the third eye. Only a Navigator can steer a ship safely through the warp.',
     skills: ['Common Lore (Navis Nobilite) (Int)', 'Forbidden Lore (Navigators, Warp) (Int)', 'Literacy (Int)',
       'Navigation (Stellar, Warp) (Int)', 'Psyniscience (Per)', 'Scholastic Lore (Astromancy) (Int)',
       'Speak Language (High Gothic, Low Gothic) (Int)'],
     talents: ['Navigator', 'Pistol Weapon Training (Universal)'],
-    gear: 'Best hellpistol or good hand cannon; best metal staff, best xeno-mesh armour, Emperor\u2019s tarot deck, silk headscarf, Nobilite signet, micro-bead.'
+    gear: 'Best hellpistol or good hand cannon; best metal staff, best xeno-mesh armour, Emperor\u2019s tarot deck, silk headscarf, Nobilite signet, micro-bead.',
+    notes: [
+      'Warp Eye: the third eye allows Warp-sight and is the source of all Navigator Powers. Keeping it concealed requires a silk headscarf or similar covering.',
+      'Navigator Mutation: roll d100 at character creation. 01-10 Minor Stigmata, 11-20 Pale Skin, 21-30 Elongated Fingers, 31-40 Enlarged Eyes, 41-50 Distorted Voice, 51-60 Hairlessness, 61-70 Warp Nimbus, 71-80 Unsettling Gaze, 81-90 Unnatural Hunger, 91-00 Additional Eye.',
+      'Navigation Phases: Divining the Tides (Psyniscience), Catching the Wind (Navigation +10), Steering the Vessel (Navigation +20), Leaving the Warp (Navigation).'
+    ],
+    choices: [{
+      id: 'nav_lineage',
+      label: 'House Lineage',
+      options: [
+        { label: 'Magisterial', mods: { wp: 5, fel: 5 }, notes: ['Lineage \u2014 Magisterial House: regal bearing, formal training in court politics; +5 WP, +5 Fel.'] },
+        { label: 'Nomad', mods: { per: 5, int: 5 }, notes: ['Lineage \u2014 Nomad House: wanderers of the void, self-sufficient navigators; +5 Per, +5 Int.'] },
+        { label: 'Shrouded', mods: { ag: 5, wp: 5 }, notes: ['Lineage \u2014 Shrouded House: secretive and reclusive, strong warp resistance; +5 Ag, +5 WP.'] },
+        { label: 'Renegade', mods: { t: 5, per: 5 }, notes: ['Lineage \u2014 Renegade House: outcasts who serve where they must; +5 T, +5 Per.'] }
+      ]
+    }]
   },
   {
     id: 'seneschal',
@@ -1135,6 +1150,10 @@ const CSS = `
 .rt-step.na{opacity:.35;cursor:default;pointer-events:none;}
 .rt-xenos-skip{padding:32px 0 16px;text-align:center;}
 .rt-xenos-skip p{color:var(--subtext);margin-bottom:14px;}
+.rt-gender-row{display:flex;gap:8px;margin:8px 0 0;}
+.rt-gender-btn{flex:1;padding:8px 0;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:var(--serif);font-size:14px;cursor:pointer;transition:border-color .15s,background .15s;}
+.rt-gender-btn:hover{border-color:var(--gold);}
+.rt-gender-btn.active{background:var(--gold);border-color:var(--gold);color:#0d1a0f;font-weight:600;}
 
 /* --------------------------- TYPE SETTING --------------------------- */
 
@@ -2087,6 +2106,7 @@ function OptionCard({ item, selected, onSelect, choices, onChoose }) {
 
 export default function RogueTraderBuilder({ me, cloud }) {
   const [name, setName] = useState('');
+  const [gender, setGender] = useState(''); // 'Male' | 'Female' | 'Other' | ''
   const [sel, setSel] = useState({});          // stepId -> optionId
   const [choices, setChoices] = useState({});  // choiceId -> option label
   const [rolls, setRolls] = useState(null);    // characteristic base values
@@ -2144,7 +2164,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       const raw = localStorage.getItem(AUTOSAVE_KEY);
       if (raw) {
         const s = JSON.parse(raw);
-        setName(s.name || ''); setSel(s.sel || {}); setChoices(s.choices || {});
+        setName(s.name || ''); setGender(s.gender || ''); setSel(s.sel || {}); setChoices(s.choices || {});
         setRolls(s.rolls || null); setWoundRoll(s.woundRoll ?? null); setFateRoll(s.fateRoll ?? null);
         setDamage(s.damage || 0); setWoundBonus(s.woundBonus || 0);
         setFateAdj(s.fateAdj || 0); setProfitAdj(s.profitAdj || 0);
@@ -2166,14 +2186,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
     const t = setTimeout(() => {
       try {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
-          name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+          name, gender, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
           fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
           finalTotals, finalWounds, finalFate, pointAlloc
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
-  }, [name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+  }, [name, gender, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
       fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
       finalTotals, finalWounds, finalFate, pointAlloc, loaded]);
 
@@ -2294,6 +2314,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
   const applySheet = (s) => {
     setName(s.name || '');
+    setGender(s.gender || '');
     setSel(s.sel || {});
     setChoices(s.choices || {});
     setRolls(s.rolls || null);
@@ -2327,7 +2348,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
   };
 
   const clearAll = () => {
-    setName(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
+    setName(''); setGender(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
     setDamage(0); setWoundBonus(0);
     setFateAdj(0); setProfitAdj(0); setSpentAdj(0);
     setFinalTotals(null); setFinalWounds(null); setFinalFate(null); setPointAlloc(null);
@@ -2392,7 +2413,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         name: name || 'Unnamed adept',
         career: career ? career.name : null,
         updatedAt: Date.now(),
-        state: { name, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+        state: { name, gender, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
                  fateAdj, profitAdj, spentAdj, psyRating, xp,
                  finalTotals, finalWounds, finalFate, pointAlloc }
       });
@@ -2425,6 +2446,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
     }
     const s = c.state || {};
     setName(s.name || '');
+    setGender(s.gender || '');
     setSel(s.sel || {});
     setChoices(s.choices || {});
     setRolls(s.rolls || null);
@@ -2560,6 +2582,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
             showIntro={stepIx === 0}
             name={name}
             setName={setName}
+            gender={gender}
+            setGender={setGender}
             onImport={() => setImportOpen(true)}
             xenosHome={!!(home?.xenos && stepIx >= 1 && stepIx <= 4)}
             onSkipToCareer={() => setStepIx(5)}
@@ -2579,7 +2603,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
         {stepIx === 7 && (
           <DossierPane
-            name={name} build={build} totals={totals}
+            name={name} gender={gender} build={build} totals={totals}
             ws={ws} onDamage={takeDamage} onAdjustMax={changeMax}
             fatePoints={fateShown} profitFactor={profitShown}
             avatar={avatar} setAvatar={setAvatar}
@@ -3591,7 +3615,7 @@ const STEP_LEAD = {
   career: 'Your role aboard the ship. This decides your starting Skills, Talents and gear.'
 };
 
-function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name, setName, onImport, xenosHome, onSkipToCareer }) {
+function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name, setName, gender, setGender, onImport, xenosHome, onSkipToCareer }) {
   return (
     <div>
       {showIntro && (
@@ -3602,6 +3626,15 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+          <div className="rt-gender-row">
+            {['Male', 'Female', 'Other'].map((g) => (
+              <button
+                key={g}
+                className={'rt-gender-btn' + (gender === g ? ' active' : '')}
+                onClick={() => setGender((prev) => (prev === g ? '' : g))}
+              >{g}</button>
+            ))}
+          </div>
           <div className="rt-btnrow">
             <button className="rt-btn ghost" onClick={onImport}>Load character</button>
           </div>
@@ -3851,7 +3884,7 @@ const ADD_SOURCES = {
   notes:   { title: 'Add a note',     options: [] }
 };
 
-function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
+function DossierPane({ name, gender, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
   psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onFate, onProfit, spentAdj = 0, onSpentAdj }) {
   const [tab, setTab] = useState('skills');
@@ -3912,6 +3945,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
              keep Concept and Role in crew as notes; either gives it more. */
           identity={{
             name,
+            gender,
             homeWorld: pickedName('home'),
             birthright: pickedName('birthright'),
             lure: pickedName('lure'),
@@ -3927,6 +3961,7 @@ function DossierPane({ name, build, totals, ws, onDamage, onAdjustMax, fatePoint
           <p className="rt-lead">
             {career ? career.name : 'No career chosen'}
             {build.picked.home ? ' \u00B7 ' + build.picked.home.name : ''}
+            {gender ? ' \u00B7 ' + gender : ''}
           </p>
           {/* The wounds bar used to run the full width with the gauges in a
               separate row below it. One strip, no dead space. */}

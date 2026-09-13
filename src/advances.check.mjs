@@ -65,7 +65,7 @@ assert.equal(advancesFor('Seneschal', 1).find((a) => a.name === 'Seeker of Lore'
 assert.equal(advancesFor('Missionary', 1).find((a) => a.name === 'Pure Faith').cost, 500);
 assert.equal(advancesFor('Void-Master', 3).find((a) => a.name === 'Ace Pilot').prereq, 'Ag 40, Pilot');
 // the Navigator table introduces a fourth advance type
-assert.equal(advancesFor('Navigator', 1).find((a) => a.name === 'Navigator Power (Novice)').type, 'Power');
+assert.equal(advancesFor('Navigator', 1).find((a) => a.name === 'Lidless Stare (Novice)').type, 'Power');
 assert.equal(MAX_TABLED_RANK, 8);
 
 // prerequisite parsing

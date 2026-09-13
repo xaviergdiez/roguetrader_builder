@@ -830,7 +830,10 @@ const STEPS = [
 // names the app does, rather than a copy that can drift
 export const SHEET_CATALOG = {
   steps: STEPS.reduce((out, s) => {
-    out[s.id] = s.data.map(({ id, name }) => ({ id, name }));
+    // xenos rides along for the home step: a xenos species IS its whole
+    // origin path, so a caller (scripts/audit-parse.mjs) needs to tell that
+    // apart from a human sheet legitimately missing steps.
+    out[s.id] = s.data.map(({ id, name, xenos }) => (xenos ? { id, name, xenos } : { id, name }));
     return out;
   }, {})
 };

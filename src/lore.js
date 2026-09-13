@@ -38,7 +38,7 @@ const CAREER_LORE = {
   eldarcorsair: "turned from the craftworld's ordained path to raid and trade among the stars, bound to no fixed fate but the pursuit of fleeting experience",
   orkfreebooter: "answered the call of loot and battle beyond the Waaagh!, chasing profit measured in scrap, teeth and unrepentant violence",
   krootmercenary: "took up contract-work for whoever paid in meat and ammunition, one gun among the Kroot mercenary companies hired across a hundred wars",
-  drukharikabalitewarrior: "fought beneath a Kabal's banner, one blade among thousands loaned from Commorragh's endless internal war to whichever patron currently profited the Archon",
+  drukharibeliever: "fought beneath a Kabal's banner, one blade among thousands loaned from Commorragh's endless internal war to whichever patron currently profited the Archon",
   taufirewarrior: "served as Fire Caste infantry seconded to alien company, disciplined and coordinated even far from the Water Caste's diplomacy and the Ethereals' guidance",
 };
 
@@ -78,9 +78,9 @@ const MOTIVATION_LORE = {
   prestige: "the need to be seen to matter, every possession chosen to advertise standing",
 };
 
-// Display name -> id, mirroring lib/prompt.js's NAMES but extended with the
-// five xenos home worlds and careers, which prompt.js's CAREER table has no
-// use for (image prompts fall back to a generic phrase there instead).
+// Display name -> id, mirroring lib/prompt.js's NAMES (both now cover the
+// five xenos home worlds and careers; kept as separate tables since one
+// produces an image prompt and the other prose).
 const NAMES = {
   "Death World": "death", "Void Born": "void", "Forge World": "forge",
   "Hive World": "hive", "Imperial World": "imperial", "Noble Born": "noble",
@@ -99,7 +99,7 @@ const NAMES = {
   "Void-Master": "voidmaster",
   "Eldar Corsair": "eldarcorsair", "Ork Freebooter": "orkfreebooter",
   "Kroot Mercenary": "krootmercenary",
-  "Drukhari Kabalite Warrior": "drukharikabalitewarrior",
+  "Drukhari Kabalite Warrior": "drukharibeliever",
   "T'au Fire Warrior": "taufirewarrior",
 };
 

@@ -17,11 +17,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import esbuild from 'esbuild';
 import { parseCsv, parseCharacterSheet, looksFlattened } from '../src/sheet.js';
 import { phraseFor } from '../lib/prompt.js';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+// .pathname leaves spaces and other reserved characters percent-encoded
+// (a path under "Library/Mobile Documents" is exactly this case), so
+// fs.readFileSync sees a literal "%20" and fails with ENOENT.
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 // SHEET_CATALOG lives in the .jsx, so it is compiled to plain JS and imported
 // rather than copied here — a copy would drift from what the app matches on.
@@ -75,9 +79,15 @@ function auditSheet(file, catalog) {
     .filter(([, v]) => v.length)
     .map(([k, v]) => `${k}:${v.length}`);
 
+  // A xenos career's species IS its origin path — Birthright through
+  // Motivation are skipped by design (see the app's own xenosHome step
+  // handling), so home + career (2/6) is a complete, not a partial, sheet.
+  const home = (catalog.steps.home || []).find((w) => w.id === state.sel.home);
+  const expectedSteps = home?.xenos ? 2 : 6;
+
   const problems = [];
   if (!state.name) problems.push('no name');
-  if (steps < 6) problems.push(`${steps}/6 origin steps`);
+  if (steps < expectedSteps) problems.push(`${steps}/${expectedSteps} origin steps`);
   if (!state.finalTotals && !state.rolls) problems.push('no characteristics');
   // The dangerous one: finals landing in the roll fields means the app applies
   // origin modifiers to numbers that already include them.
@@ -90,7 +100,7 @@ function auditSheet(file, catalog) {
 
   console.log(`\n${name}`);
   console.log(`  ${problems.length ? 'FAIL    ' : 'ok      '}${state.name || '(unnamed)'}`);
-  console.log(`  origin   ${steps}/6${steps === 6 ? '' : '  ' + JSON.stringify(state.sel)}`);
+  console.log(`  origin   ${steps}/${expectedSteps}${steps === expectedSteps ? '' : '  ' + JSON.stringify(state.sel)}`);
   console.log(`  chars    ${state.finalTotals ? 'final (used verbatim)'
     : state.rolls ? 'rolls (origin modifiers will be applied)' : 'NONE'}`);
   console.log(`  lists    ${lists.join(' ') || 'none'}`);

@@ -91,6 +91,30 @@ for (const t of ALL_TECHNIQUES) {
 assert.equal(describePower('Warp Whispers of the Unbound'), 'Warp Whispers of the Unbound');
 assert.equal(describePower(''), '');
 
+// Every technique now carries a Focus Power Test modifier and a range, not
+// just the old one-line generic summary — this is what makes the Powers
+// tab's expanded detail worth opening.
+for (const t of ALL_TECHNIQUES) {
+  const d = describePower(t);
+  assert.match(d, /Focus Power Test: /, t + ' has no test modifier');
+  assert.match(d, /Range: /, t + ' has no range');
+}
+
+// Spot-check the mechanical detail against the source rules text, not just
+// its presence — a wrong number here is worse than a missing one.
+assert.match(describePower('Thought Sending'), /WP \+20.*1 km.*PR/);
+assert.match(describePower('Psychic Scream'), /1d10\+PR Willpower-bypassing damage/);
+assert.match(describePower('Mind Probe'), /3 continuous rounds/);
+assert.match(describePower('Prescience'), /\+10 bonus to all Weapon Skill, Ballistic Skill, Dodge and Parry/);
+assert.match(describePower('Spontaneous Combustion'), /Pen 4/);
+assert.match(describePower('Iron Arm'), /PR × 5/);
+assert.match(describePower('Warp Speed'), /Unnatural Agility \(×2\)/);
+assert.match(describePower('Psychic Crush'), /2d10\+PR Impact damage that completely ignores Armour Points/);
+assert.match(describePower('Deflect Missiles'), /As a Reaction/);
+// Basic techniques still say what they are, on top of the new detail.
+assert.match(describePower('Thought Sending'), /Basic Technique of Telepathy/);
+assert.match(describePower('Mind Link'), /A Telepathy technique/);
+
 /* --- the warp tables --------------------------------------------------- */
 
 // both tables must cover 1..100 with no gap and no overlap

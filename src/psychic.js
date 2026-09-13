@@ -159,19 +159,151 @@ export const thoughtSendingKm = (psyRating) => Math.max(0, Math.floor(psyRating 
 export const disciplineSlots = (psyRating) => (Math.floor(psyRating || 0) >= 3 ? 2 : 1);
 export const ALL_TECHNIQUES = DISCIPLINES.flatMap((d) => [d.basic, ...d.techniques]);
 
+// Full mechanical write-up for every basic technique and technique above,
+// keyed by exact name. "PR" in a range or effect means the psyker's current
+// Psy Rating (see effectivePsyRating for how Fettered/Unfettered/Push scale
+// it). describePower() below folds this into one self-describing string;
+// a name with no entry here still gets the older, shorter fallback rather
+// than nothing, so an unlisted future technique degrades gracefully.
+const POWER_RULES = {
+  'Thought Sending': {
+    test: 'WP +20', range: '1 km × PR',
+    summary: 'Silent mental broadcast.',
+    detail: 'Transmits words, basic visual images, or emotional concepts directly into the minds of target creatures. Communication is one-way unless the target is also a psyker or possesses a psychic link.'
+  },
+  'Mind Link': {
+    test: 'WP +10', range: '100 m × PR',
+    summary: 'Multi-target mental network.',
+    detail: 'Establishes a seamless, two-way telepathic bridge between the psyker and up to PR willing targets, allowing instant communication without speech for as long as the power is sustained.'
+  },
+  'Mind Probe': {
+    test: 'WP -10', range: 'Touch / 5 m',
+    summary: 'Deep memory and thought extraction.',
+    detail: 'An Opposed Willpower Test lasting 3 continuous rounds. Stage 1 extracts surface thoughts; Stage 2 extracts recent memories; Stage 3 extracts subconscious secrets or repressed memories.'
+  },
+  'Psychic Scream': {
+    test: 'WP +0', range: '5 m × PR cone',
+    summary: 'Area mental assault and stun.',
+    detail: 'Emits a deafening psychic screech in a 30-degree cone, dealing 1d10+PR Willpower-bypassing damage to all targets in range. Victims must pass a Willpower Test or be Stunned for 1d5 rounds.'
+  },
+  'Compel': {
+    test: 'WP -10', range: '10 m × PR',
+    summary: 'Forces short command obedience.',
+    detail: 'Overrides the target’s free will, forcing them to obey a single one-sentence command — "Drop your weapon," "Flee," "Freeze" — on their next turn, unless they pass an Opposed Willpower Test.'
+  },
+  'Telepathic Jamming': {
+    test: 'WP +0', range: '10 m × PR',
+    summary: 'Blinds nearby minds to psychic sight.',
+    detail: 'Floods the local warp with static, making it impossible for other psykers in range to use Psyniscience or otherwise detect psychic activity for as long as the power is sustained.'
+  },
+  'Aura Reading': {
+    test: 'Per +10', range: '10 m × PR',
+    summary: 'Analyses health, soul and corruption.',
+    detail: 'Scans a single creature to reveal their current Wounds, Fatigue, emotional state, presence of Warp corruption, active psychic powers, or untreated infections.'
+  },
+  'Prescience': {
+    test: 'WP +0', range: 'Personal',
+    summary: 'Foresight bonus to attack and evasion.',
+    detail: 'Channels a glimpse of immediate futures, granting a +10 bonus to all Weapon Skill, Ballistic Skill, Dodge and Parry tests for PR rounds. The psyker cannot be Surprised while this power is sustained.'
+  },
+  'Invocations of the Warp': {
+    test: 'WP +10', range: '100 m × PR',
+    summary: 'Pinpoints Warp anomalies and threats.',
+    detail: 'Detects concealed psykers, active Warp portals, daemonic entities, phase-shifted creatures, and unwarded Geller Field leaks in the surrounding area.'
+  },
+  'Scrying': {
+    test: 'WP -10', range: 'Line of sight / 1 hour vision',
+    summary: 'Remote viewing of a distant place or person.',
+    detail: 'Projects the psyker’s senses to a known location or a person they have met, watching events unfold there in real time for as long as concentration is sustained.'
+  },
+  'Psychic Sight': {
+    test: 'Per +0', range: 'PR × 1 m depth',
+    summary: 'Sees through solid matter.',
+    detail: 'Grants sight through walls, armour and cover to a depth of roughly a metre per point of Psy Rating, for PR rounds.'
+  },
+  'Spontaneous Combustion': {
+    test: 'WP +0', range: '20 m × PR',
+    summary: 'Superheats and ignites a single target.',
+    detail: 'Channels friction into a single foe, dealing 1d10+PR Energy damage (Pen 4). If the target takes damage, they must pass an Agility Test or catch fire, taking ongoing flame damage.'
+  },
+  'Holocaust / Incinerate': {
+    test: 'WP +0', range: '5 m × PR radius',
+    summary: 'Ignites the surrounding area in warp fire.',
+    detail: 'The psyker bursts into a thermal vortex, dealing 1d10+PR Energy damage (Pen 2) to all creatures within the radius and leaving the area burning for 1d5 rounds.'
+  },
+  'Fire Shield': {
+    test: 'WP +10', range: 'Personal',
+    summary: 'Protective thermal air barrier.',
+    detail: 'Envelops the psyker in a roaring aura of heat, granting +PR Armour Points against ranged attacks and dealing 1d10 Energy damage to any enemy making a successful melee attack against the psyker.'
+  },
+  'Wall of Fire': {
+    test: 'WP +0', range: '10 m × PR line',
+    summary: 'Raises a barrier of warp flame.',
+    detail: 'Conjures a wall of roaring fire along a line, blocking movement and dealing 1d10+PR Energy damage to anything that passes through it.'
+  },
+  'Invigorate': {
+    test: 'WP +10', range: 'Touch / 5 m',
+    summary: 'Restores physical Wounds and Fatigue.',
+    detail: 'Accelerates cellular regeneration, healing 1d5+PR Wounds on the target and removing 1 level of Fatigue. Cannot regrow a completely severed limb without further, more advanced techniques.'
+  },
+  'Iron Arm': {
+    test: 'WP +0', range: 'Personal',
+    summary: 'Increases muscular density and resilience.',
+    detail: 'Transmutes skin and bone into organic iron, increasing Strength and Toughness by PR × 5 — boosting Strength Bonus and Toughness Bonus accordingly — for PR rounds.'
+  },
+  'Warp Speed': {
+    test: 'WP +0', range: 'Personal',
+    summary: 'Supercharges movement and actions.',
+    detail: 'Floods the nervous system with warp adrenaline, granting Unnatural Agility (×2) and allowing one additional Half Action per turn for the duration of the power.'
+  },
+  'Regeneration': {
+    test: 'WP +10', range: 'Touch / 5 m',
+    summary: 'Knits flesh and bone back together over time.',
+    detail: 'A slower, deeper working than Invigorate: the target heals 1 Wound every round for the next 1d5 minutes, and may regrow a severed limb given an hour of uninterrupted concentration.'
+  },
+  'Enfeeble': {
+    test: 'WP -10', range: '10 m × PR',
+    summary: 'Saps enemy physical strength.',
+    detail: 'Siphons biological energy from a foe: the target suffers a Strength and Toughness penalty of PR × 5 for PR rounds, and takes 1 level of Fatigue unless they pass a Toughness Test.'
+  },
+  'Telekinetic Force': {
+    test: 'WP +10', range: '20 m × PR',
+    summary: 'Exerts invisible physical force.',
+    detail: 'Moves or manipulates unanchored objects remotely, exerting an effective Strength Bonus equal to PR × 2 for lifting, pushing, throwing, or forcing open bulkheads.'
+  },
+  'Force Bolt': {
+    test: 'WP +0', range: '30 m × PR',
+    summary: 'Kinetic shockwave projectile.',
+    detail: 'Launches a focused beam of force, dealing 1d10+PR Impact damage (Pen equal to PR). Targets hit must pass an Ordinary (+10) Strength Test or be knocked Prone.'
+  },
+  'Psychic Crush': {
+    test: 'WP -10', range: '15 m × PR',
+    summary: 'Constricts and crushes a target internally.',
+    detail: 'Encloses a target in a crushing sphere of kinetic force, dealing 2d10+PR Impact damage that completely ignores Armour Points. The target is held helpless while the power is sustained.'
+  },
+  'Deflect Missiles': {
+    test: 'Ag/WP +10', range: 'Personal',
+    summary: 'Reaction-based projectile deflection.',
+    detail: 'As a Reaction, the psyker swats away an incoming ranged attack — solid shot, bolts, plasma bolts — requiring a successful Focus Power Test to nullify the incoming hit.'
+  }
+};
+
 export function describePower(name) {
   const n = String(name || '').trim();
   if (!n) return '';
-  for (const d of DISCIPLINES) {
-    if (d.basic.toLowerCase() === n.toLowerCase()) {
-      return `${d.basic}: ${d.basicEffect} The Basic Technique of ${d.name}, granted free with the discipline.`;
-    }
-  }
-  for (const d of DISCIPLINES) {
-    const hit = d.techniques.find((t) => t.toLowerCase() === n.toLowerCase());
-    if (hit) return `${hit}: A ${d.name} technique. ${d.focus}`;
-  }
-  return n;
+  const disc = DISCIPLINES.find((d) =>
+    d.basic.toLowerCase() === n.toLowerCase() || d.techniques.some((t) => t.toLowerCase() === n.toLowerCase()));
+  if (!disc) return n;
+
+  const isBasic = disc.basic.toLowerCase() === n.toLowerCase();
+  const properName = isBasic ? disc.basic : disc.techniques.find((t) => t.toLowerCase() === n.toLowerCase());
+  const grant = isBasic
+    ? `The Basic Technique of ${disc.name}, granted free with the discipline.`
+    : `A ${disc.name} technique.`;
+
+  const r = POWER_RULES[properName];
+  if (!r) return `${properName}: ${isBasic ? disc.basicEffect : disc.focus} ${grant}`;
+  return `${properName}: ${r.summary} Focus Power Test: ${r.test} · Range: ${r.range}. ${r.detail} ${grant}`;
 }
 
 /* ----------------------- Table 6-2: Psychic Phenomena -----------------------

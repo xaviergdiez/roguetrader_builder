@@ -126,10 +126,22 @@ for (const file of files) {
   const charRank = rankForXp(xp);
   const budget = spendableXp(xp);
 
-  let spent = 0;
-  const purchased = [], granted = [], unclassified = [], aboveRank = [];
+  // A GM-approved Elite Advance is priced by the GM, not looked up on the
+  // career table, and is never rank-gated — it was never on that table to
+  // begin with. Matched by name so it is pulled out of UNCLASSIFIED rather
+  // than double-counted if it happens to share a name with a table entry.
+  const eliteByName = new Map(state.extras.eliteAdvances.map((a) => [norm(a.name), a]));
+
+  let spent = 0, eliteSpent = 0;
+  const purchased = [], granted = [], unclassified = [], aboveRank = [], elite = [];
   for (const entry of [...state.extras.skills, ...state.extras.talents]) {
     const key = norm(entry);
+    const eliteHit = eliteByName.get(key);
+    if (eliteHit) {
+      eliteSpent += eliteHit.cost;
+      elite.push(`${entry} — ${eliteHit.type}, ${eliteHit.cost} XP`);
+      continue;
+    }
     if (free.has(key)) { granted.push(entry); continue; }
     const hit = table.get(key);
     if (hit) {
@@ -140,8 +152,16 @@ for (const file of files) {
         + (tooHigh ? `   <-- Rank ${hit.rank} advance, character is Rank ${charRank}` : ''));
     } else unclassified.push(entry);
   }
+  // Elite Advances not named among Skills/Talents (e.g. a Trait) still spend.
+  for (const a of state.extras.eliteAdvances) {
+    if (![...state.extras.skills, ...state.extras.talents].some((e) => norm(e) === norm(a.name))) {
+      eliteSpent += a.cost;
+      elite.push(`${a.name} — ${a.type}, ${a.cost} XP`);
+    }
+  }
 
-  const over = spent > budget;
+  const totalSpent = spent + eliteSpent;
+  const over = totalSpent > budget;
   if (over) overspent++;
   if (aboveRank.length) outOfRank++;
   unclassifiedTotal += unclassified.length;
@@ -153,6 +173,10 @@ for (const file of files) {
     spent.toLocaleString(), purchased.length,
     over ? `   <-- OVER the ${budget.toLocaleString()} spendable` : '');
   for (const p of purchased) console.log('                  %s', p);
+  if (elite.length) {
+    console.log('  ELITE         %s XP from %d GM-approved advance(s)', eliteSpent.toLocaleString(), elite.length);
+    for (const e of elite) console.log('                  %s', e);
+  }
   if (aboveRank.length) {
     console.log('  OUT OF RANK   %d advance(s) above Rank %d: %s',
       aboveRank.length, charRank, aboveRank.join('; '));

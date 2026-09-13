@@ -71,6 +71,7 @@ Psychic powers,,"Semicolon separated, e.g. Thought Sending; Iron Arm"
 Extra skills,Barter (Fel),e.g. Awareness (Per); Dodge (Ag)
 Extra talents,Nerves of Steel,"e.g. Quick Draw; Sound Constitution; Iron Discipline; Peer (Nobility)"
 Extra traits,,"Free text. Use ""Name: effect"" so the sheet can explain it. Xenos kindred traits (e.g. Hyper-Evolved Kindred; Agony Mastery) go here."
+Elite Advances,,"GM-approved Skill/Talent/Trait off the career's own table, at whatever XP the GM sets (typically 200-500). Format: ""Name (Type, Cost XP)"", semicolon separated, e.g. Untouchable (Trait, 500 XP); Interrogation (Skill, 200 XP). Counts against spendable XP; not rank-gated, since it was never on the table to begin with."
 Extra gear,best power sword,Craftsmanship prefixes work: poor / common / good / best.
 Dropped gear,,"Issued kit that has been lost, sold or spent."
 Notes,Owes the Navigator a favour,Anything to resolve at the table.

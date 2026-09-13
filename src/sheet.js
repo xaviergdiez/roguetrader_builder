@@ -83,6 +83,27 @@ export function splitEntries(v) {
   return out.map((x) => x.replace(/\.$/, '').trim()).filter(Boolean);
 }
 
+// "Untouchable (Trait, 500 XP)" -> { name: 'Untouchable', type: 'Trait', cost: 500 }.
+// A GM-approved Elite Advance carries its own type and XP cost inline, unlike
+// every other list field here, so it needs its own parse rather than a bare
+// splitEntries(). Entries must be ;-separated: a bare "," inside one entry's
+// own parenthetical (the type/cost pair) would otherwise be indistinguishable
+// from the separator between two entries.
+const ELITE_RE = /^(.*)\(([^,()]+),\s*([\d,]+)\s*xp\)$/i;
+
+export function parseEliteAdvances(v) {
+  return splitEntries(v).map((entry) => {
+    const m = entry.match(ELITE_RE);
+    if (!m) return null;
+    const name = m[1].trim();
+    const cost = num(m[3]);
+    if (!name || cost == null) return null;
+    const typeWord = m[2].trim().toLowerCase();
+    const type = typeWord.startsWith('skill') ? 'Skill' : typeWord.startsWith('trait') ? 'Trait' : 'Talent';
+    return { name, type, cost };
+  }).filter(Boolean);
+}
+
 // Matches a sheet value against a step's options.
 //
 // Sheet authors write alternatives with a slash — "Mind-Cleansed/Imperial
@@ -207,7 +228,7 @@ export function parseCharacterSheet(rows, catalog) {
     finalWounds: null, finalFate: null,
     damage: 0, woundBonus: 0, psyRating: 0, xp: null, avatar: null,
     extras: { skills: [], talents: [], traits: [], gear: [], notes: [],
-      gearDropped: [], powers: [], advances: [] }
+      gearDropped: [], powers: [], advances: [], eliteAdvances: [] }
   };
 
   const rolls = {}, finals = {};
@@ -259,6 +280,15 @@ export function parseCharacterSheet(rows, catalog) {
     if (LIST_FIELDS[k]) {
       const bucket = LIST_FIELDS[k];
       state.extras[bucket] = state.extras[bucket].concat(splitEntries(value));
+      continue;
+    }
+
+    if (k === 'elite advances') {
+      const parsed = parseEliteAdvances(value);
+      const bad = splitEntries(value).length - parsed.length;
+      if (bad > 0) warnings.push(`Elite Advances: ${bad} entr${bad === 1 ? 'y' : 'ies'} not in `
+        + '"Name (Type, Cost XP)" form, e.g. "Untouchable (Trait, 500 XP)" — skipped');
+      state.extras.eliteAdvances = state.extras.eliteAdvances.concat(parsed);
       continue;
     }
 

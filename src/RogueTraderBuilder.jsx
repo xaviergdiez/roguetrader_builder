@@ -2570,6 +2570,18 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const refundAdvance = (name) =>
     setExtras((p) => ({ ...p, advances: p.advances.filter((x) => x.name !== name) }));
 
+  // A GM-approved Elite Advance: a Skill/Talent/Trait the career's own table
+  // does not offer, bought outright at a cost the GM sets (typically 200-500
+  // XP) rather than looked up from CAREER_ADVANCES. Rank-gating does not
+  // apply to these — that gate only exists to pace what a career table
+  // offers, and an Elite Advance was never on that table to begin with.
+  const addEliteAdvance = (a) => setExtras((p) => (
+    p.eliteAdvances.some((x) => x.name === a.name) ? p
+      : { ...p, eliteAdvances: [...p.eliteAdvances, { name: a.name, type: a.type, cost: a.cost }] }
+  ));
+  const removeEliteAdvance = (name) =>
+    setExtras((p) => ({ ...p, eliteAdvances: p.eliteAdvances.filter((x) => x.name !== name) }));
+
   // One +5 characteristic advance per call, cheapest (unbought) tier first —
   // the count IS the tier index into ADVANCE_LEVELS, so there is nothing to
   // pick: buying always takes the next rung, refunding always gives back the
@@ -2699,6 +2711,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
             onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance}
             onBuyCharAdvance={buyCharAdvance} onRefundCharAdvance={refundCharAdvance}
+            onAddEliteAdvance={addEliteAdvance} onRemoveEliteAdvance={removeEliteAdvance}
             onFate={(n) => setFateAdj((a) => a + n)}
             onProfit={(n) => setProfitAdj((a) => a + n)}
             spentAdj={spentAdj} onSpentAdj={(n) => setSpentAdj((a) => Math.max(0, a + n))}
@@ -2801,7 +2814,7 @@ const STARTING_XP_DEFAULT = 5000;   // a starting Explorer, per the rank table
 // stat (0-4, one per ADVANCE_LEVELS tier) — see tierFor/CHAR_ADVANCE_COST.
 const EMPTY_EXTRAS = {
   skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [], advances: [],
-  charAdvances: {}
+  charAdvances: {}, eliteAdvances: []
 };
 // merges a stored extras object over the empty shape, so an older save that
 // predates a category still loads
@@ -3564,6 +3577,61 @@ function AddDialog({ title, options, existing, onAdd, onClose }) {
   );
 }
 
+/* A Skill/Talent/Trait off the career's own table, priced by the GM rather
+   than looked up — see addEliteAdvance. Distinct from AddDialog because it
+   needs a type and a cost, not just a name. */
+function EliteAdvanceDialog({ onAdd, onClose }) {
+  const dialogRef = useRef(null);
+  const [name, setName] = useState('');
+  const [type, setType] = useState('Talent');
+  const [cost, setCost] = useState(200);
+
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  const cleanCost = Math.max(0, Math.floor(Number(cost) || 0));
+  const trimmed = name.trim();
+  const add = () => {
+    if (!trimmed) return;
+    onAdd({ name: trimmed, type, cost: cleanCost });
+    close();
+  };
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer" onClose={onClose} aria-label="Add an Elite Advance">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">Add an Elite Advance</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+      <p className="rt-vox-hint">
+        A Skill, Talent or Trait off this career's own table, granted by the GM
+        for whatever cost they set — typically 200-500 XP, for an origin-path
+        twist the tables don't cover, a xenos weapon picked up before session
+        one, or a defining quirk like being Untouchable. Rank-gating does not
+        apply: it was never on the table to begin with.
+      </p>
+      <input className="rt-field" autoFocus value={name} onChange={(e) => setName(e.target.value)}
+        placeholder="Name, e.g. Untouchable (1)" />
+      <div className="rt-choice-l">TYPE</div>
+      <div className="rt-opts" style={{ marginBottom: 10 }}>
+        {['Skill', 'Talent', 'Trait'].map((t) => (
+          <button key={t} className={'rt-opt' + (type === t ? ' on' : '')}
+            onClick={() => setType(t)} aria-pressed={type === t}>{t}</button>
+        ))}
+      </div>
+      <div className="rt-choice-l">XP COST (GM SETS THIS)</div>
+      <input className="rt-field" type="number" min="0" step="50" value={cost}
+        onChange={(e) => setCost(e.target.value)} style={{ marginBottom: 10 }} />
+      <button className="rt-btn" onClick={add} disabled={!trimmed}>
+        Add for {cleanCost.toLocaleString()} XP
+      </button>
+    </dialog>
+  );
+}
+
 /* ------------------------------ TEST ROLLER ------------------------------
    Opens under the characteristic it belongs to. Difficulty sets the modifier,
    the target updates live, and the log keeps the last few rolls so a run of
@@ -3982,9 +4050,11 @@ const ADD_SOURCES = {
 function DossierPane({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
   psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance,
-  onBuyCharAdvance, onRefundCharAdvance, onFate, onProfit, spentAdj = 0, onSpentAdj }) {
+  onBuyCharAdvance, onRefundCharAdvance, onAddEliteAdvance, onRemoveEliteAdvance,
+  onFate, onProfit, spentAdj = 0, onSpentAdj }) {
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
+  const [addingElite, setAddingElite] = useState(false);
   const career = build.picked.career;
   // Navigators buy Warp Eye Powers (Lidless Stare, Seek the Path, etc.) as
   // Power-type advances, but they are not sanctioned psykers and never touch
@@ -4004,6 +4074,15 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
   const advTalents = ofType('Talent');
   const advPowers = ofType('Technique', 'Power');
 
+  // Elite Advances: a GM-approved Skill/Talent/Trait off the career's own
+  // table, priced by the GM rather than looked up — see addEliteAdvance.
+  const ofEliteType = (...types) =>
+    extras.eliteAdvances.filter((a) => types.includes(a.type)).map((a) => a.name);
+  const eliteSkills = ofEliteType('Skill');
+  const eliteTalents = ofEliteType('Talent');
+  const eliteTraits = ofEliteType('Trait');
+  const eliteSpent = extras.eliteAdvances.reduce((n, a) => n + (a.cost || 0), 0);
+
   const charRank = rankForXp(xp);
   const careerAdvances = allAdvances(career ? career.name : '');
   // Each characteristic's tier (and so cost) depends on the career, so a sold
@@ -4014,13 +4093,15 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
     const count = extras.charAdvances[k] || 0;
     return n + (tier ? cumulativeAdvanceCost(tier, count) || 0 : 0);
   }, 0);
-  const spentXp = extras.advances.reduce((n, a) => n + (a.cost || 0), 0) + charAdvSpent + spentAdj;
+  const spentXp = extras.advances.reduce((n, a) => n + (a.cost || 0), 0)
+    + charAdvSpent + eliteSpent + spentAdj;
   const remaining = remainingXp(xp, spentXp);
 
-  // origin-path entries first, then free additions, then purchased advances
-  const allSkills = [...build.skills, ...extras.skills, ...advSkills];
-  const allTalents = [...build.talents, ...extras.talents, ...advTalents];
-  const allTraits = [...build.traits, ...extras.traits];
+  // origin-path entries first, then free additions, then purchased advances,
+  // then GM-approved Elite Advances
+  const allSkills = [...build.skills, ...extras.skills, ...advSkills, ...eliteSkills];
+  const allTalents = [...build.talents, ...extras.talents, ...advTalents, ...eliteTalents];
+  const allTraits = [...build.traits, ...extras.traits, ...eliteTraits];
   const allPowers = [...extras.powers, ...advPowers];
   const allNotes = [...build.notes, ...extras.notes];
   const allGear = [
@@ -4395,6 +4476,29 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                 </ul>
               </div>
 
+              <div className="rt-advrank">
+                <div className="rt-sect-h">Elite Advances (GM-Approved)</div>
+                {extras.eliteAdvances.length
+                  ? <ul className="rt-advlist">
+                    {extras.eliteAdvances.map((a) => (
+                      <li key={a.name} className="rt-adv owned">
+                        <span className="rt-adv-n">{a.name}</span>
+                        <span className="rt-entry-c">{a.type}</span>
+                        <span className="rt-adv-c">{a.cost}</span>
+                        <button className="rt-adv-b" onClick={() => onRemoveEliteAdvance(a.name)}>
+                          Refund
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  : <p className="rt-empty">
+                    Nothing off-table yet. A GM-approved Skill, Talent or Trait costs whatever the GM sets.
+                  </p>}
+                <button className="rt-addbtn" onClick={() => setAddingElite(true)}>
+                  + Add an Elite Advance
+                </button>
+              </div>
+
               {Array.from({ length: MAX_TABLED_RANK }, (_, i) => i + 1).map((r) => {
                 const rows = careerAdvances.filter((a) => a.rank === r);
                 if (!rows.length) return null;
@@ -4478,6 +4582,13 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
         />
       )}
 
+      {addingElite && (
+        <EliteAdvanceDialog
+          onAdd={onAddEliteAdvance}
+          onClose={() => setAddingElite(false)}
+        />
+      )}
+
       {/* Last child of .rt-dossier on purpose: the print rule hides every
           sibling, so anything added after this would print too. */}
       <PrintSheet
@@ -4487,7 +4598,7 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
         psyRating={psyRating} avatar={avatar}
         skills={allSkills} talents={allTalents} traits={allTraits}
         gear={allGear} powers={allPowers} notes={allNotes}
-        advances={extras.advances}
+        advances={[...extras.advances, ...extras.eliteAdvances]}
       />
     </div>
   );

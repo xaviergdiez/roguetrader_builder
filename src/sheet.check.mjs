@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   matchOption, looksFlattened, FLATTENED_MESSAGE,
-  parseCsv, parseCharacterSheet, splitEntries, sheetIdFrom
+  parseCsv, parseCharacterSheet, splitEntries, sheetIdFrom, parseEliteAdvances
 } from './sheet.js';
 
 /* ---- slash-separated alternatives resolve to an exact option ---- */
@@ -87,6 +87,21 @@ assert.deepEqual(splitEntries('Speak Language (High Gothic, Low Gothic).'),
   ['Speak Language (High Gothic, Low Gothic)']);
 assert.deepEqual(splitEntries(''), []);
 
+/* ---- Elite Advances: "Name (Type, Cost XP)" ---- */
+
+assert.deepEqual(parseEliteAdvances('Untouchable (Trait, 500 XP)'),
+  [{ name: 'Untouchable', type: 'Trait', cost: 500 }]);
+assert.deepEqual(
+  parseEliteAdvances('Interrogation (Skill, 200 XP); Peer (Own Clan) (Talent, 200 XP)'),
+  [{ name: 'Interrogation', type: 'Skill', cost: 200 },
+    { name: 'Peer (Own Clan)', type: 'Talent', cost: 200 }]);
+// case-insensitive type word, and a thousands separator in the cost
+assert.deepEqual(parseEliteAdvances('Xenos Artifact (TRAIT, 1,000 XP)'),
+  [{ name: 'Xenos Artifact', type: 'Trait', cost: 1000 }]);
+// malformed entries (no type/cost pair) are dropped rather than guessed at
+assert.deepEqual(parseEliteAdvances('Just a bare name'), []);
+assert.deepEqual(parseEliteAdvances(''), []);
+
 const catalog = {
   steps: {
     home: [{ id: 'death', name: 'Death World' }, { id: 'void', name: 'Void Born' },
@@ -158,6 +173,7 @@ Special ability,Unhallowed Discovery
 # — SKILLS, TALENTS, WARGEAR —,semicolon separated
 Skills,"Tech-Use (Int), Common Lore (Machine Cult, Tech)"
 Talents,"Logis Implant, Autosanguine"
+Elite Advances,"Unhallowed Discovery (Talent, 500 XP)"
 Wargear,"Boltgun, best power axe"
 # — GM —,
 Secret,Keeps a xenos relic hidden.
@@ -184,6 +200,8 @@ assert.ok(conv.state.extras.notes.some((n) => /^Career: Explorator \(Alternate R
 assert.equal(conv.state.finalWounds, 15);
 assert.equal(conv.state.finalFate, 3);
 assert.equal(conv.state.psyRating, 2);
+assert.deepEqual(conv.state.extras.eliteAdvances,
+  [{ name: 'Unhallowed Discovery', type: 'Talent', cost: 500 }]);
 assert.equal(conv.state.xp, 5000, '"5,000 XP" reads as 5000');
 
 // comma lists with parenthesised specialisations survive intact

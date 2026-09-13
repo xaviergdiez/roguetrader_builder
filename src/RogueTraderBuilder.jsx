@@ -11,7 +11,10 @@ import {
   risksPhenomena, psyRatingInfo, disciplineSlots, thoughtSendingKm,
   describePower, manifest, sustainPenalty, DISCIPLINES, ALL_TECHNIQUES
 } from './psychic.js';
-import { rankForXp, romanRank, xpToNextRank, isStartingBudget, spendableXp, remainingXp } from './xp.js';
+import {
+  rankForXp, romanRank, xpToNextRank, isStartingBudget, spendableXp, remainingXp,
+  tierFor, ADVANCE_LEVELS, ADVANCE_STEP, advanceCost, cumulativeAdvanceCost
+} from './xp.js';
 import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
@@ -716,10 +719,39 @@ const CAREERS = [
       id: 'nav_lineage',
       label: 'House Lineage',
       options: [
-        { label: 'Magisterial', mods: { wp: 5, fel: 5 }, notes: ['Lineage \u2014 Magisterial House: regal bearing, formal training in court politics; +5 WP, +5 Fel.'] },
-        { label: 'Nomad', mods: { per: 5, int: 5 }, notes: ['Lineage \u2014 Nomad House: wanderers of the void, self-sufficient navigators; +5 Per, +5 Int.'] },
-        { label: 'Shrouded', mods: { ag: 5, wp: 5 }, notes: ['Lineage \u2014 Shrouded House: secretive and reclusive, strong warp resistance; +5 Ag, +5 WP.'] },
-        { label: 'Renegade', mods: { t: 5, per: 5 }, notes: ['Lineage \u2014 Renegade House: outcasts who serve where they must; +5 T, +5 Per.'] }
+        {
+          label: 'Magisterial', mods: { wp: 5, fel: 5 },
+          talents: ['Peer (Navis Nobilite)'],
+          notes: [
+            'Lineage \u2014 Magisterial House: regal bearing, formal training in court politics; +5 WP, +5 Fel.',
+            'Magisterial House: starting gear upgraded to Best Craftsmanship where the option exists.',
+            'Magisterial House: +10 to the Navigator Mutation roll \u2014 a life sheltered from the void\u2019s worst does not spare the bloodline\u2019s taint.'
+          ]
+        },
+        {
+          label: 'Nomad', mods: { per: 5, int: 5 },
+          talents: ['Void Accustomed'],
+          traits: ['Steady in the Void: +10 to Navigation (Warp) Tests made aboard a ship.'],
+          notes: [
+            'Lineage \u2014 Nomad House: wanderers of the void, self-sufficient navigators; +5 Per, +5 Int.',
+            'Nomad House: \u221210 Fellowship when dealing with planetary nobility \u2014 a life spent in the void leaves little patience for groundling courts.'
+          ]
+        },
+        {
+          label: 'Shrouded', mods: { ag: 5, wp: 5 },
+          talents: ['Resistance (Psychic Powers)'],
+          skills: ['Forbidden Lore (Warp) (Int)'],
+          traits: ['Rival (Magisterial Houses): the Magisterial navigator houses regard the Shrouded with open suspicion and rivalry.'],
+          notes: ['Lineage \u2014 Shrouded House: secretive and reclusive, strong warp resistance; +5 Ag, +5 WP.']
+        },
+        {
+          label: 'Renegade', mods: { t: 5, per: 5 },
+          traits: ['Enemy (Navis Nobilite): the wider Navis Nobilite regards Renegade-lineage Navigators with open hostility.'],
+          notes: [
+            'Lineage \u2014 Renegade House: outcasts who serve where they must; +5 T, +5 Per.',
+            'Renegade House: choose one \u2014 roll an additional time on the Navigator Mutation table, or raise one Novice Warp Eye Power to Adept tier at no XP cost.'
+          ]
+        }
       ]
     }]
   },
@@ -2238,7 +2270,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
         const chosen = c.options.find((o) => o.label === choices[c.id]);
         if (!chosen) return;
         addMods(chosen.mods);
-        push(out.skills, chosen.skills); push(out.talents, chosen.talents); push(out.notes, chosen.notes);
+        push(out.skills, chosen.skills); push(out.talents, chosen.talents);
+        push(out.traits, chosen.traits); push(out.notes, chosen.notes);
         out.profit += chosen.profit || 0;
         out.bonusFate += chosen.fate || 0;
       });
@@ -2256,9 +2289,11 @@ export default function RogueTraderBuilder({ me, cloud }) {
     if (finalTotals) return finalTotals;
     if (!rolls) return null;
     const t = {};
-    CHAR_KEYS.forEach((k) => { t[k] = (rolls[k] || 0) + (build.mods[k] || 0); });
+    CHAR_KEYS.forEach((k) => {
+      t[k] = (rolls[k] || 0) + (build.mods[k] || 0) + (extras.charAdvances[k] || 0) * ADVANCE_STEP;
+    });
     return t;
-  }, [finalTotals, rolls, build.mods]);
+  }, [finalTotals, rolls, build.mods, extras.charAdvances]);
 
   const tBonus = totals ? Math.floor(totals.t / 10) : null;
   // An imported sheet states its wounds outright; a built one derives them.
@@ -2532,6 +2567,21 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const refundAdvance = (name) =>
     setExtras((p) => ({ ...p, advances: p.advances.filter((x) => x.name !== name) }));
 
+  // One +5 characteristic advance per call, cheapest (unbought) tier first —
+  // the count IS the tier index into ADVANCE_LEVELS, so there is nothing to
+  // pick: buying always takes the next rung, refunding always gives back the
+  // last one bought.
+  const buyCharAdvance = (charKey) => setExtras((p) => {
+    const count = (p.charAdvances && p.charAdvances[charKey]) || 0;
+    if (count >= ADVANCE_LEVELS.length) return p;
+    return { ...p, charAdvances: { ...p.charAdvances, [charKey]: count + 1 } };
+  });
+  const refundCharAdvance = (charKey) => setExtras((p) => {
+    const count = (p.charAdvances && p.charAdvances[charKey]) || 0;
+    if (count <= 0) return p;
+    return { ...p, charAdvances: { ...p.charAdvances, [charKey]: count - 1 } };
+  });
+
   const stepDone = (i) => {
     if (i < 6) return !!sel[STEPS[i].id];
     if (i === 6) return !!rolls;
@@ -2645,6 +2695,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
             extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
             onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance}
+            onBuyCharAdvance={buyCharAdvance} onRefundCharAdvance={refundCharAdvance}
             onFate={(n) => setFateAdj((a) => a + n)}
             onProfit={(n) => setProfitAdj((a) => a + n)}
             spentAdj={spentAdj} onSpentAdj={(n) => setSpentAdj((a) => Math.max(0, a + n))}
@@ -2743,7 +2794,12 @@ const AUTOSAVE_KEY = 'rt:current';
 const STARTING_XP_DEFAULT = 5000;   // a starting Explorer, per the rank table
 // advances are objects ({name, type, cost, rank}), not names — the cost has to
 // travel with them so spent XP can be summed and refunded
-const EMPTY_EXTRAS = { skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [], advances: [] };
+// charAdvances: how many +5 characteristic advances have been bought per
+// stat (0-4, one per ADVANCE_LEVELS tier) — see tierFor/CHAR_ADVANCE_COST.
+const EMPTY_EXTRAS = {
+  skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [], advances: [],
+  charAdvances: {}
+};
 // merges a stored extras object over the empty shape, so an older save that
 // predates a category still loads
 const readExtras = (v) => ({ ...EMPTY_EXTRAS, ...(v || {}) });
@@ -3922,7 +3978,8 @@ const ADD_SOURCES = {
 
 function DossierPane({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
-  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onFate, onProfit, spentAdj = 0, onSpentAdj }) {
+  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance,
+  onBuyCharAdvance, onRefundCharAdvance, onFate, onProfit, spentAdj = 0, onSpentAdj }) {
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
   const career = build.picked.career;
@@ -3946,7 +4003,15 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
 
   const charRank = rankForXp(xp);
   const careerAdvances = allAdvances(career ? career.name : '');
-  const spentXp = extras.advances.reduce((n, a) => n + (a.cost || 0), 0) + spentAdj;
+  // Each characteristic's tier (and so cost) depends on the career, so a sold
+  // or swapped career re-prices whatever was already bought rather than
+  // grandfathering the old cost in.
+  const charAdvSpent = CHAR_KEYS.reduce((n, k) => {
+    const tier = career ? tierFor(career.name, k) : null;
+    const count = extras.charAdvances[k] || 0;
+    return n + (tier ? cumulativeAdvanceCost(tier, count) || 0 : 0);
+  }, 0);
+  const spentXp = extras.advances.reduce((n, a) => n + (a.cost || 0), 0) + charAdvSpent + spentAdj;
   const remaining = remainingXp(xp, spentXp);
 
   // origin-path entries first, then free additions, then purchased advances
@@ -4296,6 +4361,35 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                   XP spent at creation or outside the app. A starting Explorer who
                   already used their allowance records 500 here, leaving nothing.
                 </span>
+              </div>
+
+              <div className="rt-advrank">
+                <div className="rt-sect-h">Characteristic Advances</div>
+                <ul className="rt-advlist">
+                  {CHAR_KEYS.map((k) => {
+                    const tier = tierFor(career.name, k);
+                    if (!tier) return null;
+                    const count = extras.charAdvances[k] || 0;
+                    const maxed = count >= ADVANCE_LEVELS.length;
+                    const nextCost = maxed ? null : advanceCost(tier, ADVANCE_LEVELS[count]);
+                    const unaffordable = !maxed && nextCost > remaining;
+                    return (
+                      <li key={k} className={'rt-adv' + (count > 0 ? ' owned' : '') + (unaffordable ? ' blocked' : '')}>
+                        <span className="rt-adv-n">{CHAR_NAMES[k]}</span>
+                        <span className="rt-entry-c" data-g={charGroup(k)}>{tier}</span>
+                        <span className="rt-adv-c">+{count * ADVANCE_STEP}</span>
+                        <button className="rt-wmaxb" disabled={count <= 0}
+                          onClick={() => onRefundCharAdvance(k)}
+                          aria-label={'Refund a ' + CHAR_NAMES[k] + ' advance'}>{'−'}</button>
+                        <button className="rt-adv-b" disabled={maxed || unaffordable}
+                          onClick={() => onBuyCharAdvance(k)}>
+                          {maxed ? 'Maxed' : `+5 (${nextCost})`}
+                        </button>
+                        {unaffordable && <span className="rt-adv-p">Not enough XP</span>}
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
 
               {Array.from({ length: MAX_TABLED_RANK }, (_, i) => i + 1).map((r) => {

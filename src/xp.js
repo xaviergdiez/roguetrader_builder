@@ -87,6 +87,68 @@ export function advanceCost(tier, level) {
   return row && row[level] != null ? row[level] : null;
 }
 
+// Which of a career's nine characteristics is Primary, Secondary or Tertiary
+// for the cost of a characteristic advance above. Source: the Rogue Trader
+// Characteristic Cost Affinity Matrix supplied for this project. Every
+// career's three lists partition all nine characteristics exactly once —
+// checked in xp.check.mjs so a future edit cannot silently drop or double up
+// on one.
+const CHAR_TIERS = {
+  'Rogue Trader': {
+    primary: ['fel', 'ag', 'ws'], secondary: ['bs', 'int', 'wp'], tertiary: ['s', 't', 'per']
+  },
+  'Explorator': {
+    primary: ['int', 't', 's'], secondary: ['wp', 'per', 'bs'], tertiary: ['ws', 'ag', 'fel']
+  },
+  'Arch-Militant': {
+    primary: ['ws', 'bs', 's', 't'], secondary: ['ag', 'per'], tertiary: ['wp', 'int', 'fel']
+  },
+  'Seneschal': {
+    primary: ['int', 'fel', 'per'], secondary: ['ag', 'wp'], tertiary: ['ws', 'bs', 's', 't']
+  },
+  'Astropath Transcendent': {
+    primary: ['wp', 'int', 'per'], secondary: ['fel', 'ag'], tertiary: ['ws', 'bs', 's', 't']
+  },
+  'Navigator': {
+    primary: ['per', 'int', 'wp'], secondary: ['ag', 'fel'], tertiary: ['ws', 'bs', 's', 't']
+  },
+  'Missionary': {
+    primary: ['fel', 'ws', 'wp'], secondary: ['t', 's'], tertiary: ['bs', 'ag', 'int', 'per']
+  },
+  'Void-Master': {
+    primary: ['ag', 'bs', 'per'], secondary: ['wp', 't'], tertiary: ['ws', 's', 'int', 'fel']
+  },
+  'Eldar Corsair': {
+    primary: ['ag', 'ws', 'per'], secondary: ['bs', 'wp'], tertiary: ['s', 't', 'int', 'fel']
+  },
+  'Ork Freebooter': {
+    primary: ['s', 't', 'ws'], secondary: ['bs', 'wp'], tertiary: ['ag', 'int', 'per', 'fel']
+  },
+  'Kroot Mercenary': {
+    primary: ['ws', 's', 't', 'ag', 'per'], secondary: ['bs', 'wp'], tertiary: ['int', 'fel']
+  },
+  'Drukhari Kabalite Warrior': {
+    primary: ['ws', 'bs', 'ag', 'per'], secondary: ['int', 'wp'], tertiary: ['s', 't', 'fel']
+  },
+  "T'au Fire Warrior": {
+    primary: ['bs', 'per', 'wp'], secondary: ['t', 'ag', 'int'], tertiary: ['ws', 's', 'fel']
+  }
+};
+
+export const CHAR_TIER_CAREERS = Object.keys(CHAR_TIERS);
+
+// null when the career is unrecognised, or the characteristic is somehow
+// missing from all three lists — callers treat either as "cannot price this".
+export function tierFor(careerName, charKey) {
+  const rows = CHAR_TIERS[careerName];
+  if (!rows) return null;
+  const k = String(charKey || '').toLowerCase();
+  if (rows.primary.includes(k)) return 'primary';
+  if (rows.secondary.includes(k)) return 'secondary';
+  if (rows.tertiary.includes(k)) return 'tertiary';
+  return null;
+}
+
 // What N successive advances in one characteristic cost, cheapest first.
 // Beyond the four defined levels there is no published cost, so this returns
 // null rather than inventing one.

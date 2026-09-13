@@ -70,6 +70,7 @@ export const TALENTS = {
   'Thrown Weapon Training': 'You are trained with that class of thrown weapon, and no longer suffer the penalty for using it untrained.',
   'Unremarkable': 'Nothing about you sticks in the memory. Witnesses struggle to describe you and crowds swallow you whole.',
   'Unshakeable Faith': 'Your belief holds where reason fails, letting you face the warp and its servants without breaking.',
+  'Void Accustomed': 'A lifetime spent aboard ship has stripped the void of its terror — you keep your composure in zero-g, decompression and the dark between the stars where groundborn crew break down.',
   'Weapon Training': 'You are trained with the named weapon class, and no longer suffer the penalty for using it untrained.'
 };
 

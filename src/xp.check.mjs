@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   RANKS, STARTING_XP, rankForXp, xpToNextRank, isStartingBudget, spendableXp,
   advanceCost, cumulativeAdvanceCost, advancesBetween,
-  ADVANCE_LEVELS, ADVANCE_STEP, CHAR_ADVANCE_COST
+  ADVANCE_LEVELS, ADVANCE_STEP, CHAR_ADVANCE_COST, CHAR_TIER_CAREERS, tierFor
 } from './xp.js';
 
 // rank boundaries — off-by-one here would misreport every sheet
@@ -115,6 +115,39 @@ for (const tier of Object.keys(CHAR_ADVANCE_COST)) {
     assert.equal(typeof advanceCost(tier, l), 'number', tier + '/' + l);
   }
 }
+
+/* ---- per-career characteristic tier affinity ---- */
+
+const ALL_CHARS = ['ws', 'bs', 's', 't', 'ag', 'int', 'per', 'wp', 'fel'];
+
+// all 13 careers this app has advance tables for are covered, and vice versa
+assert.deepEqual(CHAR_TIER_CAREERS.slice().sort(), [
+  'Arch-Militant', 'Astropath Transcendent', 'Drukhari Kabalite Warrior', 'Eldar Corsair',
+  'Explorator', 'Kroot Mercenary', 'Missionary', 'Navigator', 'Ork Freebooter',
+  'Rogue Trader', 'Seneschal', "T'au Fire Warrior", 'Void-Master'
+]);
+
+// every career's tiers partition all nine characteristics exactly once —
+// no gaps (a stat nobody can price) and no overlaps (a stat priced twice)
+for (const career of CHAR_TIER_CAREERS) {
+  const seen = ALL_CHARS.map((k) => tierFor(career, k));
+  assert.ok(seen.every(Boolean), career + ': every characteristic must have a tier');
+  assert.equal(new Set(ALL_CHARS.filter((k) => tierFor(career, k) === 'primary')).size
+    + new Set(ALL_CHARS.filter((k) => tierFor(career, k) === 'secondary')).size
+    + new Set(ALL_CHARS.filter((k) => tierFor(career, k) === 'tertiary')).size,
+    9, career + ': the three tiers must not overlap');
+}
+
+// spot checks against the supplied matrix
+assert.equal(tierFor('Rogue Trader', 'fel'), 'primary');
+assert.equal(tierFor('Rogue Trader', 'ws'), 'primary');
+assert.equal(tierFor('Rogue Trader', 'per'), 'tertiary');
+assert.equal(tierFor('Kroot Mercenary', 'per'), 'primary', 'Kroot has five primary stats');
+assert.equal(tierFor('Kroot Mercenary', 'fel'), 'tertiary');
+assert.equal(tierFor("T'au Fire Warrior", 'bs'), 'primary');
+assert.equal(tierFor("T'au Fire Warrior", 'ws'), 'tertiary');
+assert.equal(tierFor('Nonesuch Career', 'ws'), null);
+assert.equal(tierFor('Rogue Trader', 'nonsense'), null);
 
 console.log('xp: all checks passed (%d ranks, %d tiers)',
   RANKS.length, Object.keys(CHAR_ADVANCE_COST).length);

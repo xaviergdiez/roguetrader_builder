@@ -95,6 +95,13 @@ export function matchOption(options, value) {
   const want = key(value);
   const hit = (options || []).find((o) => key(o.name) === want);
   if (hit) return hit;
+  // Strip a trailing parenthetical and retry — handles "Eldar Corsair (Into the
+  // Storm Supplement)" matching the "Eldar Corsair" career option.
+  const bare = want.replace(/\s*\(.*\)\s*$/, '').trim();
+  if (bare !== want) {
+    const hit2 = (options || []).find((o) => key(o.name) === bare);
+    if (hit2) return hit2;
+  }
   if (!want.includes('/')) return null;
   for (const part of String(value).split('/')) {
     const p = key(part);

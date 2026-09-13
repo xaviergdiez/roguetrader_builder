@@ -274,6 +274,50 @@ export const CAREER_ADVANCES = {
     ]
   },
 
+  'Eldar Corsair': {
+    1: [
+      A('Acrobatics +10', 'Skill', 'Acrobatics', 200),
+      A('Awareness +10', 'Skill', 'Awareness', 200),
+      A('Dodge +10', 'Skill', 'Dodge', 200),
+      A('Navigation (Stellar)', 'Skill', null, 200),
+      A('Pilot (Jump Pack)', 'Skill', null, 200),
+      A('Silent Move +10', 'Skill', 'Silent Move', 200),
+      A('Swift Attack', 'Talent', 'WS 35', 500),
+      A('Two-Weapon Wielder (Ballistic)', 'Talent', 'Ag 35, BS 35', 500),
+      A('Two-Weapon Wielder (Melee)', 'Talent', 'Ag 35, WS 35', 500),
+      A('Exotic Weapon Training (Eldar Weaponry)', 'Talent', null, 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    2: [
+      A('Acrobatics +20', 'Skill', 'Acrobatics +10', 200),
+      A('Dodge +20', 'Skill', 'Dodge +10', 200),
+      A('Silent Move +20', 'Skill', 'Silent Move +10', 200),
+      A('Navigation (Stellar) +10', 'Skill', 'Navigation (Stellar)', 200),
+      A('Pilot (Jump Pack) +10', 'Skill', 'Pilot (Jump Pack)', 200),
+      A('Bladestorm', 'Talent', 'WS 40', 500),
+      A('Counter-Attack', 'Talent', 'WS 40', 500),
+      A('Hard Target', 'Talent', 'Ag 40', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Navigation (Stellar) +20', 'Skill', 'Navigation (Stellar) +10', 200),
+      A('Pilot (Jump Pack) +20', 'Skill', 'Pilot (Jump Pack) +10', 200),
+      A('Scrutiny', 'Skill', null, 200),
+      A('Lightning Attack', 'Talent', 'Swift Attack', 500),
+      A('Preternatural Speed', 'Talent', 'WS 40, Ag 50', 500),
+      A('Step Aside', 'Talent', 'Ag 40, Dodge', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ],
+    4: [
+      A('Scrutiny +10', 'Skill', 'Scrutiny', 200),
+      A('Concealment', 'Skill', null, 200),
+      A('Master at Arms', 'Talent', 'WS 50', 500),
+      A('Wall of Steel', 'Talent', 'Ag 35', 500),
+      A('Infused Knowledge', 'Talent', 'Int 40', 500),
+      A('Sound Constitution (×2)', 'Talent', null, 200)
+    ]
+  },
+
   'Void-Master': {
     1: [
       A('Common Lore (Imperial Navy)', 'Skill', null, 100),

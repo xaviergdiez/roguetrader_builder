@@ -48,6 +48,10 @@ export const CONDITIONALS = {
   ],
   handofwar: [
     { from: 'The Face of the Enemy', mod: -10, chars: ['fel'], when: 'dealing with your sworn foe' }
+  ],
+  aeldari: [
+    { from: 'Non-Imperial', mod: -10, chars: ['int', 'fel'], when: 'tests involving Imperial lore, customs or social interactions with non-Xenophile humans' },
+    { from: 'Speak Not Unto the Alien', mod: -10, chars: ['fel'], when: 'Fellowship tests with Imperial citizens' }
   ]
 };
 

@@ -40,6 +40,15 @@ export const GEAR = {
   'staff': { kind: 'Melee', stats: '1d10 I · Pen 0 · Primitive, Balanced', desc: 'A length of wood or metal. Ubiquitous, unremarkable, always to hand.' },
   'primitive melee weapon': { kind: 'Melee', stats: 'Primitive', desc: 'A blade or club of pre-industrial make. A mono upgrade puts a monomolecular edge on it, which lifts it out of the Primitive bracket.' },
 
+  /* ---- eldar weapons ---- */
+  'shuriken pistol': { kind: 'Pistol', stats: '30m · S/3/5 · 1d10+3 R · Pen 4 · Clip 35 · Razor Sharp', desc: 'Fires monofilament discs at lethal velocity. Punches through armour with ease and shreds anything it passes through.' },
+  'shuriken catapult': { kind: 'Basic', stats: '60m · S/3/10 · 1d10+3 R · Pen 4 · Clip 100 · Razor Sharp', desc: 'The standard Aeldari long-arm. Storms the target with a blizzard of razor-edged monofilament discs.' },
+  'eldar power sword': { kind: 'Melee', stats: '1d10+5 E · Pen 6 · Balanced, Power Field', desc: 'An Aeldari disruption blade of exquisite craftsmanship. Cuts through armour as easily as a standard power sword, but lighter and perfectly balanced.' },
+  'aeldari mesh armour': { kind: 'Armour', stats: 'AP 3 · all · negligible weight', desc: 'Woven from psycho-reactive Eldar mesh. Absorbs and disperses kinetic and energy impacts almost without encumbrance.' },
+  'waystone': { desc: 'A spirit stone attuned to its bearer. Upon death the wearer\'s soul is drawn into the stone rather than cast into the warp to be consumed by Slaanesh.' },
+  'waystone (spirit stone)': { desc: 'A spirit stone attuned to its bearer. Upon death the wearer\'s soul is drawn into the stone rather than cast into the warp to be consumed by Slaanesh.' },
+  'eldar jump pack': { desc: 'A grav-propulsion harness of Eldar design. Lighter and more manoeuvrable than Imperial equivalents; allows short bursts of flight and extended leaping.' },
+
   /* ---- armour ---- */
   'guard flak armour': { kind: 'Armour', stats: 'AP 4 · body, arms, legs', desc: 'Layered ablative plate over bodyglove. What most of the Imperium’s soldiery dies in.' },
   'guard flak': { kind: 'Armour', stats: 'AP 4 · body, arms, legs', desc: 'Layered ablative plate over bodyglove. What most of the Imperium’s soldiery dies in.' },
@@ -107,5 +116,12 @@ export function gearInfo(label) {
     .replace(/\s+with mono upgrade$/, '');
   let entry = GEAR[base];
   if (!entry && base.endsWith('s')) entry = GEAR[base.slice(0, -1)];
+  // Strip trailing parenthetical (e.g. "Shuriken Pistol (3 spare magazines)") and retry.
+  if (!entry) {
+    const stripped = base.replace(/\s*\([^)]*\)\s*$/, '').trim();
+    if (stripped !== base) {
+      entry = GEAR[stripped] || (stripped.endsWith('s') ? GEAR[stripped.slice(0, -1)] : null);
+    }
+  }
   return { entry: entry || null, quality: quality ? quality.toLowerCase() : null };
 }

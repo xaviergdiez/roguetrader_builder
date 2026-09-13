@@ -156,6 +156,34 @@ const HOME_WORLDS = [
           label: p, talents: [`Peer (${p})`]
         }))
     }]
+  },
+  {
+    id: 'aeldari',
+    name: 'Aeldari',
+    blurb: 'Born of the elder kin, shaped by millennial tradition and psychic evolution. Every reflex is honed; every wound more fragile.',
+    xenos: true,
+    mods: { t: -5, ag: 10, per: 5, fel: -5 },
+    skills: [
+      'Acrobatics', 'Awareness', 'Common Lore (Eldar)',
+      'Dodge', 'Forbidden Lore (Xenos)',
+      'Speak Language (Eldar, Low Gothic)', 'Silent Move'
+    ],
+    talents: [
+      'Ambidextrous', 'Catfall', 'Heightened Senses (Sight, Hearing)',
+      'Leap Up', 'Exotic Weapon Training (Shuriken Pistol)', 'Sprint'
+    ],
+    traits: [
+      'Unnatural Agility (×2): Agility Bonus is doubled for movement, initiative and evasion.',
+      'Waystone: a psychically attuned spirit stone absorbs the soul upon death, protecting it from She Who Thirsts.',
+      'Matchless Grace: ignore movement penalties for difficult terrain when Running or Charging.',
+      'Non-Imperial: −10 on all tests involving Imperial lore, customs or social interactions with non-Xenophile humans.',
+      'Speak Not Unto the Alien: −10 to Fellowship tests when interacting with Imperial citizens.',
+      'Cybernetic Rejection: each standard Imperial bionic implant inflicts a permanent −10 to Toughness.'
+    ],
+    woundMult: 1,
+    woundDie: () => d(5) + 6,
+    woundText: 'Toughness Bonus + 1d5+6',
+    fateTable: [[7, 1], [10, 2]]
   }
 ];
 
@@ -585,6 +613,14 @@ const CAREERS = [
       'Pilot (Spacecraft, Flyers) (Ag)', 'Scholastic Lore (Astromancy) (Int)', 'Speak Language (Low Gothic) (Int)'],
     talents: ['Pistol Weapon Training (Universal)', 'Melee Weapon Training (Universal)', 'Nerves of Steel'],
     gear: 'Best mono-sword or common power sword; best hand cannon or common bolt pistol; guard flak, micro-bead, void suit, blessed ship token, re-breather, Navy uniform, pict-recorder, vox-caster.'
+  },
+  {
+    id: 'eldarcorsair',
+    name: 'Eldar Corsair',
+    blurb: 'A void-roaming Aeldari who traded Craftworld order for the stars. Scout, blade and void-skirmisher — xenos path from Into the Storm.',
+    skills: [],
+    talents: [],
+    gear: 'Aeldari Mesh Armour (AP 3); Shuriken Pistol (3 spare magazines); Eldar Power Sword or Shuriken Catapult; Waystone (Spirit Stone); fine mesh robes or void suit.'
   }
 ];
 
@@ -953,6 +989,9 @@ const CSS = `
   background:linear-gradient(180deg,var(--parch-hi),#d6c8a2);
   box-shadow:0 0 18px -5px rgba(242,233,209,.45),inset 0 1px 0 rgba(255,255,255,.5);}
 .rt-step.on::before{color:#7d6835;}
+.rt-step.na{opacity:.35;cursor:default;pointer-events:none;}
+.rt-xenos-skip{padding:32px 0 16px;text-align:center;}
+.rt-xenos-skip p{color:var(--subtext);margin-bottom:14px;}
 
 /* --------------------------- TYPE SETTING --------------------------- */
 
@@ -2042,10 +2081,11 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
   const tBonus = totals ? Math.floor(totals.t / 10) : null;
   // An imported sheet states its wounds outright; a built one derives them.
+  // woundMult is 1 for Aeldari (TB + die) and 2 for all standard human home worlds.
   const wounds = finalWounds != null
     ? finalWounds
     : (tBonus != null && woundRoll != null
-      ? tBonus * 2 + woundRoll + build.bonusWounds : null);
+      ? tBonus * (home ? (home.woundMult ?? 2) : 2) + woundRoll + build.bonusWounds : null);
 
   // wounds is the origin-path maximum; ws carries the playable state on top
   const ws = woundState(wounds, woundBonus, damage);
@@ -2073,7 +2113,11 @@ export default function RogueTraderBuilder({ me, cloud }) {
   /* ---- actions ---- */
   const choose = (stepId, id) => {
     setSel((p) => ({ ...p, [stepId]: id }));
-    if (stepId === 'home') setWoundRoll(null);
+    if (stepId === 'home') {
+      setWoundRoll(null);
+      const hw = HOME_WORLDS.find((x) => x.id === id);
+      if (hw?.xenos) setStepIx(5);  // skip Birthright → Motivation for xenos
+    }
   };
   const setChoice = (cid, label) => setChoices((p) => ({ ...p, [cid]: label }));
 
@@ -2350,15 +2394,17 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
       <div className="rt-wrap">
         <div className="rt-steps">
-          {stepLabels.map((label, i) => (
-            <button
-              key={label}
-              className={'rt-step' + (i === stepIx ? ' on' : stepDone(i) ? ' done' : '')}
-              onClick={() => setStepIx(i)}
-            >
-              {stepDone(i) && i !== stepIx && <span className="tick">{'\u2713'}</span>}{label}
-            </button>
-          ))}
+          {stepLabels.map((label, i) => {
+            const xenosSkip = home?.xenos && i >= 1 && i <= 4;
+            const cls = 'rt-step'
+              + (xenosSkip ? ' na' : '')
+              + (i === stepIx ? ' on' : stepDone(i) ? ' done' : '');
+            return (
+              <button key={label} className={cls} onClick={() => setStepIx(i)}>
+                {stepDone(i) && i !== stepIx && <span className="tick">{'\u2713'}</span>}{label}
+              </button>
+            );
+          })}
         </div>
 
         {stepIx < 6 && (
@@ -2372,6 +2418,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
             name={name}
             setName={setName}
             onImport={() => setImportOpen(true)}
+            xenosHome={!!(home?.xenos && stepIx >= 1 && stepIx <= 4)}
+            onSkipToCareer={() => setStepIx(5)}
           />
         )}
 
@@ -3400,7 +3448,7 @@ const STEP_LEAD = {
   career: 'Your role aboard the ship. This decides your starting Skills, Talents and gear.'
 };
 
-function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name, setName, onImport }) {
+function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name, setName, onImport, xenosHome, onSkipToCareer }) {
   return (
     <div>
       {showIntro && (
@@ -3416,9 +3464,15 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
           </div>
         </div>
       )}
-      <h2 className="rt-h2">{step.label}</h2>
-      <p className="rt-lead">{STEP_LEAD[step.id]}</p>
-      <div className="rt-cards rt-screen">
+      {xenosHome && (
+        <div className="rt-xenos-skip">
+          <p>Aeldari characters skip this step.</p>
+          <button className="rt-btn" onClick={onSkipToCareer}>Proceed to Career →</button>
+        </div>
+      )}
+      {!xenosHome && <h2 className="rt-h2">{step.label}</h2>}
+      {!xenosHome && <p className="rt-lead">{STEP_LEAD[step.id]}</p>}
+      {!xenosHome && <div className="rt-cards rt-screen">
         {step.data.map((item) => (
           <OptionCard
             key={item.id}
@@ -3429,7 +3483,7 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
             onChoose={onChoose}
           />
         ))}
-      </div>
+      </div>}
     </div>
   );
 }

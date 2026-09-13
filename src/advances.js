@@ -23,8 +23,8 @@ export const CAREER_ADVANCES = {
       A('Literacy', 'Skill', null, 100),
       A('Scholastic Lore (Astromancy)', 'Skill', null, 100),
       A('Scrutiny', 'Skill', null, 100),
-      A('Secret Tongue (Rogue Trader)', 'Skill', null, 100),
-      A('Dodge', 'Skill', null, 200),
+      A('Secret Tongue (Rogue Trader)', 'Skill', null, 200),
+      A('Dodge', 'Skill', null, 100),
       A('Air of Authority', 'Talent', 'Fel 30', 200),
       A('Quick Draw', 'Talent', null, 200),
       A('Renowned Warrant', 'Talent', null, 200),
@@ -37,11 +37,11 @@ export const CAREER_ADVANCES = {
       A('Command +10', 'Skill', 'Command', 200),
       A('Commerce +10', 'Skill', 'Commerce', 200),
       A('Evaluate +10', 'Skill', 'Evaluate', 200),
-      A('Inquiry', 'Skill', null, 200),
+      A('Inquiry', 'Skill', null, 100),
       A('Scrutiny +10', 'Skill', 'Scrutiny', 200),
       A('Decadence', 'Talent', 'T 30', 200),
-      A('Iron Discipline', 'Talent', 'WP 30, Command', 200),
-      A('Peer (Nobility)', 'Talent', 'Fel 30', 200),
+      A('Iron Discipline', 'Talent', 'WP 30, Command', 500),
+      A('Peer (Nobility)', 'Talent', 'Fel 30', 300),
       A('Sound Constitution (x2)', 'Talent', null, 200)
     ],
     3: [
@@ -53,7 +53,7 @@ export const CAREER_ADVANCES = {
       A('Scrutiny +20', 'Skill', 'Scrutiny +10', 200),
       A('Inspirational Leader', 'Talent', 'Fel 35', 500),
       A('Master & Commander', 'Talent', 'Command +10', 500),
-      A('Peer (Military)', 'Talent', 'Fel 30', 200),
+      A('Peer (Military)', 'Talent', 'Fel 30', 300),
       A('Sound Constitution (x2)', 'Talent', null, 200)
     ],
     4: [
@@ -109,10 +109,10 @@ export const CAREER_ADVANCES = {
     ],
     2: [
       A('Awareness +10', 'Skill', 'Awareness', 200),
-      A('Dodge', 'Skill', null, 200),
+      A('Dodge', 'Skill', null, 100),
       A('Forbidden Lore (Archeotech) +10', 'Skill', 'Forbidden Lore (Archeotech)', 200),
-      A('Medicae', 'Skill', null, 200),
-      A('Scrutiny', 'Skill', null, 200),
+      A('Medicae', 'Skill', null, 100),
+      A('Scrutiny', 'Skill', null, 100),
       A('Security +10', 'Skill', 'Security', 200),
       A('Tech-Use +10', 'Skill', 'Tech-Use', 200),
       A('Binary Chatter', 'Talent', 'Mechanicus Implants', 200),
@@ -167,11 +167,11 @@ export const CAREER_ADVANCES = {
 
   'Arch-Militant': {
     1: [
-      A('Awareness +10', 'Skill', 'Awareness', 100),
+      A('Awareness +10', 'Skill', 'Awareness', 200),
       A('Common Lore (War)', 'Skill', null, 100),
       A('Drive (Ground Vehicle)', 'Skill', null, 100),
       A('Intimidate', 'Skill', null, 100),
-      A('Secret Tongue (Military)', 'Skill', null, 100),
+      A('Secret Tongue (Military)', 'Skill', null, 200),
       A('Quick Draw', 'Talent', null, 200),
       A('Weapon Master', 'Talent', 'BS 30 or WS 30', 500),
       A('Basic Weapon Training (Universal)', 'Talent', null, 500),
@@ -183,11 +183,11 @@ export const CAREER_ADVANCES = {
       A('Common Lore (War) +10', 'Skill', 'Common Lore (War)', 200),
       A('Dodge +10', 'Skill', 'Dodge', 200),
       A('Intimidate +10', 'Skill', 'Intimidate', 200),
-      A('Scrutiny', 'Skill', null, 200),
-      A('Survival', 'Skill', null, 200),
+      A('Scrutiny', 'Skill', null, 100),
+      A('Survival', 'Skill', null, 100),
       A('Bulging Biceps', 'Talent', 'S 45', 200),
       A('Crushing Blow', 'Talent', 'S 40', 200),
-      A('Hatred (choose one)', 'Talent', null, 200),
+      A('Hatred (choose one)', 'Talent', null, 300),
       A('Sound Constitution (x3)', 'Talent', null, 200)
     ],
     3: [
@@ -231,7 +231,7 @@ export const CAREER_ADVANCES = {
   'Astropath Transcendent': {
     1: [
       A('Awareness', 'Skill', null, 100),
-      A('Ciphers (Astropath Code)', 'Skill', null, 100),
+      A('Ciphers (Astropath Code)', 'Skill', null, 200),
       A('Forbidden Lore (Psykers)', 'Skill', null, 100),
       A('Forbidden Lore (Warp)', 'Skill', null, 100),
       A('Invocation', 'Skill', null, 100),
@@ -244,10 +244,10 @@ export const CAREER_ADVANCES = {
     ],
     2: [
       A('Awareness +10', 'Skill', 'Awareness', 200),
-      A('Dodge', 'Skill', null, 200),
+      A('Dodge', 'Skill', null, 100),
       A('Invocation +10', 'Skill', 'Invocation', 200),
       A('Psyniscience +10', 'Skill', 'Psyniscience', 200),
-      A('Scrutiny', 'Skill', null, 200),
+      A('Scrutiny', 'Skill', null, 100),
       A('Mind Link', 'Technique', 'Telepathy', 200),
       A('Psy Rating 3', 'Talent', 'Psy Rating 2', 300),
       A('Psychic Discipline (Divination or Telepathy)', 'Talent', null, 500),
@@ -299,7 +299,7 @@ export const CAREER_ADVANCES = {
       A('Evaluate', 'Skill', null, 100),
       A('Inquiry', 'Skill', null, 100),
       A('Literacy', 'Skill', null, 100),
-      A('Secret Tongue (Rogue Trader)', 'Skill', null, 100),
+      A('Secret Tongue (Rogue Trader)', 'Skill', null, 200),
       A('Seeker of Lore', 'Talent', null, 200),
       A('Unremarkable', 'Talent', null, 200),
       A('Basic Weapon Training (Universal)', 'Talent', null, 500),
@@ -308,14 +308,14 @@ export const CAREER_ADVANCES = {
     2: [
       A('Awareness +10', 'Skill', 'Awareness', 200),
       A('Commerce +10', 'Skill', 'Commerce', 200),
-      A('Dodge', 'Skill', null, 200),
+      A('Dodge', 'Skill', null, 100),
       A('Evaluate +10', 'Skill', 'Evaluate', 200),
       A('Forbidden Lore (Inquisition)', 'Skill', null, 200),
       A('Inquiry +10', 'Skill', 'Inquiry', 200),
-      A('Logic', 'Skill', null, 200),
+      A('Logic', 'Skill', null, 100),
       A('Scrutiny +10', 'Skill', 'Scrutiny', 200),
       A('Infused Knowledge', 'Talent', 'Int 40', 500),
-      A('Peer (Academic)', 'Talent', 'Fel 30', 200),
+      A('Peer (Academic)', 'Talent', 'Fel 30', 300),
       A('Sound Constitution (x2)', 'Talent', null, 200)
     ],
     3: [
@@ -366,7 +366,7 @@ export const CAREER_ADVANCES = {
       A('Navigation (Warp)', 'Skill', null, 100),
       A('Psyniscience', 'Skill', null, 100),
       A('Scholastic Lore (Astromancy)', 'Skill', null, 100),
-      A('Secret Tongue (Navis Nobilite)', 'Skill', null, 100),
+      A('Secret Tongue (Navis Nobilite)', 'Skill', null, 200),
       A('Navigator', 'Talent', null, 200),
       A('Warp Sense', 'Talent', 'Psyniscience, WP 30', 200),
       A('Pistol Weapon Training (Universal)', 'Talent', null, 500),
@@ -376,12 +376,12 @@ export const CAREER_ADVANCES = {
     ],
     2: [
       A('Awareness +10', 'Skill', 'Awareness', 200),
-      A('Dodge', 'Skill', null, 200),
+      A('Dodge', 'Skill', null, 100),
       A('Forbidden Lore (Warp) +10', 'Skill', 'Forbidden Lore (Warp)', 200),
       A('Navigation (Warp) +10', 'Skill', 'Navigation (Warp)', 200),
       A('Psyniscience +10', 'Skill', 'Psyniscience', 200),
-      A('Scrutiny', 'Skill', null, 200),
-      A('Foresight', 'Talent', 'Int 30', 200),
+      A('Scrutiny', 'Skill', null, 100),
+      A('Foresight', 'Talent', 'Int 30', 300),
       A('Resistance (Fear)', 'Talent', null, 200),
       A('Sound Constitution (x2)', 'Talent', null, 200),
       A('Gaze into the Abyss (Novice)', 'Power', 'Navigator, WP 30', 200),
@@ -406,10 +406,10 @@ export const CAREER_ADVANCES = {
       A('Scrutiny +20', 'Skill', 'Scrutiny +10', 200),
       A('Master Navigator', 'Talent', 'Navigation (Warp) +20', 500),
       A('Unshakeable Faith', 'Talent', null, 500),
-      A('In Touch with the Stream (Adept)', 'Power', 'In Touch with the Stream (Novice)', 400),
+      A('In Touch with the Stream (Adept)', 'Power', 'In Touch with the Stream (Novice)', 300),
       A('Lidless Stare (Master)', 'Power', 'Lidless Stare (Adept)', 500),
       A('Steer Through the Madness (Master)', 'Power', 'Steer Through the Madness (Adept)', 500),
-      A('Tears of the Emperor (Novice)', 'Power', 'WP 40, Navigator', 400)
+      A('Tears of the Emperor (Novice)', 'Power', 'WP 40, Navigator', 200)
     ],
     5: [
       A('Third Eye Unveiled', 'Power', 'Lidless Stare (Master)', 500)
@@ -442,14 +442,14 @@ export const CAREER_ADVANCES = {
     ],
     2: [
       A('Awareness +10', 'Skill', 'Awareness', 200),
-      A('Charm', 'Skill', null, 200),
+      A('Charm', 'Skill', null, 100),
       A('Common Lore (Imperial Creed) +10', 'Skill', 'Common Lore (Imperial Creed)', 200),
-      A('Dodge', 'Skill', null, 200),
-      A('Intimidate', 'Skill', null, 200),
+      A('Dodge', 'Skill', null, 100),
+      A('Intimidate', 'Skill', null, 100),
       A('Medicae +10', 'Skill', 'Medicae', 200),
-      A('Scrutiny', 'Skill', null, 200),
-      A('Hatred (Psykers)', 'Talent', null, 200),
-      A('Inspired Rhetoric', 'Talent', 'Charm', 200),
+      A('Scrutiny', 'Skill', null, 100),
+      A('Hatred (Psykers)', 'Talent', null, 300),
+      A('Inspired Rhetoric', 'Talent', 'Charm', 300),
       A('Sound Constitution (x2)', 'Talent', null, 200)
     ],
     3: [
@@ -502,11 +502,11 @@ export const CAREER_ADVANCES = {
     ],
     2: [
       A('Awareness +10', 'Skill', 'Awareness', 200),
-      A('Dodge', 'Skill', null, 200),
+      A('Dodge', 'Skill', null, 100),
       A('Navigation (Stellar) +10', 'Skill', 'Navigation (Stellar)', 200),
       A('Pilot (Flyers) +10', 'Skill', 'Pilot (Flyers)', 200),
       A('Pilot (Space Craft) +10', 'Skill', 'Pilot (Space Craft)', 200),
-      A('Scrutiny', 'Skill', null, 200),
+      A('Scrutiny', 'Skill', null, 100),
       A('Quick Draw', 'Talent', null, 200),
       A('Void Accustomed', 'Talent', null, 200),
       A('Sound Constitution (x2)', 'Talent', null, 200)
@@ -514,7 +514,7 @@ export const CAREER_ADVANCES = {
     3: [
       A('Awareness +20', 'Skill', 'Awareness +10', 200),
       A('Dodge +10', 'Skill', 'Dodge', 200),
-      A('Gunnery', 'Skill', null, 200),
+      A('Gunnery', 'Skill', null, 100),
       A('Pilot (Flyers) +20', 'Skill', 'Pilot (Flyers) +10', 200),
       A('Pilot (Space Craft) +20', 'Skill', 'Pilot (Space Craft) +10', 200),
       A('Scrutiny +10', 'Skill', 'Scrutiny', 200),
@@ -576,14 +576,14 @@ export const CAREER_ADVANCES = {
     3: [
       A('Navigation (Stellar) +20', 'Skill', 'Navigation (Stellar) +10', 200),
       A('Pilot (Jump Pack) +20', 'Skill', 'Pilot (Jump Pack) +10', 200),
-      A('Scrutiny', 'Skill', null, 200),
+      A('Scrutiny', 'Skill', null, 100),
       A('Lightning Attack', 'Talent', 'Swift Attack', 500),
       A('Preternatural Speed', 'Talent', 'WS 40, Ag 50', 500),
       A('Step Aside', 'Talent', 'Ag 40, Dodge', 500),
       A('Sound Constitution (×2)', 'Talent', null, 200)
     ],
     4: [
-      A('Concealment', 'Skill', null, 200),
+      A('Concealment', 'Skill', null, 100),
       A('Scrutiny +10', 'Skill', 'Scrutiny', 200),
       A('Infused Knowledge', 'Talent', 'Int 40', 500),
       A('Master at Arms', 'Talent', 'WS 50', 500),
@@ -620,7 +620,7 @@ export const CAREER_ADVANCES = {
       A('Awareness +10', 'Skill', 'Awareness', 200),
       A('Intimidate +20', 'Skill', 'Intimidate +10', 200),
       A('Survival +10', 'Skill', 'Survival', 200),
-      A('Wrangling', 'Skill', null, 200),
+      A('Wrangling', 'Skill', null, 100),
       A('Bulging Biceps', 'Talent', 'S 45', 200),
       A('Hardy', 'Talent', 'T 40', 200),
       A('Tearing Assault', 'Talent', 'WS 40', 500),
@@ -629,7 +629,7 @@ export const CAREER_ADVANCES = {
     ],
     2: [
       A('Awareness +20', 'Skill', 'Awareness +10', 200),
-      A('Dodge', 'Skill', null, 200),
+      A('Dodge', 'Skill', null, 100),
       A('Drive (Ground Vehicle)', 'Skill', null, 200),
       A('Survival +20', 'Skill', 'Survival +10', 200),
       A('Wrangling +10', 'Skill', 'Wrangling', 200),
@@ -641,7 +641,7 @@ export const CAREER_ADVANCES = {
     3: [
       A('Dodge +10', 'Skill', 'Dodge', 200),
       A('Drive (Ground Vehicle) +10', 'Skill', 'Drive (Ground Vehicle)', 200),
-      A('Scrutiny', 'Skill', null, 200),
+      A('Scrutiny', 'Skill', null, 100),
       A('Wrangling +20', 'Skill', 'Wrangling +10', 200),
       A('Frenzy', 'Talent', null, 500),
       A('Iron Hide', 'Talent', 'T 45', 500),
@@ -698,7 +698,7 @@ export const CAREER_ADVANCES = {
       A('Climb +20', 'Skill', 'Climb +10', 200),
       A('Shadowing +20', 'Skill', 'Shadowing +10', 200),
       A('Survival +20', 'Skill', 'Survival +10', 200),
-      A('Scrutiny', 'Skill', null, 200),
+      A('Scrutiny', 'Skill', null, 100),
       A('Boldhead Kindred', 'Trait', 'Eater of Flesh', 500),
       A('Lightning Reflexes', 'Talent', 'Ag 30', 500),
       A('Sound Constitution (×3)', 'Talent', null, 200)
@@ -761,7 +761,7 @@ export const CAREER_ADVANCES = {
       A('Awareness +20', 'Skill', 'Awareness +10', 200),
       A('Dodge +20', 'Skill', 'Dodge +10', 200),
       A('Intimidate +20', 'Skill', 'Intimidate +10', 200),
-      A('Scrutiny', 'Skill', null, 200),
+      A('Scrutiny', 'Skill', null, 100),
       A('Bladestorm', 'Talent', 'WS 40', 500),
       A('Combat Sense', 'Talent', 'Per 30', 500),
       A('Hard Target', 'Talent', 'Ag 40', 500),
@@ -823,7 +823,7 @@ export const CAREER_ADVANCES = {
       A('Awareness +20', 'Skill', 'Awareness +10', 200),
       A('Dodge +20', 'Skill', 'Dodge +10', 200),
       A('Scholastic Lore (Tactica Tau) +10', 'Skill', 'Scholastic Lore (Tactica Tau)', 200),
-      A('Scrutiny', 'Skill', null, 200),
+      A('Scrutiny', 'Skill', null, 100),
       A('Coordinated Fire', 'Talent', 'BS 35', 500),
       A('Marksman', 'Talent', 'BS 35', 500),
       A('Sound Constitution (×2)', 'Talent', null, 200)

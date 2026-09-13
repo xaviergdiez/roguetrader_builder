@@ -3925,6 +3925,12 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
   const career = build.picked.career;
+  // Navigators buy Warp Eye Powers (Lidless Stare, Seek the Path, etc.) as
+  // Power-type advances, but they are not sanctioned psykers and never touch
+  // Psy Rating — the Navis Primer's third eye is a wholly separate mechanic.
+  // Gating their own powers behind "raise your Psy Rating" would just hide
+  // them, so the Powers tab treats this career as an exception below.
+  const isNavigator = career?.id === 'navigator';
   const pickedName = (id) => (build.picked[id] ? build.picked[id].name : '');
   // STEPS includes career, so build already folded its skills/talents/traits in
   // (and deduped them). Concatenating career.* again is what duplicated every
@@ -4203,30 +4209,39 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
 
         {tab === 'powers' && (
           <div className="rt-powers">
-            <div className="rt-psyrow">
-              <span className="rt-origin-k">Psy Rating</span>
-              <button className="rt-wmaxb" disabled={psyRating <= 0}
-                onClick={() => onPsyRating(Math.max(0, psyRating - 1))}
-                aria-label="Lower Psy Rating">{'−'}</button>
-              <b className="rt-psyval">{psyRating}</b>
-              <button className="rt-wmaxb" onClick={() => onPsyRating(psyRating + 1)}
-                aria-label="Raise Psy Rating">+</button>
-              {psyRating > 0 && (
+            {isNavigator ? (
+              <div className="rt-psyrow">
+                <span className="rt-origin-k">Warp Eye</span>
                 <span className="rt-psynote">
-                  {disciplineSlots(psyRating)} discipline{disciplineSlots(psyRating) > 1 ? 's' : ''}
-                  {' · '}Thought Sending {thoughtSendingKm(psyRating)} km
+                  Not a sanctioned psyker — the third eye works outside the Psy Rating system.
                 </span>
-              )}
-            </div>
+              </div>
+            ) : (
+              <div className="rt-psyrow">
+                <span className="rt-origin-k">Psy Rating</span>
+                <button className="rt-wmaxb" disabled={psyRating <= 0}
+                  onClick={() => onPsyRating(Math.max(0, psyRating - 1))}
+                  aria-label="Lower Psy Rating">{'−'}</button>
+                <b className="rt-psyval">{psyRating}</b>
+                <button className="rt-wmaxb" onClick={() => onPsyRating(psyRating + 1)}
+                  aria-label="Raise Psy Rating">+</button>
+                {psyRating > 0 && (
+                  <span className="rt-psynote">
+                    {disciplineSlots(psyRating)} discipline{disciplineSlots(psyRating) > 1 ? 's' : ''}
+                    {' · '}Thought Sending {thoughtSendingKm(psyRating)} km
+                  </span>
+                )}
+              </div>
+            )}
 
-            {psyRating > 0 && psyRatingInfo(psyRating) && (
+            {!isNavigator && psyRating > 0 && psyRatingInfo(psyRating) && (
               <div className="rt-entry-d">
                 <p>{psyRatingInfo(psyRating).effect}</p>
                 <p className="rt-entry-s">{psyRatingInfo(psyRating).risk}</p>
               </div>
             )}
 
-            {psyRating <= 0
+            {psyRating <= 0 && !isNavigator
               ? <p className="rt-empty">Not a psyker. Raise the Psy Rating to record disciplines and powers.</p>
               : allPowers.length
                 ? <ul className="rt-list rt-2col">
@@ -4238,9 +4253,11 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                         ? () => onRemoveExtra('powers', p) : undefined} />
                   ))}
                 </ul>
-                : <p className="rt-empty">No powers recorded yet.</p>}
+                : <p className="rt-empty">
+                  {isNavigator ? 'No Warp Eye Powers purchased yet.' : 'No powers recorded yet.'}
+                </p>}
 
-            {psyRating > 0 && (
+            {!isNavigator && psyRating > 0 && (
               <div className="rt-discs">
                 <div className="rt-sect-h">Disciplines</div>
                 <ul className="rt-list rt-2col">

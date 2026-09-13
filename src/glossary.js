@@ -78,7 +78,28 @@ export const MISC = {
   'Mechanicus Implants': 'The standard augmetics of the Machine Cult — the potentia coil and its attendant implants that mark you as more machine than most.'
 };
 
-export const GLOSSARY = { ...SKILLS, ...TALENTS, ...MISC };
+// Power-type advances that describePower() (psychic.js) does not already
+// cover — the psychic disciplines' own basic techniques there return a
+// self-describing string, but a Navigator's Warp Eye Powers and Astropath's
+// Astral Telepathy fall through to the bare name, which this glossary
+// then expands the same way it does "Common Lore (Imperium)": strip the
+// trailing "(Novice)"/"(Adept)"/"(Master)" tier as spec, look up the base.
+export const POWERS = {
+  'Astral Telepathy': 'A step beyond ordinary Telepathy — reaching a receptive mind across a whole sector, the way an Astropath’s soul-bound sending crosses the void.',
+  'Lidless Stare': 'The third eye opens fully on a single target. At its weakest it burns and stuns; mastered, it can stop a heart outright.',
+  'Seek the Path': 'The third eye reads the warp currents ahead, marking the safest course through a hazard before the ship reaches it.',
+  'In Touch with the Stream': 'A sustained communion with the Astronomican and the warp’s deeper currents, sensing disturbances long before instruments would.',
+  'Gaze into the Abyss': 'The Navigator stares directly into the immaterium beyond the ship’s wake, trading sanity for insight into what moves there.',
+  'Held in the Gaze': 'Whatever the third eye fixes upon is pinned in place, caught somewhere between the material world and the warp.',
+  'Steer Through the Madness': 'Even a warp storm has structure to a trained third eye — this power reads it and holds the ship to a survivable line.',
+  'Tears of the Emperor': 'A rare and holy manifestation, said to answer only in the direst need, that wards the ship and crew against the worst the warp can offer.',
+  'Third Eye Unveiled': 'The Navigator’s third eye is unveiled without any shielding at all, its full and undiminished power turned on the world.',
+  'Eye of the Eye': 'Sight beyond sight — the Navigator perceives through the third eye at a distance, untethered from their own body.',
+  'Warp Storm Mastery': 'Command over the immaterium’s turbulence itself, bending a warp storm’s fury rather than merely surviving it.',
+  'Eye of the Abyss': 'The pinnacle of the Warp Eye’s power — a look into the deepest currents of the immaterium that few Navigators ever risk, let alone master.'
+};
+
+export const GLOSSARY = { ...SKILLS, ...TALENTS, ...MISC, ...POWERS };
 
 export const CHAR_GROUP = {
   ws: 'phys', s: 'phys', t: 'phys', ag: 'phys',

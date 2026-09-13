@@ -2,14 +2,15 @@ Field,Value,Notes / accepted values
 #,,Rows beginning # are ignored on import. One tab per character.
 # — IDENTITY —,,
 Name,Magos Linus-Theta 7,Free text.
+Gender,,Male | Female | Other
 Portrait URL,,"Optional. Direct link to an image, or leave blank."
-# — ORIGIN PATH —,,Must match one of the listed values exactly.
+# — ORIGIN PATH —,,"Human careers only. Xenos careers (Eldar Corsair | Ork Freebooter | Kroot Mercenary | Drukhari Kabalite Warrior | T'au Fire Warrior) skip this entire section — leave Home World through Motivation blank."
 Home World,Forge World,Death World | Void Born | Forge World | Hive World | Imperial World | Noble Born
 Birthright,Savant,Scavenger | Scapegrace | Stubjack | Child of the Creed | Savant | Vaunted
 Lure of the Void,Renegade,Tainted | Criminal | Renegade | Duty Bound | Zealot | Chosen by Destiny
 Trials,Calamity,Press-Ganged | Calamity | Ship-Lorn | Dark Voyage | High Vendetta | The Hand of War
 Motivation,Endurance,Endurance | Fortune | Vengeance | Renown | Pride | Prestige
-Career,Explorator,Rogue Trader | Arch-Militant | Astropath Transcendent | Explorator | Missionary | Navigator | Seneschal | Void-Master
+Career,Explorator,"Rogue Trader | Arch-Militant | Astropath Transcendent | Explorator | Missionary | Navigator | Seneschal | Void-Master | Eldar Corsair | Ork Freebooter | Kroot Mercenary | Drukhari Kabalite Warrior | T'au Fire Warrior"
 # — ORIGIN PATH CHOICES —,,Only those belonging to the picks above apply. Leave the rest blank.
 Death World: Hardened,,choice id: dw_hardened
 Forge World: Apply +3 to one characteristic,Intelligence,choice id: fw_purpose
@@ -41,6 +42,8 @@ Vengeance: Hatred,,choice id: vg
 Renown: Talent,,choice id: rw
 Pride: Reward,,choice id: pr
 Prestige: Talent,,choice id: pg2
+# — CAREER CHOICES —,,"Navigator only: House Lineage (+5 to two characteristics). Xenos kindred and bloodline abilities are species traits — no choice row needed."
+Navigator: House Lineage,,choice id: nav_lineage — Magisterial (+5 WP +5 Fel) | Nomad (+5 Per +5 Int) | Shrouded (+5 Ag +5 WP) | Renegade (+5 T +5 Per)
 # — CHARACTERISTICS —,,The 2d10+25 roll BEFORE origin modifiers. The app applies those itself.
 Weapon Skill,31,27-45 from 2d10+25. Blank leaves the sheet unrolled.
 Ballistic Skill,28,27-45 from 2d10+25. Blank leaves the sheet unrolled.
@@ -57,15 +60,16 @@ Fate roll,2,"1d10, read against your Home World fate table."
 # — IN PLAY —,,Leave blank for a fresh character.
 Damage taken,4,Wounds lost so far. Current wounds = max - this.
 Wound bonus,1,"Extra maximum wounds from advances (Sound Constitution, level-ups)."
-# — PROGRESSION —,,"Rank is derived from XP, not entered: 0-6,999 is Rank 1, 7,000-9,999 Rank 2, and so on."
+# — PROGRESSION —,,"Rank is derived from XP, not entered: 0-6,999 is Rank 1; 7,000-9,999 Rank 2; and so on through Rank 8 (40,000+ XP). All 13 careers have full Rank 1-8 advance tables."
 XP total,5000,"A starting Explorer is built on 4,500-5,000 XP."
-Psy rating,,Blank or 0 for a non-psyker. 3 unlocks a second discipline.
-Psychic disciplines,,Telepathy | Divination | Pyromancy | Biomancy | Telekinesis
+Psy rating,,"Blank or 0 for a non-psyker or Navigator. Psy Rating 3 unlocks a second discipline."
+Psychic disciplines,,"Telepathy | Divination | Pyromancy | Biomancy | Telekinesis"
 Psychic powers,,"Semicolon separated, e.g. Thought Sending; Iron Arm"
+# — NAVIGATOR WARP EYE POWERS —,,"Navigator only. List each power purchased as an advance, semicolon separated."
 # — GAINED AFTER CREATION —,,Semicolon separated. Origin-path entries come across automatically; list only additions.
 Extra skills,Barter (Fel),e.g. Awareness (Per); Dodge (Ag)
-Extra talents,Nerves of Steel,e.g. Quick Draw; Sound Constitution
-Extra traits,,"Free text. Use ""Name: effect"" so the sheet can explain it."
+Extra talents,Nerves of Steel,"e.g. Quick Draw; Sound Constitution; Iron Discipline; Peer (Nobility)"
+Extra traits,,"Free text. Use ""Name: effect"" so the sheet can explain it. Xenos kindred traits (e.g. Hyper-Evolved Kindred; Agony Mastery) go here."
 Extra gear,best power sword,Craftsmanship prefixes work: poor / common / good / best.
 Dropped gear,,"Issued kit that has been lost, sold or spent."
 Notes,Owes the Navigator a favour,Anything to resolve at the table.

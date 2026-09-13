@@ -200,7 +200,7 @@ export function parseCharacterSheet(rows, catalog) {
   }
 
   const state = {
-    name: '', sel: {}, choices: {},
+    name: '', gender: '', sel: {}, choices: {},
     rolls: null,          // pre-modifier 2d10+25, template sheets only
     finalTotals: null,    // final characteristics, converted sheets only
     woundRoll: null, fateRoll: null,
@@ -220,6 +220,11 @@ export function parseCharacterSheet(rows, catalog) {
     if (choiceId) { state.choices[choiceId] = value; continue; }
 
     if (k === 'name') { state.name = value; continue; }
+    if (k === 'gender') {
+      const g = value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+      if (['Male', 'Female', 'Other'].includes(g)) state.gender = g;
+      continue;
+    }
     if (k === 'portrait url') { state.avatar = { src: value, framing: null }; continue; }
 
     // "Career" is the step in a template sheet, but a descriptive label in a

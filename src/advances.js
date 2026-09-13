@@ -353,6 +353,44 @@ export const CAREER_ADVANCES = {
       A('Target Selection', 'Talent', 'BS 50', 500),
       A('Master Gunner', 'Talent', 'Gunnery +10', 500)
     ]
+  },
+
+  'Ork Freebooter': {
+    1: [
+      A('Intimidate +20', 'Skill', 'Intimidate +10', 200),
+      A('Survival +10', 'Skill', 'Survival', 200),
+      A('Wrangling', 'Skill', null, 200),
+      A('Bulging Biceps', 'Talent', 'S 45', 200),
+      A('Hardy', 'Talent', 'T 40', 200),
+      A('Tearing Assault', 'Talent', 'WS 40', 500),
+      A('Xenos Weapon Training (Ork)', 'Talent', null, 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    2: [
+      A('Wrangling +10', 'Skill', 'Wrangling', 200),
+      A('Survival +20', 'Skill', 'Survival +10', 200),
+      A('Drive (Ground Vehicle)', 'Skill', null, 200),
+      A('Mighty Blow', 'Talent', 'Crushing Blow', 500),
+      A('Thunder Charge', 'Talent', 'S 45', 500),
+      A('Street Fighting', 'Talent', 'WS 30', 200),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Drive (Ground Vehicle) +10', 'Skill', 'Drive (Ground Vehicle)', 200),
+      A('Wrangling +20', 'Skill', 'Wrangling +10', 200),
+      A('Waaagh! Stomp', 'Talent', 'S 50', 500),
+      A('Frenzy', 'Talent', null, 500),
+      A('Iron Hide', 'Talent', 'T 45', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ],
+    4: [
+      A('Drive (Ground Vehicle) +20', 'Skill', 'Drive (Ground Vehicle) +10', 200),
+      A('Unstoppable Force', 'Talent', 'S 50, Thunder Charge', 500),
+      A('Berserk Charge', 'Talent', null, 500),
+      A('Lightning Attack', 'Talent', 'Swift Attack', 500),
+      A('Die Hard', 'Talent', 'WP 40', 500),
+      A('Sound Constitution (×3)', 'Talent', null, 200)
+    ]
   }
 };
 

@@ -87,7 +87,17 @@ export const GEAR = {
   'silk headscarf': { desc: 'Fine silk, worn in the Nobilite manner.' },
   'nobilite signet': { desc: 'A house seal. Proof of bloodline, and a target for those who resent it.' },
   'emperor’s tarot deck': { desc: 'Cards read for guidance. The Imperium takes their readings seriously.' },
-  'servo-skull familiar': { desc: 'A hovering, machine-spirited skull that follows you and carries out simple tasks.' }
+  'servo-skull familiar': { desc: 'A hovering, machine-spirited skull that follows you and carries out simple tasks.' },
+
+  /* ---- ork weapons & kit ---- */
+  'choppa': { kind: 'Melee', stats: '1d10+2 R · Pen 0 · Primitive, Tearing', desc: 'A crude Ork cleaver of heavy iron. More meat-clever than sword, and exactly as subtle as it looks.' },
+  'slugga': { kind: 'Pistol', stats: '20m · S/3/– · 1d10+4 I · Pen 0 · Clip 18 · Inaccurate, Unreliable', desc: 'A chunky Ork sidearm. Fires enthusiastically in roughly the right direction.' },
+  'shoota': { kind: 'Basic', stats: '60m · S/3/– · 1d10+3 I · Pen 0 · Clip 30 · Inaccurate, Unreliable', desc: 'An Ork automatic rifle cobbled from scavenged parts. Loud, unreliable, and deeply satisfying to fire.' },
+  'stikkbomb': { kind: 'Thrown', stats: 'SB×3 · S/–/– · 2d10 X · Pen 0 · Blast (3)', desc: 'A crude grenade packed with scrap metal and low-grade explosive. Orks throw them the way humans throw insults.' },
+  'stikkbombs': { kind: 'Thrown', stats: 'SB×3 · S/–/– · 2d10 X · Pen 0 · Blast (3)', desc: 'Crude grenades packed with scrap metal and explosive. Always thrown in quantity.' },
+  'heavy leather armour': { kind: 'Armour', stats: 'AP 3 · body, legs', desc: 'Thick hides stitched together with wire and faith. Not pretty, but it stops a blade and nobody complains.' },
+  'squig-hide armour': { kind: 'Armour', stats: 'AP 3 · body, legs', desc: 'Cured hide from a squig. Tough, pungent, and entirely characteristic of its wearer.' },
+  'shiny gubbinz': { desc: 'A collection of trophies, shiny trinkets and scavenged machine parts. Meaningless to others; priceless to an Ork.' }
 };
 
 export const QUALITY_RE = /^(poor|common|good|best)\s+/i;

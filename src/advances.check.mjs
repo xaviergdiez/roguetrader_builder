@@ -5,10 +5,10 @@ import {
   parsePrereq, unmetCharPrereqs, MAX_TABLED_RANK
 } from './advances.js';
 
-// eight core careers plus the Eldar Corsair xenos path
+// eight core careers plus two xenos paths (Eldar Corsair, Ork Freebooter)
 assert.deepEqual(CAREERS_WITH_TABLES.slice().sort(),
   ['Arch-Militant', 'Astropath Transcendent', 'Eldar Corsair', 'Explorator', 'Missionary',
-   'Navigator', 'Rogue Trader', 'Seneschal', 'Void-Master']);
+   'Navigator', 'Ork Freebooter', 'Rogue Trader', 'Seneschal', 'Void-Master']);
 
 // every career covers ranks 1-4, and every entry is well formed — a typo in a
 // cost or type would otherwise pass silently into the UI
@@ -29,6 +29,7 @@ for (const [career, ranks] of Object.entries(CAREER_ADVANCES)) {
 
 // a career outside the table returns null, distinguishable from a rank with no entries
 assert.ok(Array.isArray(advancesFor('Eldar Corsair', 1)), 'Eldar Corsair has a table');
+assert.ok(Array.isArray(advancesFor('Ork Freebooter', 1)), 'Ork Freebooter has a table');
 assert.equal(advancesFor('Ork Weirdboy', 1), null);
 assert.ok(Array.isArray(advancesFor('Explorator', 1)));
 assert.ok(Array.isArray(advancesFor('Seneschal', 1)));
@@ -41,6 +42,7 @@ assert.equal(baseCareer('Explorator (Alternate Rank: Acolyte of Abraxas)'), 'Exp
 assert.equal(baseCareer('rogue trader'), 'Rogue Trader');
 assert.equal(baseCareer('  Arch-Militant  '), 'Arch-Militant');
 assert.equal(baseCareer('Eldar Corsair (Into the Storm Supplement)'), 'Eldar Corsair');
+assert.equal(baseCareer('Ork Freebooter'), 'Ork Freebooter');
 assert.equal(baseCareer(''), null);
 assert.equal(baseCareer(null), null);
 
@@ -94,6 +96,7 @@ const { allAdvances, advanceStatus } = await import('./advances.js');
 
 const expl = allAdvances('Explorator');
 assert.ok(Array.isArray(allAdvances('Eldar Corsair')), 'Eldar Corsair has a table');
+assert.ok(Array.isArray(allAdvances('Ork Freebooter')), 'Ork Freebooter has a table');
 // every entry carries the rank it came from, and ranks run 1..4 in order
 assert.deepEqual([...new Set(expl.map((a) => a.rank))], [1, 2, 3, 4]);
 assert.equal(expl.find((a) => a.name === 'Tech-Use').rank, 1);

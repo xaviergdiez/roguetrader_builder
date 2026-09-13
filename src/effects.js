@@ -52,6 +52,10 @@ export const CONDITIONALS = {
   aeldari: [
     { from: 'Non-Imperial', mod: -10, chars: ['int', 'fel'], when: 'tests involving Imperial lore, customs or social interactions with non-Xenophile humans' },
     { from: 'Speak Not Unto the Alien', mod: -10, chars: ['fel'], when: 'Fellowship tests with Imperial citizens' }
+  ],
+  ork: [
+    { from: 'Non-Imperial', mod: -10, chars: ['int', 'fel'], when: 'tests involving Imperial lore, customs or social interactions with non-Xenophile humans' },
+    { from: 'Speak Not Unto the Alien', mod: -10, chars: ['fel'], when: 'Fellowship tests with Imperial citizens' }
   ]
 };
 

@@ -184,6 +184,36 @@ const HOME_WORLDS = [
     woundDie: () => d(5) + 6,
     woundText: 'Toughness Bonus + 1d5+6',
     fateTable: [[7, 1], [10, 2]]
+  },
+  {
+    id: 'ork',
+    name: 'Ork',
+    blurb: 'Born of fungal spores and endless war. Nigh-unkillable, terrifying up close, and happy to work for whoever pays in brawls and loot.',
+    xenos: true,
+    mods: { bs: -10, s: 10, t: 10, ag: -10, int: -10, fel: -10 },
+    skills: [
+      'Awareness', 'Common Lore (Orks)', 'Intimidate',
+      'Speak Language (Ork, Low Gothic)', 'Survival'
+    ],
+    talents: [
+      'Basic Weapon Training (Primitive, Ork)', 'Pistol Weapon Training (Primitive, Ork)',
+      'Melee Weapon Training (Primitive, Ork)', 'Furious Assault',
+      'Iron Jaw', 'True Grit', 'Crushing Blow'
+    ],
+    traits: [
+      'Unnatural Toughness (×2): Toughness Bonus is doubled when reducing incoming damage.',
+      'Size (Hulking): enemies gain +10 to hit the Ork, but base movement is increased by +1.',
+      'Iron Jaw: pass a Routine (+10) Toughness Test to automatically shrug off Stun effects.',
+      'True Grit: halve critical damage results (rounded down) when taking Critical Damage.',
+      'Make Do: can jury-rig any equipment; Imperial weapons gain Unreliable or Inaccurate when handled by Orks.',
+      'Non-Imperial: −10 on tests involving Imperial lore, customs or interactions with non-Xenophile humans.',
+      'Speak Not Unto the Alien: −10 to Fellowship tests when interacting with Imperial citizens.',
+      'Cybernetic Rejection: each Imperial bionic implant inflicts a permanent −10 to Toughness.'
+    ],
+    woundMult: 1,
+    woundDie: () => d(5) + 12,
+    woundText: 'Toughness Bonus + 1d5+12',
+    fateTable: [[7, 1], [10, 2]]
   }
 ];
 
@@ -621,6 +651,14 @@ const CAREERS = [
     skills: [],
     talents: [],
     gear: 'Aeldari Mesh Armour (AP 3); Shuriken Pistol (3 spare magazines); Eldar Power Sword or Shuriken Catapult; Waystone (Spirit Stone); fine mesh robes or void suit.'
+  },
+  {
+    id: 'orkfreebooter',
+    name: 'Ork Freebooter',
+    blurb: 'A mercenary Ork who fights for profit, glory and the sheer joy of it. Xenos path from Into the Storm.',
+    skills: [],
+    talents: [],
+    gear: 'Heavy Leather Armour (AP 3 body, legs); Choppa; Slugga or Shoota (3 spare magazines); 1d5 Stikkbombs; Shiny Gubbinz.'
   }
 ];
 

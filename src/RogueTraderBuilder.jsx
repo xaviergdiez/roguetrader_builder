@@ -16,6 +16,11 @@ import {
   tierFor, ADVANCE_LEVELS, ADVANCE_STEP, advanceCost, cumulativeAdvanceCost
 } from './xp.js';
 import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
+import {
+  HULLS, COMPONENTS, ESSENTIAL_CATEGORIES, ESSENTIAL_LABELS, CREW_RATINGS,
+  hullById, validate, stats, newVitals
+} from './ship.js';
+import { SHIP_ROLES, roleById, rolesForCareer } from './shiproles.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
   POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
@@ -1368,6 +1373,40 @@ const CSS = `
 @media (pointer:coarse){.rt-pointrow{padding:9px 3px;}}
 
 /* ---- psychic panel ---- */
+/* ------------------------------ VOIDSHIP ------------------------------ */
+
+.rt-headbtn.ship{border-color:var(--green-dim);color:var(--green);}
+
+.rt-ship{max-width:760px;}
+.rt-shiprow{display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;}
+.rt-shipfield{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
+.rt-shipfield.sp{flex:0 0 120px;}
+
+/* The three budgets, always visible. Red is the whole point: an illegal ship
+   should look illegal while you build it, not when you submit. */
+.rt-shipbuds{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
+.rt-shipbud{text-align:center;padding:9px 6px;
+  border:1px solid var(--brass);
+  background:linear-gradient(180deg,#241d0f,#0d1109);}
+.rt-shipbud.over{border-color:var(--crimson);background:linear-gradient(180deg,#2a0f09,#140705);}
+.rt-shipbud.over .rt-der-v,.rt-shipbud.over .rt-shipbud-r{color:var(--bad);}
+.rt-shipbud-t{font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:400;}
+.rt-shipbud-r{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  color:var(--green-dim);margin-top:3px;}
+
+.rt-shipsel{display:flex;align-items:center;gap:9px;margin-bottom:7px;}
+.rt-shipsel-k{flex:0 0 122px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--brass-lit);opacity:.85;}
+.rt-sel{flex:1;min-width:0;padding:9px 10px;
+  font-family:var(--serif);font-size:14.5px;color:var(--bone);
+  background:var(--well);border:1px solid var(--brass-dim);}
+.rt-sel:focus{outline:none;border-color:var(--gold);}
+@media (pointer:coarse){.rt-sel{padding:12px 10px;}}
+@media (max-width:480px){
+  .rt-shipsel{flex-direction:column;align-items:stretch;gap:4px;}
+  .rt-shipsel-k{flex:none;}
+}
+
 .rt-headbtn.psy{border-color:var(--warp);color:var(--warp);
   background:linear-gradient(180deg,#241a3a,#120c1e);}
 .rt-psypanel{width:min(520px,94vw);
@@ -2229,6 +2268,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [pointAlloc, setPointAlloc] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
   const [psyRating, setPsyRating] = useState(0);   // 0 = not a psyker
+  const [blueprint, setBlueprint] = useState(EMPTY_BLUEPRINT);
+  const [shipRole, setShipRole] = useState('');    // '' = no station
+  const [shipOpen, setShipOpen] = useState(false);
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
   const [stepIx, setStepIx] = useState(0);     // 0..5 origin, 6 characteristics, 7 dossier
@@ -2271,6 +2313,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
         setPointAlloc(s.pointAlloc || null);
         setAvatar(s.avatar || null); setExtras(readExtras(s.extras));
         setPsyRating(s.psyRating || 0);
+        setBlueprint(readBlueprint(s.blueprint));
+        setShipRole(s.shipRole || '');
         if (typeof s.xp === 'number') setXp(s.xp);
         if (typeof s.stepIx === 'number') setStepIx(s.stepIx);
       }
@@ -2285,14 +2329,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
           fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-          finalTotals, finalWounds, finalFate, pointAlloc
+          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
   }, [name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
       fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-      finalTotals, finalWounds, finalFate, pointAlloc, loaded]);
+      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -2514,7 +2558,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
         name: name || 'Unnamed adept',
         career: career ? career.name : null,
         updatedAt: Date.now(),
-        state: { name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
+        state: { name, gender, background, blueprint, shipRole,
+                 sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
                  fateAdj, profitAdj, spentAdj, psyRating, xp,
                  finalTotals, finalWounds, finalFate, pointAlloc }
       });
@@ -2566,6 +2611,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
     setAvatar(s.avatar || null);
     setExtras(readExtras(s.extras));
     setPsyRating(s.psyRating || 0);
+    setBlueprint(readBlueprint(s.blueprint));
+    setShipRole(s.shipRole || '');
     setXp(typeof s.xp === 'number' ? s.xp : STARTING_XP_DEFAULT);
     setCharId(id);
     setRosterErr('');
@@ -2683,6 +2730,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
           </div>
           <div className="rt-head-btns">
             <button className="rt-headbtn" onClick={() => setRosterOpen(true)}>ROSTER</button>
+            <button className="rt-headbtn ship" onClick={() => setShipOpen(true)}
+              title="Voidship blueprint: hull, components, and your station">SHIP</button>
             {psyAvailable && (
               <button className="rt-headbtn psy" onClick={() => setPsyOpen(true)}
                 title="Focus Power, Psychic Phenomena and Perils of the Warp">PSY</button>
@@ -2845,12 +2894,39 @@ export default function RogueTraderBuilder({ me, cloud }) {
           careerName={career ? career.name : null}
         />
       )}
+
+      {shipOpen && (
+        <ShipPanel
+          blueprint={blueprint} setBlueprint={setBlueprint}
+          shipRole={shipRole} setShipRole={setShipRole}
+          careerName={career ? career.name : ''}
+          onClose={() => setShipOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
 const MAX_AVATAR_BYTES = 8 * 1024 * 1024;
 const AUTOSAVE_KEY = 'rt:current';
+
+/* A blueprint belongs to the dynasty rather than the character, but until
+   there is a shared dynasty to hang it on it rides along with the sheet — one
+   fewer moving part, and it survives a refresh either way. */
+const EMPTY_BLUEPRINT = {
+  shipName: '', hullId: null, dynastySP: 60, crew: 'competent',
+  essential: {}, weapons: [], supplemental: []
+};
+
+// Anything absent is defaulted rather than trusted: a blueprint saved before a
+// field existed would otherwise arrive as undefined and break the editor.
+const readBlueprint = (b) => ({
+  ...EMPTY_BLUEPRINT,
+  ...(b && typeof b === 'object' ? b : null),
+  essential: (b && b.essential) || {},
+  weapons: Array.isArray(b && b.weapons) ? b.weapons : [],
+  supplemental: Array.isArray(b && b.supplemental) ? b.supplemental : []
+});
 const STARTING_XP_DEFAULT = 5000;   // a starting Explorer, per the rank table
 // advances are objects ({name, type, cost, rank}), not names — the cost has to
 // travel with them so spent XP can be summed and refunded
@@ -4659,6 +4735,280 @@ const QUICK_LINES = [
   'Warp anomaly. All hands, brace.',
   'Your request is noted and denied.'
 ];
+
+/* ---------------------------- VOIDSHIP PANEL ----------------------------
+   The blueprint editor. Hull first, because the hull decides how much Space
+   there is and which mounts exist — picking weapons before a hull would mean
+   validating against nothing.
+
+   All three budgets are shown at all times and go red the moment they go
+   negative, which is the one thing the rules text asks for explicitly: an
+   illegal ship should be visibly illegal while you are building it, not on a
+   submit. Nothing here blocks an over-budget blueprint — a GM may well allow
+   one — but validate() lists every reason it is illegal. */
+
+function ShipPanel({ blueprint, setBlueprint, shipRole, setShipRole, careerName, onClose }) {
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  const bp = blueprint;
+  const hull = hullById(bp.hullId);
+  const { errors, budget: b } = validate(bp);
+  const derived = stats(bp);
+
+  const set = (patch) => setBlueprint({ ...bp, ...patch });
+
+  // Changing hull clears the weapons: the mounts it had may not exist on the
+  // new one, and silently keeping an unmountable weapon is how a blueprint
+  // ends up illegal for a reason nobody can see.
+  const pickHull = (hullId) => set({ hullId, weapons: [] });
+
+  const setEssential = (category, id) =>
+    set({ essential: { ...bp.essential, [category]: id || undefined } });
+
+  const setWeapon = (slotIx, id) => {
+    const weapons = (hull ? hull.slots : []).map((slot, i) => {
+      const existing = bp.weapons.find((w) => w.slotIx === i);
+      return i === slotIx
+        ? (id ? { slotIx: i, slot, componentId: id } : null)
+        : (existing || null);
+    }).filter(Boolean);
+    set({ weapons });
+  };
+
+  const toggleSupplemental = (id) => set({
+    supplemental: bp.supplemental.includes(id)
+      ? bp.supplemental.filter((x) => x !== id)
+      : [...bp.supplemental, id]
+  });
+
+  const inCategory = (category) => COMPONENTS.filter((c) => c.category === category);
+  const weaponOptions = COMPONENTS.filter((c) => c.category === 'weapon');
+  const supplementals = COMPONENTS.filter((c) => c.category === 'supplemental');
+
+  // A station is a suggestion from the career, but any role can be taken:
+  // a crew short of players doubles up, and the First Officer is open to all.
+  const suggested = rolesForCareer(careerName).map((r) => r.id);
+  const role = roleById(shipRole);
+
+  const gauge = (label, used, total, remaining) => (
+    <div className={'rt-shipbud' + (remaining < 0 ? ' over' : '')}>
+      <div className="rt-der-k top">{label}</div>
+      <div className="rt-der-v">{used}<span className="rt-shipbud-t">/{total}</span></div>
+      <div className="rt-shipbud-r">
+        {remaining < 0 ? `${-remaining} over` : `${remaining} left`}
+      </div>
+    </div>
+  );
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer rt-ship" onClose={onClose}
+      aria-label="Voidship blueprint">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">Voidship blueprint</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+
+      <div className="rt-shiprow">
+        <label className="rt-shipfield">
+          <span className="rt-der-k">Ship name</span>
+          <input className="rt-field" value={bp.shipName}
+            onChange={(e) => set({ shipName: e.target.value })}
+            placeholder="The Apex Predator" />
+        </label>
+        <label className="rt-shipfield sp">
+          <span className="rt-der-k">Dynasty SP</span>
+          <input className="rt-field" type="number" min="0" step="5" value={bp.dynastySP}
+            onChange={(e) => set({ dynastySP: Math.max(0, parseInt(e.target.value, 10) || 0) })} />
+        </label>
+      </div>
+
+      <div className="rt-shipbuds">
+        {gauge('Ship Points', b.spentSP, b.dynastySP, b.spRemaining)}
+        {gauge('Space', b.usedSpace, b.totalSpace, b.spaceRemaining)}
+        {gauge('Power', b.usedPower, b.totalPower, b.powerRemaining)}
+      </div>
+
+      {errors.length > 0 && (
+        <div className="rt-warn">
+          {errors.map((e, i) => <p key={i}>{e}</p>)}
+        </div>
+      )}
+      {hull && errors.length === 0 && (
+        <div className="rt-note">A legal blueprint. {hull.name} {hull.cls}.</div>
+      )}
+
+      <div className="rt-conds-h">Hull</div>
+      <div className="rt-cards">
+        {HULLS.map((h) => (
+          <div key={h.id} className={'rt-card' + (bp.hullId === h.id ? ' sel' : '')}
+            onClick={() => pickHull(h.id)}>
+            <div className="rt-card-h">
+              <span className="rt-card-n">{h.name}</span>
+              <span className="rt-entry-c">{h.sp} SP</span>
+            </div>
+            <p className="rt-card-b">{h.cls} {'·'} {h.source}</p>
+            <div className="rt-mods">
+              <span className="rt-mod up">Spd {h.speed}</span>
+              <span className={'rt-mod ' + (h.manoeuvre >= 0 ? 'up' : 'dn')}>
+                Man {h.manoeuvre > 0 ? '+' : ''}{h.manoeuvre}
+              </span>
+              <span className="rt-mod up">Det +{h.detection}</span>
+              <span className="rt-mod up">Arm {h.armour}</span>
+              <span className="rt-mod up">HI {h.hullIntegrity}</span>
+              <span className="rt-mod up">Turr {h.turrets}</span>
+              <span className="rt-mod up">Space {h.space}</span>
+            </div>
+            {bp.hullId === h.id && (
+              <div className="rt-detail" onClick={(e) => e.stopPropagation()}>
+                <p className="rt-dl"><b>Mounts</b> {'—'} {h.slots.join(', ')}</p>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {hull && (
+        <>
+          <div className="rt-conds-h">Crew rating</div>
+          <div className="rt-opts">
+            {CREW_RATINGS.map((c) => (
+              <button key={c.id}
+                className={'rt-opt' + (bp.crew === c.id ? ' on' : '')}
+                onClick={() => set({ crew: c.id })}>
+                {c.name} {c.rating}{c.sp ? ` (${c.sp} SP)` : ''}
+              </button>
+            ))}
+          </div>
+
+          <div className="rt-conds-h">Essential components</div>
+          <p className="rt-vox-hint">
+            Exactly one of each. A ship missing any of the eight is not
+            spaceworthy, whatever its budget says.
+          </p>
+          {ESSENTIAL_CATEGORIES.map((cat) => (
+            <label key={cat} className="rt-shipsel">
+              <span className="rt-shipsel-k">{ESSENTIAL_LABELS[cat]}</span>
+              <select className="rt-sel" value={bp.essential[cat] || ''}
+                onChange={(e) => setEssential(cat, e.target.value)}>
+                <option value="">{'— none —'}</option>
+                {inCategory(cat).map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.power > 0 ? `+${c.power}` : c.power} pwr,
+                    {' '}{c.space} spc{c.sp ? `, ${c.sp} SP` : ''})
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+
+          <div className="rt-conds-h">Weapons</div>
+          <p className="rt-vox-hint">
+            One per mount. The {hull.name} has {hull.slots.length}:
+            {' '}{hull.slots.join(', ')}.
+          </p>
+          {hull.slots.map((slot, i) => {
+            const mounted = bp.weapons.find((w) => w.slotIx === i);
+            return (
+              <label key={i} className="rt-shipsel">
+                <span className="rt-shipsel-k">{slot}</span>
+                <select className="rt-sel" value={mounted ? mounted.componentId : ''}
+                  onChange={(e) => setWeapon(i, e.target.value)}>
+                  <option value="">{'— empty —'}</option>
+                  {weaponOptions.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} (Str {c.str}, {c.damage}, crit {c.crit}, rng {c.range})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            );
+          })}
+
+          <div className="rt-conds-h">Supplemental components</div>
+          <ul className="rt-list">
+            {supplementals.map((c) => (
+              <li key={c.id} className="rt-entry">
+                <button className={'rt-opt' + (bp.supplemental.includes(c.id) ? ' on' : '')}
+                  onClick={() => toggleSupplemental(c.id)}>
+                  {bp.supplemental.includes(c.id) ? '✓' : '+'}
+                </button>
+                <span className="rt-entry-t">{c.name}</span>
+                <span className="rt-entry-c">
+                  {c.power} pwr {'·'} {c.space} spc {'·'} {c.sp} SP
+                </span>
+                <div className="rt-entry-d"><p>{c.note}</p></div>
+              </li>
+            ))}
+          </ul>
+
+          {derived && (
+            <>
+              <div className="rt-conds-h">Final vitals</div>
+              <div className="rt-derived">
+                <div className="rt-der"><div className="rt-der-v">{derived.speed}</div>
+                  <div className="rt-der-k">SPEED</div></div>
+                <div className="rt-der"><div className="rt-der-v">
+                  {derived.manoeuvre > 0 ? '+' : ''}{derived.manoeuvre}</div>
+                  <div className="rt-der-k">MANOEUVRE</div></div>
+                <div className="rt-der"><div className="rt-der-v">+{derived.detection}</div>
+                  <div className="rt-der-k">DETECTION</div></div>
+                <div className="rt-der"><div className="rt-der-v">{derived.armour}</div>
+                  <div className="rt-der-k">ARMOUR</div></div>
+                <div className="rt-der"><div className="rt-der-v">{derived.hullIntegrity}</div>
+                  <div className="rt-der-k">HULL</div></div>
+                <div className="rt-der"><div className="rt-der-v">{derived.turrets}</div>
+                  <div className="rt-der-k">TURRETS</div></div>
+                <div className="rt-der"><div className="rt-der-v">{derived.voidShields}</div>
+                  <div className="rt-der-k">SHIELDS</div></div>
+                <div className="rt-der"><div className="rt-der-v">{derived.maxMorale}</div>
+                  <div className="rt-der-k">MORALE</div></div>
+              </div>
+              {derived.moraleLossReduction > 0 && (
+                <p className="rt-vox-hint">
+                  Morale loss reduced by {derived.moraleLossReduction}.
+                </p>
+              )}
+            </>
+          )}
+        </>
+      )}
+
+      <div className="rt-conds-h">Your station</div>
+      <p className="rt-vox-hint">
+        Which department this character commands. It decides what they may
+        change on a shared ship{careerName ? `; a ${careerName} usually takes the highlighted one` : ''}.
+      </p>
+      <label className="rt-shipsel">
+        <span className="rt-shipsel-k">Role</span>
+        <select className="rt-sel" value={shipRole || ''}
+          onChange={(e) => setShipRole(e.target.value)}>
+          <option value="">{'— no station —'}</option>
+          {SHIP_ROLES.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name}{suggested.includes(r.id) ? '  ★' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
+      {role && (
+        <div className="rt-entry-d">
+          <p><b>{role.department}</b></p>
+          <p><b>{role.action.name}</b> {'—'} {role.action.test}. {role.action.effect}</p>
+          <p className="rt-entry-s">
+            May change: {role.fields.includes('*')
+              ? 'anything — the Lord-Captain overrides every department'
+              : role.fields.join(', ')}
+          </p>
+        </div>
+      )}
+    </dialog>
+  );
+}
 
 function VoxPanel({ vox, text, setText, onClose, careerName }) {
   const meta = PROFILE_META[vox.activeProfile];

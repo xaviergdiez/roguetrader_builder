@@ -51,6 +51,17 @@ export const ESSENTIAL_CATEGORIES = [
   'bridge', 'lifeSustainer', 'crewQuarters', 'augurArray'
 ];
 
+export const ESSENTIAL_LABELS = {
+  plasmaDrive: 'Plasma Drive',
+  warpEngine: 'Warp Engine',
+  gellerField: 'Geller Field',
+  voidShield: 'Void Shield',
+  bridge: 'Bridge',
+  lifeSustainer: 'Life Sustainer',
+  crewQuarters: 'Crew Quarters',
+  augurArray: 'Augur Array'
+};
+
 // power is signed: the plasma drive generates, everything else draws.
 const C = (id, name, category, power, space, sp, extra = {}) => ({
   id, name, category, power, space, sp, ...extra

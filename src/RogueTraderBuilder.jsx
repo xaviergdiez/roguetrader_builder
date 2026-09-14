@@ -18,9 +18,13 @@ import {
 import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
 import {
   HULLS, COMPONENTS, ESSENTIAL_CATEGORIES, ESSENTIAL_LABELS, CREW_RATINGS,
-  hullById, validate, stats, newVitals
+  hullById, componentById, validate, stats, newVitals
 } from './ship.js';
-import { SHIP_ROLES, roleById, rolesForCareer } from './shiproles.js';
+import { SHIP_ROLES, GM_EVENTS, roleById, rolesForCareer } from './shiproles.js';
+import {
+  PHASES, PHASE_LABELS, nextPhase, initiativeOrder, toHit, hitsScored,
+  resolveAttack, criticalEffect, applyEvent
+} from './voidcombat.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
   POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
@@ -1376,6 +1380,33 @@ const CSS = `
 /* ------------------------------ VOIDSHIP ------------------------------ */
 
 .rt-headbtn.ship{border-color:var(--green-dim);color:var(--green);}
+.rt-headbtn.gm{border-color:var(--rust);color:var(--rust);}
+
+/* ---- GM dashboard ---- */
+.rt-gm{max-width:820px;}
+.rt-gmturn{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;
+  padding:9px 11px;border:1px solid var(--brass-dim);background:var(--well);}
+.rt-gmphase{flex:1;min-width:120px;font-family:var(--display);font-size:16px;
+  color:var(--gold-lit);}
+.rt-gmvitals{flex-basis:100%;display:flex;flex-wrap:wrap;gap:9px;align-items:center;
+  margin-top:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  color:var(--dim);}
+.rt-gmvitals b{color:var(--green);font-size:12px;}
+.rt-gmdead{opacity:.5;}
+.rt-gmdead .rt-entry-t{text-decoration:line-through;}
+.rt-gmevade{display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--brass-lit);}
+.rt-gmmods{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+.rt-gmmods label{flex:1 1 120px;display:flex;flex-direction:column;gap:3px;}
+.rt-numin{width:100%;padding:8px 9px;font-size:14px;}
+.rt-gmlog{list-style:none;margin:0;padding:0;max-height:220px;overflow-y:auto;}
+.rt-gmline{font-family:var(--mono);font-size:11px;line-height:1.55;
+  padding:6px 8px;margin-bottom:4px;border-left:2px solid var(--brass-dim);
+  background:rgba(6,12,8,.5);color:var(--text);}
+.rt-gmline.hit{border-left-color:var(--rust);}
+.rt-gmline.miss{border-left-color:var(--brass-dim);color:var(--dim);}
+.rt-gmline.critical{border-left-color:var(--crimson);color:var(--bad);}
+.rt-gmline.event{border-left-color:var(--warp);}
+.rt-gmline.phase,.rt-gmline.initiative{border-left-color:var(--gold);color:var(--gold-lit);}
 
 .rt-ship{max-width:760px;}
 .rt-shiprow{display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;}
@@ -2271,6 +2302,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [blueprint, setBlueprint] = useState(EMPTY_BLUEPRINT);
   const [shipRole, setShipRole] = useState('');    // '' = no station
   const [shipOpen, setShipOpen] = useState(false);
+  const [gmOpen, setGmOpen] = useState(false);
+  const [fleet, setFleet] = useState([]);          // the GM's NPC ships
+  const [combat, setCombat] = useState(EMPTY_COMBAT);
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
   const [stepIx, setStepIx] = useState(0);     // 0..5 origin, 6 characteristics, 7 dossier
@@ -2315,6 +2349,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
         setPsyRating(s.psyRating || 0);
         setBlueprint(readBlueprint(s.blueprint));
         setShipRole(s.shipRole || '');
+        setFleet(Array.isArray(s.fleet) ? s.fleet : []);
+        setCombat({ ...EMPTY_COMBAT, ...(s.combat || null) });
         if (typeof s.xp === 'number') setXp(s.xp);
         if (typeof s.stepIx === 'number') setStepIx(s.stepIx);
       }
@@ -2329,14 +2365,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
           fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole
+          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
   }, [name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
       fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, loaded]);
+      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -2732,6 +2768,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
             <button className="rt-headbtn" onClick={() => setRosterOpen(true)}>ROSTER</button>
             <button className="rt-headbtn ship" onClick={() => setShipOpen(true)}
               title="Voidship blueprint: hull, components, and your station">SHIP</button>
+            <button className="rt-headbtn gm" onClick={() => setGmOpen(true)}
+              title="GM dashboard: the fleet, the turn, attacks and events">GM</button>
             {psyAvailable && (
               <button className="rt-headbtn psy" onClick={() => setPsyOpen(true)}
                 title="Focus Power, Psychic Phenomena and Perils of the Warp">PSY</button>
@@ -2903,6 +2941,15 @@ export default function RogueTraderBuilder({ me, cloud }) {
           onClose={() => setShipOpen(false)}
         />
       )}
+
+      {gmOpen && (
+        <GmPanel
+          fleet={fleet} setFleet={setFleet}
+          combat={combat} setCombat={setCombat}
+          blueprint={blueprint}
+          onClose={() => setGmOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -2917,6 +2964,11 @@ const EMPTY_BLUEPRINT = {
   shipName: '', hullId: null, dynastySP: 60, crew: 'competent',
   essential: {}, weapons: [], supplemental: []
 };
+
+// The GM's running battle: the phase, the initiative order, and the player
+// ship's live vitals. Kept apart from the blueprint, which is the ship as
+// built rather than the ship as it currently stands.
+const EMPTY_COMBAT = { phase: 'extended', order: [], playerVitals: null };
 
 // Anything absent is defaulted rather than trusted: a blueprint saved before a
 // field existed would otherwise arrive as undefined and break the editor.
@@ -4746,6 +4798,413 @@ const QUICK_LINES = [
    illegal ship should be visibly illegal while you are building it, not on a
    submit. Nothing here blocks an over-budget blueprint — a GM may well allow
    one — but validate() lists every reason it is illegal. */
+
+/* ------------------------------ GM DASHBOARD ------------------------------
+   The GM's side of the bridge: the fleet, the turn, the attack resolver and
+   the event emitter.
+
+   NPC ships are hull-backed rather than blueprint-backed. A GM throwing a
+   raider at the crew needs it to have Armour, Hull Integrity and a gun, not a
+   legal eight-category blueprint — forcing one would make every encounter a
+   ship-building exercise. The player's ship is the real blueprint, so the two
+   are read through one profile function and everything downstream sees the
+   same shape.
+
+   Rolls happen here and the resolution is delegated to voidcombat.js, so what
+   the dashboard shows and what a server would compute cannot diverge. */
+
+// The combat-relevant numbers for either kind of ship.
+function shipProfile(ship, blueprint) {
+  if (ship.player) {
+    const hull = hullById(blueprint.hullId);
+    const s = stats(blueprint, ship.vitals);
+    if (!hull || !s) return null;
+    return {
+      name: blueprint.shipName || 'Your ship',
+      cls: hull.cls,
+      armour: s.armour,
+      turretRating: s.turrets,
+      voidShields: s.voidShields,
+      detection: s.detection,
+      maxHull: hull.hullIntegrity,
+      weapons: (blueprint.weapons || []).map((w) => w.componentId)
+    };
+  }
+  const hull = hullById(ship.hullId);
+  if (!hull) return null;
+  return {
+    name: ship.name || hull.name,
+    cls: hull.cls,
+    armour: hull.armour,
+    turretRating: Number.isFinite(ship.turretRating) ? ship.turretRating : hull.turrets,
+    voidShields: Number.isFinite(ship.voidShields) ? ship.voidShields : 1,
+    detection: hull.detection,
+    maxHull: hull.hullIntegrity,
+    weapons: ship.weapons || []
+  };
+}
+
+function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, onClose }) {
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  const [attackerId, setAttackerId] = useState('player');
+  const [targetId, setTargetId] = useState('');
+  const [weaponId, setWeaponId] = useState('weap-macrocannon-mars');
+  const [distance, setDistance] = useState(3);
+  const [lockDoS, setLockDoS] = useState(0);
+  const [spiritDoS, setSpiritDoS] = useState(0);
+  const [bs, setBs] = useState(40);
+  const [log, setLog] = useState([]);
+  const [eventId, setEventId] = useState('macro_strike');
+  const [eventAmount, setEventAmount] = useState(5);
+  const [eventShip, setEventShip] = useState('player');
+
+  // The player's ship is always in the fleet, derived rather than stored, so
+  // it cannot drift from the blueprint the player is editing.
+  const playerShip = {
+    id: 'player', player: true,
+    vitals: combat.playerVitals || newVitals(blueprint)
+  };
+  const ships = [playerShip, ...fleet];
+  const profileOf = (s) => shipProfile(s, blueprint);
+  const byId = (id) => ships.find((s) => s.id === id);
+
+  const say = (entry) => setLog((p) => [{ ...entry, key: newId() }, ...p].slice(0, 30));
+
+  const setVitals = (id, patch) => {
+    if (id === 'player') {
+      setCombat({ ...combat, playerVitals: { ...playerShip.vitals, ...patch } });
+    } else {
+      setFleet(fleet.map((s) => (s.id === id ? { ...s, vitals: { ...s.vitals, ...patch } } : s)));
+    }
+  };
+
+  /* ---- fleet ---- */
+
+  const addNpc = (hullId) => {
+    const hull = hullById(hullId);
+    if (!hull) return;
+    const n = fleet.filter((s) => s.hullId === hullId).length;
+    setFleet([...fleet, {
+      id: newId(),
+      hullId,
+      name: n ? `${hull.name} ${n + 1}` : hull.name,
+      weapons: ['weap-macrocannon-mars'],
+      turretRating: hull.turrets,
+      voidShields: 1,
+      vitals: { hullIntegrity: hull.hullIntegrity, morale: 100, population: 100 },
+      evadingDoS: null
+    }]);
+  };
+
+  const dropNpc = (id) => {
+    setFleet(fleet.filter((s) => s.id !== id));
+    if (targetId === id) setTargetId('');
+    if (attackerId === id) setAttackerId('player');
+  };
+
+  /* ---- the turn ---- */
+
+  const rollInitiative = () => {
+    const order = initiativeOrder(ships.map((s) => {
+      const p = profileOf(s);
+      return { id: s.id, name: p ? p.name : '?', detection: p ? p.detection : 0, d10: d(10) };
+    }));
+    setCombat({ ...combat, order: order.map((o) => ({ id: o.id, name: o.name, score: o.score })) });
+    say({ kind: 'initiative', text: 'Initiative: ' + order.map((o) => `${o.name} ${o.score}`).join(', ') });
+  };
+
+  const advance = () => {
+    const next = nextPhase(combat.phase);
+    // Void shields absorb one hit PER ROUND, so they come back when the turn
+    // wraps. Without this a shield was spent once and gone for the battle,
+    // which quietly made every escort far easier to kill than the rules allow.
+    const newTurn = next === PHASES[0];
+    if (newTurn) {
+      setFleet(fleet.map((s) => {
+        const p = profileOf(s);
+        return p ? { ...s, vitals: { ...s.vitals, voidShields: p.voidShields } } : s;
+      }));
+      const pp = profileOf(playerShip);
+      setCombat({
+        ...combat,
+        phase: next,
+        playerVitals: pp
+          ? { ...playerShip.vitals, voidShields: pp.voidShields }
+          : combat.playerVitals
+      });
+    } else {
+      setCombat({ ...combat, phase: next });
+    }
+    say({ kind: 'phase',
+      text: `Phase: ${PHASE_LABELS[next]}${newTurn ? ' — new turn, void shields restored' : ''}` });
+  };
+
+  /* ---- firing ---- */
+
+  const attacker = byId(attackerId);
+  const targetShip = byId(targetId);
+  const attackerP = attacker ? profileOf(attacker) : null;
+  const targetP = targetShip ? profileOf(targetShip) : null;
+  const weapon = componentById(weaponId);
+
+  const hit = targetP && weapon ? toHit({
+    ballisticSkill: bs,
+    weaponId,
+    distanceVU: distance,
+    targetClass: targetP.cls,
+    lockDoS,
+    machineSpiritDoS: spiritDoS,
+    evadingDoS: targetShip.evadingDoS,
+    crippled: (targetShip.vitals.hullIntegrity || 0) <= 0
+  }) : null;
+
+  const fire = () => {
+    if (!hit || !hit.canFire || !weapon || !targetP) return;
+    const roll = roll1d100();
+    const test = resolveTest(hit.target, 0, roll);
+    if (!test.success) {
+      say({ kind: 'miss', text: `${attackerP.name} missed ${targetP.name} — rolled ${roll} against ${hit.target}.` });
+      return;
+    }
+    const hits = hitsScored(test.degrees, weapon.str);
+    const rolls = Array.from({ length: hits }, () => d(10));
+    const res = resolveAttack({
+      weaponId,
+      hits,
+      damageRolls: rolls,
+      pointBlank: hit.pointBlank,
+      target: {
+        turretRating: targetP.turretRating,
+        voidShields: targetShip.vitals.voidShields ?? targetP.voidShields,
+        armour: targetP.armour,
+        hullIntegrity: targetShip.vitals.hullIntegrity
+      }
+    });
+    setVitals(targetId, {
+      hullIntegrity: res.hullIntegrity,
+      voidShields: res.shieldsRemaining
+    });
+    say({ kind: res.netHullDamage > 0 ? 'hit' : 'soak', roll, test, res, rolls,
+      text: `${attackerP.name} → ${targetP.name}: rolled ${roll} against ${hit.target}`
+        + ` (${test.degrees} DoS), ${res.hitsScored} hits`
+        + (res.turretsStop ? `, ${res.turretsStop} shot down` : '')
+        + (res.shieldsStop ? `, ${res.shieldsStop} on the shields` : '')
+        + `, ${res.combinedDamage} damage less ${res.armourMitigation} armour`
+        + ` = ${res.netHullDamage} to the hull.`
+        + (res.criticalTriggered ? ' CRITICAL.' : '')
+        + (res.destroyed ? ' The ship is crippled.' : '') });
+  };
+
+  const rollCritical = () => {
+    const roll = d(10);
+    const effect = criticalEffect(roll);
+    say({ kind: 'critical', text: `Critical ${roll}: ${effect.name} — ${effect.effect}` });
+  };
+
+  /* ---- events ---- */
+
+  const emit = () => {
+    const ship = byId(eventShip);
+    if (!ship) return;
+    const p = profileOf(ship);
+    const { patch, unknown } = applyEvent(ship.vitals, { id: eventId, amount: eventAmount });
+    if (unknown) return;
+    setVitals(eventShip, patch);
+    const ev = GM_EVENTS.find((e) => e.id === eventId);
+    say({ kind: 'event',
+      text: `${ev.name} on ${p ? p.name : ship.id}: `
+        + Object.entries(patch).map(([k, v]) =>
+          `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ') });
+  };
+
+  const num = (value, onChange, opts = {}) => (
+    <input className="rt-field rt-numin" type="number" value={value}
+      min={opts.min ?? 0} max={opts.max} step={opts.step ?? 1}
+      onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)} />
+  );
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer rt-ship rt-gm" onClose={onClose}
+      aria-label="GM dashboard">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">GM dashboard</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+
+      {/* ---- turn ---- */}
+      <div className="rt-gmturn">
+        <span className="rt-der-k">Phase</span>
+        <b className="rt-gmphase">{PHASE_LABELS[combat.phase] || PHASE_LABELS.extended}</b>
+        <button className="rt-opt" onClick={advance}>Advance</button>
+        <button className="rt-opt" onClick={rollInitiative}>Roll initiative</button>
+      </div>
+      {combat.order && combat.order.length > 0 && (
+        <p className="rt-vox-hint">
+          Order: {combat.order.map((o) => `${o.name} (${o.score})`).join(' › ')}
+        </p>
+      )}
+
+      {/* ---- fleet ---- */}
+      <div className="rt-conds-h">Fleet</div>
+      <ul className="rt-list">
+        {ships.map((s) => {
+          const p = profileOf(s);
+          if (!p) {
+            return (
+              <li key={s.id} className="rt-entry">
+                <span className="rt-entry-t">
+                  {s.player ? 'Your ship — no hull chosen yet' : s.name}
+                </span>
+              </li>
+            );
+          }
+          const v = s.vitals || {};
+          const dead = (v.hullIntegrity || 0) <= 0;
+          return (
+            <li key={s.id} className={'rt-entry' + (dead ? ' rt-gmdead' : '')}>
+              <span className="rt-entry-t">
+                {p.name}{s.player ? ' (crew)' : ''}
+              </span>
+              <span className="rt-entry-c">{p.cls}</span>
+              <div className="rt-gmvitals">
+                <span>HULL <b>{v.hullIntegrity ?? p.maxHull}</b>/{p.maxHull}</span>
+                <span>ARM <b>{p.armour}</b></span>
+                <span>SHD <b>{v.voidShields ?? p.voidShields}</b></span>
+                <span>TUR <b>{p.turretRating}</b></span>
+                <span>MOR <b>{v.morale ?? 100}</b></span>
+                <span>POP <b>{v.population ?? 100}</b></span>
+                {!s.player && (
+                  <label className="rt-gmevade">
+                    <input type="checkbox" checked={s.evadingDoS != null}
+                      onChange={(e) => setFleet(fleet.map((x) => (x.id === s.id
+                        ? { ...x, evadingDoS: e.target.checked ? 1 : null } : x)))} />
+                    evading
+                  </label>
+                )}
+                {!s.player && (
+                  <button className="rt-rm" onClick={() => dropNpc(s.id)}
+                    aria-label={'Remove ' + p.name}>&times;</button>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+
+      <label className="rt-shipsel">
+        <span className="rt-shipsel-k">Add enemy</span>
+        <select className="rt-sel" value="" onChange={(e) => addNpc(e.target.value)}>
+          <option value="">{'— pick a hull —'}</option>
+          {HULLS.map((h) => (
+            <option key={h.id} value={h.id}>{h.name} ({h.cls})</option>
+          ))}
+        </select>
+      </label>
+
+      {/* ---- attack ---- */}
+      <div className="rt-conds-h">Attack</div>
+      <label className="rt-shipsel">
+        <span className="rt-shipsel-k">Attacker</span>
+        <select className="rt-sel" value={attackerId} onChange={(e) => setAttackerId(e.target.value)}>
+          {ships.map((s) => {
+            const p = profileOf(s);
+            return <option key={s.id} value={s.id}>{p ? p.name : s.id}</option>;
+          })}
+        </select>
+      </label>
+      <label className="rt-shipsel">
+        <span className="rt-shipsel-k">Target</span>
+        <select className="rt-sel" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+          <option value="">{'— pick a target —'}</option>
+          {ships.filter((s) => s.id !== attackerId).map((s) => {
+            const p = profileOf(s);
+            return <option key={s.id} value={s.id}>{p ? p.name : s.id}</option>;
+          })}
+        </select>
+      </label>
+      <label className="rt-shipsel">
+        <span className="rt-shipsel-k">Weapon</span>
+        <select className="rt-sel" value={weaponId} onChange={(e) => setWeaponId(e.target.value)}>
+          {COMPONENTS.filter((c) => c.category === 'weapon').map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} (Str {c.str}, {c.damage}, rng {c.range})
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="rt-gmmods">
+        <label><span className="rt-der-k">Distance VU</span>{num(distance, setDistance)}</label>
+        <label><span className="rt-der-k">BS / crew</span>{num(bs, setBs, { max: 100 })}</label>
+        <label><span className="rt-der-k">Lock DoS</span>{num(lockDoS, setLockDoS)}</label>
+        <label><span className="rt-der-k">Spirit DoS</span>{num(spiritDoS, setSpiritDoS)}</label>
+      </div>
+
+      {hit && (
+        hit.canFire ? (
+          <div className="rt-note">
+            <b>Target {hit.target}</b>{' — '}
+            {hit.base} base
+            {hit.parts.map((p) => ` ${p.value > 0 ? '+' : '−'}${Math.abs(p.value)} ${p.label.toLowerCase()}`).join('')}
+            {' · '}{hit.band} range
+          </div>
+        ) : (
+          <div className="rt-warn"><p>Out of range: {weapon.name} reaches {weapon.range} VU.</p></div>
+        )
+      )}
+
+      <div className="rt-btnrow">
+        <button className="rt-btn" disabled={!hit || !hit.canFire} onClick={fire}>Fire</button>
+        <button className="rt-btn ghost" onClick={rollCritical}>Roll critical</button>
+      </div>
+
+      {/* ---- events ---- */}
+      <div className="rt-conds-h">Emit an event</div>
+      <p className="rt-vox-hint">
+        Applied to the ship's vitals here. Once the bridge is shared, this is
+        the call that reaches the crew's terminals.
+      </p>
+      <label className="rt-shipsel">
+        <span className="rt-shipsel-k">Event</span>
+        <select className="rt-sel" value={eventId} onChange={(e) => setEventId(e.target.value)}>
+          {GM_EVENTS.filter((e) => !['advance_phase', 'enemy_update'].includes(e.id)).map((e) => (
+            <option key={e.id} value={e.id}>{e.name} — {e.note}</option>
+          ))}
+        </select>
+      </label>
+      <div className="rt-gmmods">
+        <label><span className="rt-der-k">On ship</span>
+          <select className="rt-sel" value={eventShip} onChange={(e) => setEventShip(e.target.value)}>
+            {ships.map((s) => {
+              const p = profileOf(s);
+              return <option key={s.id} value={s.id}>{p ? p.name : s.id}</option>;
+            })}
+          </select>
+        </label>
+        <label><span className="rt-der-k">Amount</span>{num(eventAmount, setEventAmount)}</label>
+      </div>
+      <div className="rt-btnrow">
+        <button className="rt-btn" onClick={emit}>Emit</button>
+      </div>
+
+      {/* ---- log ---- */}
+      {log.length > 0 && (
+        <>
+          <div className="rt-conds-h">Log</div>
+          <ul className="rt-gmlog">
+            {log.map((l) => <li key={l.key} className={'rt-gmline ' + l.kind}>{l.text}</li>)}
+          </ul>
+        </>
+      )}
+    </dialog>
+  );
+}
 
 function ShipPanel({ blueprint, setBlueprint, shipRole, setShipRole, careerName, onClose }) {
   const dialogRef = useRef(null);

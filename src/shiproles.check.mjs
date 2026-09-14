@@ -5,8 +5,9 @@
 // that is wrong in the strict direction silently swallows a legal order.
 import assert from 'node:assert/strict';
 import {
-  SHIP_ROLES, SHIP_FIELDS, roleById, rolesForCareer,
-  can, deniedWrites, crewTarget, backsIntoIt, evasionPenalty, lockBonus
+  SHIP_ROLES, SHIP_FIELDS, GM_ONLY_FIELDS, GM_EVENTS, eventById, canTriggerEvent,
+  roleById, rolesForCareer, can, deniedWrites, crewTarget,
+  backsIntoIt, evasionPenalty, lockBonus
 } from './shiproles.js';
 
 /* ---- the table is well formed ---- */
@@ -47,8 +48,11 @@ assert.equal(can('ordnance', 'targetLocks'), true);
 assert.equal(can('ordnance', 'power'), false, 'gunnery does not reroute power');
 assert.equal(can('chirurgeon', 'population'), true);
 
-// the Captain can countermand any department
-for (const f of SHIP_FIELDS) assert.equal(can('lordcaptain', f), true, 'captain: ' + f);
+// The Captain can countermand any department — but the encounter is not a
+// department, so the GM-only fields stay closed even to the override.
+for (const f of SHIP_FIELDS) {
+  assert.equal(can('lordcaptain', f), !GM_ONLY_FIELDS.includes(f), 'captain: ' + f);
+}
 
 // Unknown roles and unknown fields are refused rather than waved through.
 assert.equal(can('stowaway', 'morale'), false);
@@ -94,22 +98,73 @@ assert.equal(crewTarget(95, 20), 100);
 assert.equal(crewTarget(20, -40), 0);
 assert.equal(crewTarget(undefined), 0);
 
-/* ---- the signature action maths ---- */
+/* ---- the signature action maths ----
+   Re-exported from voidcombat.js, where the to-hit calculation consumes them.
+   Checked here too because these are the names the role table advertises. */
 
 assert.equal(backsIntoIt(0), 0);
 assert.equal(backsIntoIt(2), 10, '+5 per Degree of Success');
 assert.equal(backsIntoIt(3), 15);
 assert.equal(lockBonus(4), 20, '+5 per Degree of Success');
-assert.equal(evasionPenalty(3), -30, '10 x DoS, applied against the attacker');
-assert.equal(evasionPenalty(0), 0);
+
+// Evasion is -10 for succeeding AND a further -10 per degree, capped at -50.
+// A local copy here once had it as a flat -10 per degree, which made a bare
+// success worth nothing and an excellent one worth half what it should be.
+assert.equal(evasionPenalty(0), -10);
+assert.equal(evasionPenalty(3), -40);
+assert.equal(evasionPenalty(9), -50, 'hard cap');
 
 // A failed test is not a buff: negative or junk degrees give nothing rather
 // than quietly penalising your own crew.
 for (const bad of [-1, -5, null, undefined, 'two', NaN]) {
   assert.equal(backsIntoIt(bad), 0, 'backsIntoIt ' + bad);
   assert.equal(lockBonus(bad), 0, 'lockBonus ' + bad);
-  assert.equal(evasionPenalty(bad), 0, 'evasionPenalty ' + bad);
+  assert.equal(evasionPenalty(bad), -10, 'evasionPenalty ' + bad);
 }
+
+/* ---- the GM is orthogonal to the station ---- */
+
+// A GM needs no station at all, which is the normal case for one running NPC
+// ships, and can write every field.
+for (const f of SHIP_FIELDS) {
+  assert.equal(can(null, f, { isGm: true }), true, 'gm: ' + f);
+}
+assert.equal(can('stowaway', 'morale', { isGm: true }), true);
+// even a GM cannot write a field that does not exist
+assert.equal(can(null, 'selfDestruct', { isGm: true }), false);
+
+// No station owns the GM-only fields — not even the Lord-Captain's override.
+// The Captain commands the ship; they do not author the encounter.
+assert.deepEqual(GM_ONLY_FIELDS, ['phase', 'enemies']);
+for (const f of GM_ONLY_FIELDS) {
+  assert.equal(can('lordcaptain', f), false, 'captain must not write ' + f);
+  assert.equal(can(null, f, { isGm: true }), true);
+}
+assert.deepEqual(deniedWrites('lordcaptain', ['morale', 'phase']), ['phase']);
+assert.deepEqual(deniedWrites('lordcaptain', ['morale', 'phase'], { isGm: true }), []);
+
+/* ---- events belong to the GM alone ---- */
+
+assert.ok(GM_EVENTS.length >= 10);
+for (const e of GM_EVENTS) {
+  assert.ok(e.id && e.name && e.note, e.id);
+  assert.ok(e.writes.length, e.id + ': writes something');
+  for (const f of e.writes) {
+    assert.ok(SHIP_FIELDS.includes(f), `${e.id}: unknown field ${f}`);
+    // and a GM is permitted every field its own events write
+    assert.equal(can(null, f, { isGm: true }), true);
+  }
+}
+assert.equal(eventById('warp_storm').name, 'Warp storm');
+assert.equal(eventById('nope'), null);
+
+assert.equal(canTriggerEvent('fire', true), true);
+// The Enginseer owns `fires` and still cannot start one: owning the field is
+// not authority to author the event that writes it.
+assert.equal(canTriggerEvent('fire', false), false);
+assert.equal(can('enginseer', 'fires'), true);
+assert.equal(canTriggerEvent('nonsense', true), false);
+assert.equal(canTriggerEvent('fire', undefined), false);
 
 /* ---- the worked example from the design ---- */
 

@@ -16,7 +16,9 @@
 export const SHIP_FIELDS = [
   'morale', 'population', 'hullIntegrity', 'power', 'componentStatus',
   'speed', 'heading', 'evasion', 'targetLocks', 'detection', 'jamming',
-  'translation', 'profitFactor', 'crewRatingBuff', 'diceModifiers', 'fires'
+  'translation', 'profitFactor', 'crewRatingBuff', 'diceModifiers', 'fires',
+  // GM-only: no station owns these
+  'phase', 'enemies'
 ];
 
 const R = (id, name, career, department, fields, action) => ({
@@ -99,22 +101,83 @@ export function rolesForCareer(career) {
     r.career.toLowerCase().split('(')[0].trim() === want);
 }
 
+/* --------------------------------- the GM ---------------------------------
+   Station and GM are orthogonal on purpose.
+
+   A station says which department you command. GM is the authority to override
+   any department AND to make the things happen that no station can: a hull
+   breach, a fire, a boarding party, a warp storm. The two come apart in play —
+   a group where a player captains the ship still needs someone to throw the
+   warp storm at them — so folding "GM" into the Lord-Captain station would
+   leave that group unable to run an encounter. Where the GM also plays the
+   Rogue Trader, one person simply holds both.
+
+   The GM is the dynasty's creator. That is recorded on the dynasty, not here:
+   this module only answers what a GM is allowed to do. */
+
+// What a GM can trigger, and which fields each one writes. The fields matter
+// because the same all-or-nothing rule applies: an event is applied whole.
+const E = (id, name, writes, note) => ({ id, name, writes, note });
+
+export const GM_EVENTS = [
+  E('hull_breach', 'Hull breach', ['hullIntegrity', 'population'],
+    'Atmosphere and crew go out through the hole.'),
+  E('fire', 'Fire', ['fires'],
+    'Burns until damage control reaches it.'),
+  E('macro_strike', 'Macrobattery strike', ['hullIntegrity', 'population'],
+    'A broadside lands.'),
+  E('lance_strike', 'Lance strike', ['hullIntegrity', 'componentStatus'],
+    'Ignores armour; tends to take a component with it.'),
+  E('boarding', 'Boarding action', ['population', 'morale'],
+    'Hand-to-hand through the decks.'),
+  E('warp_storm', 'Warp storm', ['translation', 'hullIntegrity', 'morale'],
+    'The Immaterium turns on the ship.'),
+  E('morale_shock', 'Morale shock', ['morale'],
+    'Something the crew should not have seen.'),
+  E('plague', 'Plague', ['population'],
+    'Attrition through the lower decks.'),
+  E('component_damage', 'Component damaged', ['componentStatus', 'power'],
+    'Takes a system offline until repaired.'),
+  E('advance_phase', 'Advance the phase', ['phase'],
+    'Command & Engineering, then Manoeuvre, then Shooting.'),
+  E('enemy_update', 'Enemy ships', ['enemies'],
+    'Add, damage or remove an opposing ship.')
+];
+
+export const eventById = (id) => GM_EVENTS.find((e) => e.id === id) || null;
+
+// Only a GM triggers events. A station never does, whatever it owns —
+// otherwise the Enginseer, who owns `fires`, could start one.
+export const canTriggerEvent = (eventId, isGm) => Boolean(isGm) && Boolean(eventById(eventId));
+
 /* ------------------------------ permissions ------------------------------ */
 
-// May this role write this field?
-export function can(roleId, field) {
+// Declared above `can` rather than below it: a const read during module
+// evaluation from a position above its declaration is a TDZ error, and this
+// project has already had one of those blank every screen.
+export const GM_ONLY_FIELDS = ['phase', 'enemies'];
+
+// May this actor write this field?
+//
+// isGm is checked before the station, so a GM needs no station at all — which
+// is the normal case for a GM running NPC ships.
+export function can(roleId, field, { isGm = false } = {}) {
+  if (!SHIP_FIELDS.includes(field)) return false;   // unknown field, not a typo to honour
+  if (isGm) return true;
   const role = roleById(roleId);
   if (!role) return false;
-  if (!SHIP_FIELDS.includes(field)) return false;   // unknown field, not a typo to honour
+  // no station owns the GM-only fields, so '*' must not reach them either:
+  // the Lord-Captain commands the ship, they do not author the encounter
+  if (GM_ONLY_FIELDS.includes(field)) return false;
   return role.fields.includes('*') || role.fields.includes(field);
 }
 
-// Which of an action's writes this role may not make. Empty means the whole
+// Which of an action's writes this actor may not make. Empty means the whole
 // payload is permitted; anything else should be refused as a unit rather than
 // applied in part, or a half-executed order leaves the ship in a state no
 // player chose.
-export function deniedWrites(roleId, fields) {
-  return (fields || []).filter((f) => !can(roleId, f));
+export function deniedWrites(roleId, fields, opts) {
+  return (fields || []).filter((f) => !can(roleId, f, opts));
 }
 
 /* --------------------------- delegating to crew ---------------------------
@@ -128,21 +191,12 @@ export function crewTarget(baseRating, buff = 0) {
   return Math.max(0, Math.min(100, n));
 }
 
-// +5 per Degree of Success, which is the First Officer's signature action.
-export const backsIntoIt = (degreesOfSuccess) =>
-  Math.max(0, Math.floor(Number(degreesOfSuccess) || 0)) * 5;
-
-// Evasive Manoeuvres: attackers take 10 × DoS as a penalty, so the value is
-// returned negative — it is applied to someone else's test.
+// The maths for the signature actions — evasion, target locks, crew buffs —
+// lives in voidcombat.js, next to the to-hit calculation that consumes it.
 //
-// Negating zero yields -0, which is falsy and equal to 0 but is a distinct
-// value to Object.is and survives a JSON round trip as -0. This goes over the
-// wire in an action payload, so it returns a plain zero instead.
-export const evasionPenalty = (degreesOfSuccess) => {
-  const dos = Math.max(0, Math.floor(Number(degreesOfSuccess) || 0));
-  return dos === 0 ? 0 : -dos * 10;
-};
-
-// Lock on Target: +5 per Degree of Success to everyone shooting at it.
-export const lockBonus = (degreesOfSuccess) =>
-  Math.max(0, Math.floor(Number(degreesOfSuccess) || 0)) * 5;
+// It was briefly duplicated here, and the copy was wrong: evasion was written
+// as -10 per Degree of Success when the rule is -10 AND a further -10 per
+// degree, capped at -50. Two copies of a formula is one copy too many.
+export {
+  evasionPenalty, lockBonus, backsIntoItBonus as backsIntoIt
+} from './voidcombat.js';

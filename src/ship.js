@@ -88,12 +88,16 @@ export const COMPONENTS = [
   C('augur-m100', 'M-100 Auger Array', 'augurArray', -3, 0, 0,
     { note: 'Baseline Detection; adds nothing to the hull\'s own.' }),
 
-  // weapons
+  // Weapons. Strength caps the hits one attack can score; damageDice and
+  // damageBonus are separate because the engine needs the raw die to see a
+  // natural 10, which is what triggers a critical.
   C('weap-macrocannon-mars', 'Mars Macrocannon', 'weapon', -4, 2, 1,
-    { weaponClass: 'macro', str: 3, damage: '1d10+2', crit: 5, range: 6 }),
+    { weaponClass: 'macro', str: 3, damage: '1d10+2',
+      damageDice: 1, damageBonus: 2, crit: 5, range: 6 }),
   C('weap-lance-starbreaker', 'Starbreaker Lance', 'weapon', -6, 4, 2,
-    { weaponClass: 'lance', str: 1, damage: '1d10+2', crit: 3, range: 5,
-      note: 'Ignores Armour.' }),
+    { weaponClass: 'lance', str: 1, damage: '1d10+2',
+      damageDice: 1, damageBonus: 2, crit: 3, range: 5,
+      note: 'Ignores turrets and Armour.' }),
 
   // supplemental
   C('comp-munitorum', 'Munitorum', 'supplemental', -2, 3, 2,
@@ -108,6 +112,35 @@ export const COMPONENTS = [
 
 export const hullById = (id) => HULLS.find((h) => h.id === id) || null;
 export const componentById = (id) => COMPONENTS.find((c) => c.id === id) || null;
+
+/* ------------------------------- target size -------------------------------
+   A kilometre-long frigate is far harder to hit than an eight-kilometre
+   battleship, so the defender's weight class modifies the attacker's BS.
+   Matched on the class string the hulls already carry. */
+
+export const TARGET_SIZES = [
+  { test: /small craft|starfighter|bomber|assault boat/i, size: 'small', mod: -20 },
+  { test: /grand cruiser|battlecruiser/i, size: 'grand cruiser', mod: 20 },
+  { test: /battleship|starfort|station/i, size: 'battleship', mod: 30 },
+  // "Monitor-Cruiser" and "Light Cruiser" both land here, before the bare
+  // Escort test, because they contain "Cruiser"
+  { test: /cruiser/i, size: 'cruiser', mod: 10 },
+  { test: /escort|transport|raider|frigate/i, size: 'escort', mod: 0 }
+];
+
+// Escorts and transports are the baseline, so an unrecognised class reads as
+// +0 rather than guessing it is something large.
+export function targetSize(hullClass) {
+  const s = String(hullClass || '');
+  const hit = TARGET_SIZES.find((t) => t.test.test(s));
+  return hit ? { size: hit.size, mod: hit.mod } : { size: 'escort', mod: 0 };
+}
+
+export const targetSizeModifier = (hullClass) => targetSize(hullClass).mod;
+
+// Only escorts and light cruisers evade freely; heavier hulls are sluggish.
+export const evadesFreely = (hullClass) =>
+  /escort|transport|raider|frigate|light cruiser/i.test(String(hullClass || ''));
 
 /* ------------------------------ crew rating ------------------------------ */
 

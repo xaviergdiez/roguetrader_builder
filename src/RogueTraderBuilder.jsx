@@ -2027,73 +2027,117 @@ const CSS = `
 .rt-print{display:none;}
 
 @media print{
-  @page{margin:14mm;}
+  /* The root element's background covers the whole canvas, page margins
+     included, so the sheet still bleeds dark to every edge while each page
+     keeps a real margin. Padding on the content instead would only inset the
+     first page — anything flowing onto page two would start against the edge. */
+  @page{margin:12mm;}
+
+  /* Every rule below would be dropped as "background graphics" without this.
+     It is what makes the printed sheet the app's sheet rather than a
+     black-on-white transcript of it. */
+  html,body,.rt-root,.rt-print,.rt-print *{
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;}
 
   .rt-head,.rt-nav,.rt-steps,dialog,.no-print{display:none!important;}
   /* one rule for the id card, stat sheet, tab rail and tab panel */
   .rt-dossier > *:not(.rt-print){display:none!important;}
-  .rt-root::after{display:none;}          /* the vignette would grey the paper */
+  .rt-root::after{display:none;}     /* the vignette darkens the lower corners */
 
-  .rt-root{background:#fff;color:#000;min-height:0;font-size:10.5pt;}
+  /* The literal, not var(--void): the custom properties are declared on
+     .rt-root, so html and body cannot see them. Same value as index.html. */
+  html,body{background:#070a08;}
+  .rt-root{min-height:0;font-size:10.5pt;color:var(--text);
+    /* fixed attachment paints the gradient on the first page only */
+    background:var(--void);background-attachment:scroll;}
   .rt-wrap{max-width:none;padding:0;}
-  *,*::before,*::after{box-shadow:none!important;text-shadow:none!important;
-    background-image:none!important;}
+
+  /* Glows read as smudges on paper; the colour they were carrying stays. */
+  *,*::before,*::after{text-shadow:none!important;box-shadow:none!important;}
 
   .rt-print{display:block;}
-  .rt-print h1,.rt-print h2{color:#000;}
 
-  .rt-pr-head{display:flex;gap:14px;align-items:flex-start;
-    padding-bottom:8px;margin-bottom:12px;border-bottom:2px solid #000;}
-  .rt-pr-portrait{width:32mm;height:42mm;object-fit:cover;flex:none;
-    border:1px solid #000;
-    /* the portrait is the one image on the sheet, so it keeps its ink */
-    -webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  /* ---- identity: brass-bezelled glass, as on the dossier ---- */
+  .rt-pr-head{display:flex;gap:6mm;align-items:flex-start;
+    padding:5mm;margin-bottom:5mm;
+    border:1px solid var(--brass);
+    background:linear-gradient(180deg,var(--panel2),var(--panel) 60%,var(--well));}
+  .rt-pr-portrait{width:34mm;height:45mm;object-fit:cover;flex:none;
+    border:1px solid var(--brass-lit);}
   .rt-pr-id{flex:1;min-width:0;}
   .rt-print h1{font-family:var(--display);font-size:19pt;margin:0;
-    letter-spacing:.02em;text-transform:uppercase;}
-  .rt-pr-sub{font-size:10pt;margin:3px 0 8px;font-style:italic;}
+    letter-spacing:.04em;text-transform:uppercase;color:var(--brass-lit);}
+  .rt-pr-sub{font-family:var(--mono);font-size:8.5pt;letter-spacing:.1em;
+    margin:2mm 0 4mm;color:var(--green-dim);}
 
-  .rt-pr-stamps{display:flex;flex-wrap:wrap;gap:4mm;margin:0;}
-  .rt-pr-stamps > div{border:1px solid #000;padding:2mm 3mm;min-width:18mm;}
-  .rt-pr-stamps dt{font-family:var(--mono);font-size:7pt;letter-spacing:.12em;
-    text-transform:uppercase;}
-  .rt-pr-stamps dd{margin:1mm 0 0;font-family:var(--display);font-size:14pt;
-    font-weight:700;line-height:1;}
+  /* ---- the gauge tiles ---- */
+  .rt-pr-stamps{display:flex;flex-wrap:wrap;gap:3mm;margin:0;}
+  .rt-pr-stamps > div{border:1px solid var(--brass);padding:2mm 3mm;min-width:20mm;
+    text-align:center;
+    background:linear-gradient(180deg,#241d0f,#0d1109);}
+  .rt-pr-stamps dt{font-family:var(--mono);font-size:7pt;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--brass-lit);opacity:.85;}
+  .rt-pr-stamps dd{margin:1.5mm 0 0;font-family:var(--display);font-size:15pt;
+    font-weight:700;line-height:1;color:var(--gold-lit);}
 
-  /* Ticked with a pen at the table, so they have to survive the colour strip. */
-  .rt-pr-boxes{display:flex;flex-wrap:wrap;gap:1.2mm;margin-top:2mm;}
-  .rt-pr-box{width:4.5mm;height:4.5mm;border:1px solid #000;}
-  .rt-pr-box.taken{background:#000;
-    -webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  /* Ticked with a pen at the table, so a taken box is filled and the rest are
+     left as empty brass outlines to write into. */
+  .rt-pr-boxes{display:flex;flex-wrap:wrap;gap:1.2mm;margin-top:3mm;}
+  .rt-pr-box{width:4.5mm;height:4.5mm;border:1px solid var(--brass);
+    background:var(--well);}
+  .rt-pr-box.taken{background:var(--crimson);border-color:var(--rust);}
 
-  .rt-pr-sect{margin-bottom:9pt;break-inside:avoid;page-break-inside:avoid;}
-  .rt-pr-sect > h2{font-family:var(--mono);font-size:8pt;letter-spacing:.18em;
-    text-transform:uppercase;margin:0 0 4pt;padding-bottom:2pt;
-    border-bottom:1px solid #000;}
+  /* ---- parchment sections, the same inserts the dossier uses ---- */
+  .rt-pr-sect{margin-bottom:4mm;padding:4mm;
+    break-inside:avoid;page-break-inside:avoid;
+    color:var(--parch-ink);
+    border:1px solid var(--brass-dim);
+    background:
+      repeating-linear-gradient(94deg,rgba(120,100,60,.05) 0 2px,transparent 2px 5px),
+      linear-gradient(172deg,var(--parch-hi),var(--parch) 55%,#d8cba7);}
+  .rt-pr-sect > h2{display:flex;align-items:center;gap:2mm;
+    font-family:var(--mono);font-size:8pt;letter-spacing:.18em;
+    text-transform:uppercase;margin:0 0 3mm;color:#6d5726;}
+  .rt-pr-sect > h2::after{content:"";flex:1;height:1px;
+    background:linear-gradient(90deg,rgba(109,87,38,.55),transparent);}
   .rt-pr-cols{columns:2;column-gap:8mm;}
   .rt-pr-cols.three{columns:3;}
-  .rt-pr-list{margin:0;padding-left:4.5mm;font-size:9.5pt;line-height:1.5;}
+  .rt-pr-list{margin:0;padding-left:4.5mm;font-size:9.5pt;line-height:1.55;
+    orphans:2;widows:2;}
   .rt-pr-list li{break-inside:avoid;page-break-inside:avoid;}
-  .rt-pr-none{margin:0;font-size:9.5pt;font-style:italic;}
+  .rt-pr-list li::marker{color:#8a6f31;}
+  .rt-pr-none{margin:0;font-size:9.5pt;font-style:italic;color:var(--parch-dim);}
 
-  .rt-pr-chars{width:100%;border-collapse:collapse;font-size:9.5pt;}
-  .rt-pr-chars th,.rt-pr-chars td{border:1px solid #000;padding:1.6mm 2mm;
-    text-align:left;}
-  .rt-pr-chars th{font-family:var(--mono);font-size:7.5pt;letter-spacing:.12em;
-    text-transform:uppercase;}
-  .rt-pr-chars td.n{text-align:center;font-family:var(--display);font-size:12pt;
-    font-weight:700;width:16mm;}
-  /* room to write the modified value a test actually uses */
-  .rt-pr-chars td.blank{width:24mm;}
+  /* ---- characteristics: the backlit stat panel, not a parchment table ---- */
+  .rt-pr-chars{width:100%;border-collapse:collapse;font-size:9.5pt;
+    color:var(--text);
+    background:linear-gradient(180deg,var(--panel),var(--well));}
+  .rt-pr-chars th,.rt-pr-chars td{border:1px solid var(--brass-dim);
+    padding:1.8mm 2.5mm;text-align:left;}
+  .rt-pr-chars th{font-family:var(--mono);font-size:7.5pt;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--brass-lit);
+    border-color:var(--brass);}
+  .rt-pr-chars td.n{text-align:center;font-family:var(--display);font-size:13pt;
+    font-weight:700;width:16mm;color:var(--green);}
+  /* left empty on purpose: the value a test actually uses, written in by hand */
+  .rt-pr-chars td.blank{width:24mm;background:var(--well);}
+  /* the characteristics block is glass, so it keeps the dark frame */
+  .rt-pr-sect.rt-pr-dark{background:none;border-color:var(--brass);
+    padding:0;color:var(--text);}
+  .rt-pr-sect.rt-pr-dark > h2{color:var(--brass-lit);
+    padding:3mm 3mm 0;margin-bottom:2mm;}
+  .rt-pr-sect.rt-pr-dark > h2::after{
+    background:linear-gradient(90deg,var(--brass-dim),transparent);}
 
-  .rt-pr-kv{margin:0;font-size:9.5pt;line-height:1.55;}
-  .rt-pr-kv dt{font-family:var(--mono);font-size:7.5pt;letter-spacing:.12em;
-    text-transform:uppercase;float:left;clear:left;width:34mm;}
+  .rt-pr-kv{margin:0;font-size:9.5pt;line-height:1.6;}
+  .rt-pr-kv dt{font-family:var(--mono);font-size:7.5pt;letter-spacing:.14em;
+    text-transform:uppercase;float:left;clear:left;width:34mm;color:#6d5726;}
   .rt-pr-kv dd{margin:0 0 1mm 34mm;}
 
-  .rt-pr-foot{margin-top:6mm;padding-top:2mm;border-top:1px solid #000;
-    font-family:var(--mono);font-size:7pt;letter-spacing:.1em;
-    display:flex;justify-content:space-between;}
+  .rt-pr-foot{margin-top:5mm;padding-top:2mm;
+    border-top:1px solid var(--brass-dim);
+    font-family:var(--mono);font-size:7pt;letter-spacing:.12em;
+    color:var(--dim);display:flex;justify-content:space-between;}
 }
 `;
 
@@ -3967,7 +4011,9 @@ function PrintSheet({ name, career, picked, totals, mods, ws, fate, profit, xp, 
         </div>
       </header>
 
-      <section className="rt-pr-sect">
+      {/* glass rather than parchment: the stat panel reads as the cogitator
+          screen it is on the dossier */}
+      <section className="rt-pr-sect rt-pr-dark">
         <h2>Characteristics</h2>
         <table className="rt-pr-chars">
           <thead>

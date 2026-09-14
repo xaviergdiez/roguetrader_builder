@@ -1,0 +1,123 @@
+// Self-check for ship roles and permissions. Run: node src/shiproles.check.mjs
+//
+// This is the file that matters most of the three: a permission table that is
+// wrong in the permissive direction lets a gunner repair the drive, and one
+// that is wrong in the strict direction silently swallows a legal order.
+import assert from 'node:assert/strict';
+import {
+  SHIP_ROLES, SHIP_FIELDS, roleById, rolesForCareer,
+  can, deniedWrites, crewTarget, backsIntoIt, evasionPenalty, lockBonus
+} from './shiproles.js';
+
+/* ---- the table is well formed ---- */
+
+assert.equal(SHIP_ROLES.length, 10);
+const ids = SHIP_ROLES.map((r) => r.id);
+assert.equal(new Set(ids).size, ids.length, 'role ids are unique');
+
+for (const r of SHIP_ROLES) {
+  assert.ok(r.name && r.career && r.department, r.id + ': identity');
+  assert.ok(r.fields.length, r.id + ': owns at least one field');
+  // every field a role claims must be a real one, or `can` will refuse an
+  // order the table meant to allow
+  for (const f of r.fields) {
+    assert.ok(f === '*' || SHIP_FIELDS.includes(f), `${r.id}: unknown field ${f}`);
+  }
+  assert.ok(r.action && r.action.name && r.action.test && r.action.effect,
+    r.id + ': signature action');
+  // an action must only write fields its own role owns, or the role could not
+  // perform its own signature move
+  assert.deepEqual(deniedWrites(r.id, r.action.writes), [],
+    `${r.id}: cannot perform its own action`);
+}
+
+// Only the Lord-Captain overrides everything. If a second role gained '*' the
+// whole matrix would stop meaning anything.
+assert.deepEqual(SHIP_ROLES.filter((r) => r.fields.includes('*')).map((r) => r.id),
+  ['lordcaptain']);
+
+/* ---- permissions ---- */
+
+assert.equal(can('enginseer', 'hullIntegrity'), true);
+assert.equal(can('enginseer', 'componentStatus'), true);
+assert.equal(can('enginseer', 'heading'), false, 'engineering does not steer');
+assert.equal(can('helmsman', 'heading'), true);
+assert.equal(can('helmsman', 'hullIntegrity'), false, 'the helm does not repair');
+assert.equal(can('ordnance', 'targetLocks'), true);
+assert.equal(can('ordnance', 'power'), false, 'gunnery does not reroute power');
+assert.equal(can('chirurgeon', 'population'), true);
+
+// the Captain can countermand any department
+for (const f of SHIP_FIELDS) assert.equal(can('lordcaptain', f), true, 'captain: ' + f);
+
+// Unknown roles and unknown fields are refused rather than waved through.
+assert.equal(can('stowaway', 'morale'), false);
+assert.equal(can(undefined, 'morale'), false);
+assert.equal(can('lordcaptain', 'selfDestruct'), false, 'even the captain cannot write an unknown field');
+assert.equal(can('enginseer', ''), false);
+
+/* ---- a payload is allowed or refused as a whole ---- */
+
+// Morale is shared by the First Officer, the High Factotum and the Chirurgeon;
+// hull integrity belongs to the Enginseer alone.
+assert.deepEqual(deniedWrites('factotum', ['morale']), []);
+assert.deepEqual(deniedWrites('factotum', ['morale', 'hullIntegrity']), ['hullIntegrity']);
+assert.deepEqual(deniedWrites('enginseer', ['hullIntegrity', 'fires']), []);
+assert.deepEqual(deniedWrites('lordcaptain', ['morale', 'speed', 'targetLocks']), []);
+assert.deepEqual(deniedWrites('helmsman', []), []);
+assert.deepEqual(deniedWrites('helmsman', undefined), []);
+
+/* ---- career suggestions ---- */
+
+assert.deepEqual(rolesForCareer('Rogue Trader').map((r) => r.id), ['lordcaptain']);
+assert.deepEqual(rolesForCareer('Explorator').map((r) => r.id), ['enginseer']);
+// a career the sheet spells with a parenthetical still matches
+assert.deepEqual(rolesForCareer('Explorator (Heretek)').map((r) => r.id), ['enginseer']);
+assert.deepEqual(rolesForCareer('Navigator (Magisterial House)').map((r) => r.id), ['warpguide']);
+// Void-Master fills two stations, so both are offered
+assert.deepEqual(rolesForCareer('Void-Master').map((r) => r.id), ['helmsman', 'etherics']);
+// A Seneschal fits two stations: the matrix lists the First Officer's career
+// as "Seneschal / Any", so both are offered and the player picks.
+assert.deepEqual(rolesForCareer('Seneschal').map((r) => r.id),
+  ['firstofficer', 'factotum']);
+assert.deepEqual(rolesForCareer('Eldar Corsair'), [], 'no station is implied');
+assert.deepEqual(rolesForCareer(''), []);
+assert.deepEqual(rolesForCareer(null), []);
+
+/* ---- delegating to the crew ---- */
+
+assert.equal(crewTarget(30), 30);              // Competent, unbuffed
+assert.equal(crewTarget(30, 10), 40);          // "rolls against 40 instead of 30"
+assert.equal(crewTarget(50, 10), 60);
+// a target is a percentile, so it cannot leave 0-100
+assert.equal(crewTarget(95, 20), 100);
+assert.equal(crewTarget(20, -40), 0);
+assert.equal(crewTarget(undefined), 0);
+
+/* ---- the signature action maths ---- */
+
+assert.equal(backsIntoIt(0), 0);
+assert.equal(backsIntoIt(2), 10, '+5 per Degree of Success');
+assert.equal(backsIntoIt(3), 15);
+assert.equal(lockBonus(4), 20, '+5 per Degree of Success');
+assert.equal(evasionPenalty(3), -30, '10 x DoS, applied against the attacker');
+assert.equal(evasionPenalty(0), 0);
+
+// A failed test is not a buff: negative or junk degrees give nothing rather
+// than quietly penalising your own crew.
+for (const bad of [-1, -5, null, undefined, 'two', NaN]) {
+  assert.equal(backsIntoIt(bad), 0, 'backsIntoIt ' + bad);
+  assert.equal(lockBonus(bad), 0, 'lockBonus ' + bad);
+  assert.equal(evasionPenalty(bad), 0, 'evasionPenalty ' + bad);
+}
+
+/* ---- the worked example from the design ---- */
+
+// The Captain's Put Your Backs Into It! at 2 DoS turns a Competent crew's 30
+// into 40 for the turn, so a delegated repair rolls against 40.
+assert.equal(crewTarget(30, backsIntoIt(2)), 40);
+
+assert.equal(roleById('enginseer').department, 'Enginarium, plasma drive, tech-shrines');
+assert.equal(roleById('nope'), null);
+
+console.log('shiproles: all checks passed (%d roles)', SHIP_ROLES.length);

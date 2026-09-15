@@ -3,6 +3,8 @@
 //   POST /api/bridge  {action:"create", name}          -> {dynasty, ship}
 //   POST /api/bridge  {action:"join", code, charId, name, role}
 //   POST /api/bridge  {action:"leave", code}
+//   POST /api/bridge  {action:"assign", code, charId, name, role}   (GM only)
+//   POST /api/bridge  {action:"unassign", code, charId}             (GM only)
 //   GET  /api/bridge?code=<code>[&since=<rev>]         -> {dynasty, ship} | 204
 //   POST /api/bridge  {action:"write", code, vitals, doc, log}
 //   POST /api/bridge  {action:"event", code, event}
@@ -27,6 +29,7 @@ import { requireSession, getUser, saveUser } from "../lib/auth.js";
 import {
   dynastyKey, shipKey, newCode, normaliseCode,
   newDynasty, isGm, memberOf, joinDynasty, leaveDynasty,
+  assignNpc, unassignNpc,
   authorizeWrite, authorizeEvent,
   newShip, applyPatch, applyWrite, appendLog, redactShip, redactDynasty
 } from "../lib/bridge.js";
@@ -153,9 +156,12 @@ export default async function handler(req, res) {
   /* -------------------------------- joining -------------------------------- */
 
   if (action === "join") {
-    const next = joinDynasty(dynasty, {
+    const { dynasty: next, error } = joinDynasty(dynasty, {
       uid, charId: body.charId, name: body.name, role: body.role
     });
+    // The Rogue Trader is the GM's character; a player asking for that
+    // station is told so rather than seated somewhere else.
+    if (error) return res.status(403).json({ error });
     await redis.set(dynastyKey(code), next);
     await remember(uid, code);
     const gm = isGm(next, uid);
@@ -164,6 +170,40 @@ export default async function handler(req, res) {
       ship: redactShip(ship, { isGm: gm }),
       isGm: gm,
       pollSeconds: POLL_SECONDS
+    });
+  }
+
+  /* ------------------------ the GM's officers ------------------------
+     A GM runs a bridge full of NPCs, each one a character from their own
+     roster seated at its own station. Player seats are one per account;
+     these are one per character, so they are addressed by charId. */
+
+  if (action === "assign" || action === "unassign") {
+    if (!isGm(dynasty, uid)) {
+      return res.status(403).json({ error: "gm_only" });
+    }
+
+    if (action === "unassign") {
+      const next = unassignNpc(dynasty, body.charId);
+      await redis.set(dynastyKey(code), next);
+      return res.status(200).json({
+        dynasty: redactDynasty(next, { isGm: true }),
+        isGm: true
+      });
+    }
+
+    const { dynasty: next, error } = assignNpc(dynasty, {
+      uid, charId: body.charId, name: body.name, role: body.role
+    });
+    if (error) {
+      // 409 rather than 400 for the cap: the request is well formed, the
+      // bridge is simply full.
+      return res.status(error === "too_many_npcs" ? 409 : 400).json({ error });
+    }
+    await redis.set(dynastyKey(code), next);
+    return res.status(200).json({
+      dynasty: redactDynasty(next, { isGm: true }),
+      isGm: true
     });
   }
 

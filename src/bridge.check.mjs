@@ -22,7 +22,7 @@ globalThis.fetch = async (url, opts) => {
 
 const {
   createDynasty, joinBridge, writeBridge, emitEvent, readBridge,
-  pollBridge, ABSENT
+  assignNpc, unassignNpc, pollBridge, ABSENT
 } = await import('./bridge.js');
 
 const reset = () => { calls.length = 0; };
@@ -77,6 +77,25 @@ assert.match(calls[0].url, /since=7/);
 reset();
 await readBridge({ code: 'AB3K9P' });
 assert.equal(/since=/.test(calls[0].url), false, 'no rev, no since');
+
+/* ---- the GM's officers are addressed by character ---- */
+
+reset();
+nextResponse = () => ({ status: 200, body: { dynasty: { code: 'AB3K9P' }, isGm: true } });
+await assignNpc({ code: 'AB3K9P', charId: 'npc1', name: 'Bosun', role: 'firstofficer' });
+assert.deepEqual(JSON.parse(calls[0].opts.body), {
+  action: 'assign', code: 'AB3K9P', charId: 'npc1', name: 'Bosun', role: 'firstofficer'
+});
+
+reset();
+await unassignNpc({ code: 'AB3K9P', charId: 'npc1' });
+assert.deepEqual(JSON.parse(calls[0].opts.body), {
+  action: 'unassign', code: 'AB3K9P', charId: 'npc1'
+});
+
+// The bridge being full is a distinct answer from a malformed one.
+nextResponse = () => ({ status: 409, body: { error: 'too_many_npcs' } });
+await assert.rejects(assignNpc({ code: 'AB3K9P', charId: 'npc9' }), /too_many_npcs/);
 
 /* ---- failures say something a player can act on ---- */
 

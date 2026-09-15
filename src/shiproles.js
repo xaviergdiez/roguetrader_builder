@@ -106,6 +106,21 @@ export const SHIP_ROLES = [
 
 export const roleById = (id) => SHIP_ROLES.find((r) => r.id === id) || null;
 
+/* Stations a player may not take.
+
+   The Rogue Trader is the GM's character: they hold the Warrant, they decide
+   where the ship goes, and the Lord-Captain's override exists so the GM can
+   countermand a department mid-action. A player holding it would be able to
+   overrule every other player, which is not a station so much as a second GM.
+
+   The GM seats it like any other officer from their roster. */
+export const GM_ONLY_ROLES = ['lordcaptain'];
+
+export const isGmOnlyRole = (id) => GM_ONLY_ROLES.includes(id);
+
+// The stations offered to a player.
+export const playerRoles = () => SHIP_ROLES.filter((r) => !isGmOnlyRole(r.id));
+
 // The roles a career is the obvious fit for, most apt first. A suggestion for
 // the UI, not a restriction: the First Officer's career is explicitly "any",
 // and a crew short of players doubles up.

@@ -42,6 +42,10 @@ async function call(path, opts) {
         try {
           const b = await res.json();
           if (b.error === 'gm_only') why = 'Only the GM can do that.';
+      else if (b.error === 'gm_only_role') {
+        why = 'The Lord-Captain is the GM\u2019s station \u2014 the Rogue '
+          + 'Trader is their character. Pick another station.';
+      }
           else if (b.denied) why = 'Your station cannot change: ' + b.denied.join(', ');
         } catch { /* keep the default */ }
       }
@@ -66,6 +70,13 @@ export const joinBridge = ({ code, charId, name, role }) =>
   post({ action: 'join', code, charId, name, role });
 
 export const leaveBridge = (code) => post({ action: 'leave', code });
+
+// The GM's officers: one seat per character, so several from one account.
+export const assignNpc = ({ code, charId, name, role }) =>
+  post({ action: 'assign', code, charId, name, role });
+
+export const unassignNpc = ({ code, charId }) =>
+  post({ action: 'unassign', code, charId });
 
 // Two surfaces, checked separately on the server: `vitals` keys are owned by
 // stations, `doc` fields (blueprint, fleet, combat) are the GM's.

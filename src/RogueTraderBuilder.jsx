@@ -22,14 +22,17 @@ import {
   validateHull, validateComponent, usableCustom,
   hullById, componentById, validate, stats, newVitals
 } from './ship.js';
-import { SHIP_ROLES, GM_EVENTS, roleById, rolesForCareer } from './shiproles.js';
+import {
+  SHIP_ROLES, GM_EVENTS, roleById, rolesForCareer, playerRoles, isGmOnlyRole
+} from './shiproles.js';
 import {
   PHASES, PHASE_LABELS, nextPhase, initiativeOrder, toHit, hitsScored,
   resolveAttack, criticalEffect, applyEvent,
   EXTENDED_ACTIONS, mayTakeAction, actionOutcome
 } from './voidcombat.js';
 import {
-  createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, pollBridge
+  createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, pollBridge,
+  assignNpc, unassignNpc
 } from './bridge.js';
 import {
   EMPTY as EMPTY_HOMEBREW, normalise as readHomebrew, isEmpty as homebrewEmpty,
@@ -1406,6 +1409,8 @@ const CSS = `
   margin-top:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
   color:var(--dim);}
 .rt-gmvitals b{color:var(--green);font-size:12px;}
+.rt-npcseat{flex-basis:100%;display:flex;align-items:center;gap:8px;margin-top:5px;}
+.rt-npcseat .rt-sel{flex:1;min-width:0;}
 .rt-brewgrid{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;}
 .rt-brewfield{flex:1 1 110px;display:flex;flex-direction:column;gap:3px;}
 .rt-brewfield.wide{flex:1 1 100%;}
@@ -3048,7 +3053,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         <BridgePanel
           code={bridgeCode} setCode={setBridgeCode}
           characterName={name} charId={charId} shipRole={shipRole}
-          blueprint={blueprint} fleet={fleet} combat={combat}
+          blueprint={blueprint} fleet={fleet} combat={combat} roster={roster}
           onClose={() => setBridgeOpen(false)}
         />
       )}
@@ -4927,7 +4932,7 @@ const QUICK_LINES = [
    against the station's fields. */
 
 function BridgePanel({ code, setCode, characterName, charId, shipRole,
-  blueprint, fleet, combat, onClose }) {
+  blueprint, fleet, combat, roster, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -5052,6 +5057,22 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     return r;
   });
 
+  // A GM seats characters from their own roster, one station each. Player
+  // seats are one per account; these are one per character, so several from
+  // the GM's roster can be aboard at once — and the rest of the roster stays
+  // off this bridge.
+  const seat = (c, role) => run(async () => {
+    const r = await assignNpc({ code, charId: c.id, name: c.name, role });
+    setState((prev) => ({ ...(prev || null), dynasty: r.dynasty }));
+    return r;
+  }, `${c.name} took a station.`);
+
+  const unseat = (c) => run(async () => {
+    const r = await unassignNpc({ code, charId: c.id });
+    setState((prev) => ({ ...(prev || null), dynasty: r.dynasty }));
+    return r;
+  }, `${c.name} stood down.`);
+
   const isGmHere = Boolean(state && state.isGm);
   const ship = state && state.ship;
   const dynasty = state && state.dynasty;
@@ -5128,7 +5149,9 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                   const r = roleById(m.role);
                   return (
                     <li key={i} className="rt-entry">
-                      <span className="rt-entry-t">{m.name}</span>
+                      <span className="rt-entry-t">
+                        {m.name}{m.npc ? ' \u00B7 NPC' : ''}
+                      </span>
                       <span className="rt-entry-c">{r ? r.name : 'no station'}</span>
                       {r && <div className="rt-entry-d"><p>{r.department}</p></div>}
                     </li>
@@ -5140,6 +5163,55 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                   </span></li>
                 )}
               </ul>
+            </>
+          )}
+
+          {isGmHere && (
+            <>
+              <div className="rt-conds-h">Your officers</div>
+              <p className="rt-vox-hint">
+                Characters from your roster, each at its own station. Assign as
+                many as the bridge needs {'—'} the rest of your roster stays
+                off it.
+              </p>
+              {(roster || []).length === 0 ? (
+                <p className="rt-vox-hint">
+                  Nothing in your roster yet. Save a character and it can take
+                  a station here.
+                </p>
+              ) : (
+                <ul className="rt-list">
+                  {(roster || []).map((c) => {
+                    const seated = ((dynasty && dynasty.members) || [])
+                      .find((m) => m.npc && m.charId === c.id);
+                    return (
+                      <li key={c.id} className="rt-entry">
+                        <span className="rt-entry-t">{c.name || 'Unnamed adept'}</span>
+                        <span className="rt-entry-c">{c.career || 'No career'}</span>
+                        <div className="rt-npcseat">
+                          <select className="rt-sel" value={seated ? seated.role : ''}
+                            disabled={busy}
+                            onChange={(e) => (e.target.value
+                              ? seat(c, e.target.value)
+                              : (seated ? unseat(c) : null))}>
+                            <option value="">{'— not aboard —'}</option>
+                            {SHIP_ROLES.map((r) => (
+                              <option key={r.id} value={r.id}>{r.name}</option>
+                            ))}
+                          </select>
+                          {seated && (
+                            <button className="rt-rm" disabled={busy}
+                              onClick={() => unseat(c)}
+                              aria-label={'Stand ' + (c.name || 'this officer') + ' down'}>
+                              &times;
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </>
           )}
 
@@ -6184,13 +6256,24 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
         <select className="rt-sel" value={shipRole || ''}
           onChange={(e) => setShipRole(e.target.value)}>
           <option value="">{'— no station —'}</option>
-          {SHIP_ROLES.map((r) => (
+          {/* The Lord-Captain is absent on purpose: the Rogue Trader is the
+              GM's character, and the server refuses that station from a
+              player. The GM seats it like any other officer. */}
+          {playerRoles().map((r) => (
             <option key={r.id} value={r.id}>
               {r.name}{suggested.includes(r.id) ? '  ★' : ''}
             </option>
           ))}
         </select>
       </label>
+      {isGmOnlyRole(shipRole) && (
+        <div className="rt-warn">
+          <p>
+            The Lord-Captain is the GM's station {'—'} the Rogue Trader is
+            their character. Choose another and rejoin the bridge.
+          </p>
+        </div>
+      )}
       {role && (
         <div className="rt-entry-d">
           <p><b>{role.department}</b></p>

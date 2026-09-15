@@ -31,6 +31,11 @@ import {
 import {
   createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, pollBridge
 } from './bridge.js';
+import {
+  EMPTY as EMPTY_HOMEBREW, normalise as readHomebrew, isEmpty as homebrewEmpty,
+  readLocal as readLocalHomebrew, writeLocal as writeLocalHomebrew,
+  cloudGet as homebrewGet, cloudPut as homebrewPut
+} from './homebrew.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
   POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
@@ -2320,6 +2325,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // blueprint so several ships can share them, and copied INTO the blueprint
   // whenever it is edited so a ship pushed to the bridge arrives complete.
   const [homebrew, setHomebrew] = useState(EMPTY_HOMEBREW);
+  // Saving must not start before the library has been loaded, or an empty
+  // initial state would be written straight over the stored one.
+  const [homebrewLoaded, setHomebrewLoaded] = useState(false);
+  const [homebrewErr, setHomebrewErr] = useState('');
   const [shipRole, setShipRole] = useState('');    // '' = no station
   const [shipOpen, setShipOpen] = useState(false);
   const [gmOpen, setGmOpen] = useState(false);
@@ -2374,7 +2383,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
         setShipRole(s.shipRole || '');
         setFleet(Array.isArray(s.fleet) ? s.fleet : []);
         setBridgeCode(s.bridgeCode || '');
-        setHomebrew({ ...EMPTY_HOMEBREW, ...(s.homebrew || null) });
+        // Older sheets carried the library inside this blob. It has its own
+        // home now, so it is adopted once rather than lost — see the load
+        // effect below, which only adopts when nothing else is stored.
+        if (s.homebrew) legacyHomebrew.current = readHomebrew(s.homebrew);
         setCombat({ ...EMPTY_COMBAT, ...(s.combat || null) });
         if (typeof s.xp === 'number') setXp(s.xp);
         if (typeof s.stepIx === 'number') setStepIx(s.stepIx);
@@ -2390,14 +2402,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
           fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode, homebrew
+          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
   }, [name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
       fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode, homebrew, loaded]);
+      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -2562,6 +2574,46 @@ export default function RogueTraderBuilder({ me, cloud }) {
     setAvatar(null); setExtras(EMPTY_EXTRAS);
     setStepIx(0);
   };
+
+  /* ---- homebrew library: per account when signed in, per browser otherwise ---- */
+
+  const legacyHomebrew = useRef(null);
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      let lib = EMPTY_HOMEBREW;
+      try {
+        lib = cloud ? await homebrewGet() : readLocalHomebrew();
+      } catch (e) {
+        // Fall back to whatever this browser has rather than showing none.
+        lib = readLocalHomebrew();
+        if (live) setHomebrewErr(e.message);
+      }
+      // First run on an account, or a browser whose library predates its own
+      // storage key: adopt what the sheet was carrying rather than lose it.
+      if (homebrewEmpty(lib) && legacyHomebrew.current
+        && !homebrewEmpty(legacyHomebrew.current)) {
+        lib = legacyHomebrew.current;
+      }
+      if (live) { setHomebrew(lib); setHomebrewLoaded(true); }
+    })();
+    return () => { live = false; };
+  }, [cloud]);
+
+  useEffect(() => {
+    if (!homebrewLoaded) return undefined;
+    const t = setTimeout(() => {
+      // Written to this browser either way, so a library survives being
+      // signed out and is there to fall back on.
+      writeLocalHomebrew(homebrew);
+      if (!cloud) return;
+      homebrewPut(homebrew)
+        .then(() => setHomebrewErr(''))
+        .catch((e) => setHomebrewErr(e.message));
+    }, 600);
+    return () => clearTimeout(t);
+  }, [homebrew, homebrewLoaded, cloud]);
 
   /* ---- roster: save / open / delete / start fresh ---- */
 
@@ -2988,6 +3040,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
       {brewOpen && (
         <HomebrewEditor homebrew={homebrew} setHomebrew={setHomebrew}
+          err={homebrewErr} cloud={cloud}
           onClose={() => setBrewOpen(false)} />
       )}
 
@@ -3019,7 +3072,6 @@ const EMPTY_BLUEPRINT = {
 // built rather than the ship as it currently stands.
 const EMPTY_COMBAT = { phase: 'extended', order: [], playerVitals: null };
 
-const EMPTY_HOMEBREW = { hulls: [], components: [] };
 
 // Anything absent is defaulted rather than trusted: a blueprint saved before a
 // field existed would otherwise arrive as undefined and break the editor.
@@ -5661,7 +5713,7 @@ const BLANK_COMPONENT = {
   note: ''
 };
 
-function HomebrewEditor({ homebrew, setHomebrew, onClose }) {
+function HomebrewEditor({ homebrew, setHomebrew, err, cloud, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -5723,10 +5775,16 @@ function HomebrewEditor({ homebrew, setHomebrew, onClose }) {
         <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
       </div>
 
+      {err && <div className="rt-warn"><p>{err}</p></div>}
+
       <p className="rt-vox-hint">
         Hulls and components of your own. They appear alongside the built-ins
         everywhere, and travel with any ship that uses them {'\u2014'} a
         homebrew ship pushed to the bridge arrives complete.
+        {' '}
+        {cloud
+          ? 'Saved to your account, so they follow you to any device.'
+          : 'Saved in this browser only. Sign in to reach them elsewhere.'}
       </p>
 
       <div className="rt-opts">

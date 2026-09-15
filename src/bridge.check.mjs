@@ -21,7 +21,7 @@ globalThis.fetch = async (url, opts) => {
 };
 
 const {
-  createDynasty, joinBridge, patchShip, emitEvent, readBridge,
+  createDynasty, joinBridge, writeBridge, emitEvent, readBridge,
   pollBridge, ABSENT
 } = await import('./bridge.js');
 
@@ -42,18 +42,26 @@ assert.deepEqual(JSON.parse(calls[0].opts.body), {
   action: 'join', code: 'AB3K9P', charId: 'c1', name: 'Linus', role: 'enginseer'
 });
 
-// A patch declares the fields it writes, derived from the patch itself so the
-// two cannot disagree.
+// A write names its two surfaces separately, because the server governs them
+// differently: station-owned vitals, and the GM's document fields.
 reset();
-await patchShip({ code: 'AB3K9P', patch: { hullIntegrity: 52, fires: [] }, log: 'repaired' });
+await writeBridge({
+  code: 'AB3K9P', vitals: { hullIntegrity: 52, fires: [] }, log: 'repaired'
+});
 {
   const sent = JSON.parse(calls[0].opts.body);
-  assert.deepEqual(sent.fields.sort(), ['fires', 'hullIntegrity']);
+  assert.equal(sent.action, 'write');
+  assert.deepEqual(Object.keys(sent.vitals).sort(), ['fires', 'hullIntegrity']);
+  assert.equal(sent.doc, undefined);
   assert.equal(sent.log, 'repaired');
 }
 reset();
-await patchShip({ code: 'X', patch: null });
-assert.deepEqual(JSON.parse(calls[0].opts.body).fields, []);
+await writeBridge({ code: 'X', doc: { fleet: [] } });
+{
+  const sent = JSON.parse(calls[0].opts.body);
+  assert.deepEqual(sent.doc, { fleet: [] });
+  assert.equal(sent.vitals, undefined);
+}
 
 reset();
 await emitEvent({ code: 'AB3K9P', event: { id: 'fire' } });
@@ -88,7 +96,7 @@ nextResponse = () => ({ status: 403, body: { error: 'gm_only' } });
 await assert.rejects(emitEvent({ code: 'AB3K9P', event: { id: 'fire' } }), /Only the GM/);
 
 nextResponse = () => ({ status: 403, body: { denied: ['heading'] } });
-await assert.rejects(patchShip({ code: 'AB3K9P', patch: { heading: 90 } }),
+await assert.rejects(writeBridge({ code: 'AB3K9P', vitals: { heading: 90 } }),
   /station cannot change: heading/);
 
 // A plain `npm run dev` answers /api/* with the SPA shell at 200. A 2xx is

@@ -15,6 +15,9 @@ import {
 assert.equal(SHIP_ROLES.length, 10);
 const ids = SHIP_ROLES.map((r) => r.id);
 assert.equal(new Set(ids).size, ids.length, 'role ids are unique');
+// A duplicate is harmless to includes() and still a mistake — it was how
+// diceModifiers ended up in the list twice.
+assert.equal(new Set(SHIP_FIELDS).size, SHIP_FIELDS.length, 'ship fields are unique');
 
 for (const r of SHIP_ROLES) {
   assert.ok(r.name && r.career && r.department, r.id + ': identity');

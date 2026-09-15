@@ -23,10 +23,11 @@ import {
 import { SHIP_ROLES, GM_EVENTS, roleById, rolesForCareer } from './shiproles.js';
 import {
   PHASES, PHASE_LABELS, nextPhase, initiativeOrder, toHit, hitsScored,
-  resolveAttack, criticalEffect, applyEvent
+  resolveAttack, criticalEffect, applyEvent,
+  EXTENDED_ACTIONS, mayTakeAction, actionOutcome
 } from './voidcombat.js';
 import {
-  createDynasty, joinBridge, leaveBridge, patchShip, pollBridge
+  createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, pollBridge
 } from './bridge.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
@@ -4847,6 +4848,8 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole, blueprint
   const [busy, setBusy] = useState(false);
   const [entry, setEntry] = useState('');
   const [dynastyName, setDynastyName] = useState('');
+  const [skill, setSkill] = useState(40);
+  const [aimed, setAimed] = useState('');
   const revRef = useRef(0);
 
   // The poll reads the rev through a ref so changing it does not restart the
@@ -4908,14 +4911,49 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole, blueprint
   // The GM's copy is authoritative for the ship as built and the battle in
   // progress, so pushing is one call rather than a merge.
   const push = () => run(async () => {
-    const r = await patchShip({
+    const r = await writeBridge({
       code,
-      patch: { blueprint, fleet, combat, vitals: combat.playerVitals || newVitals(blueprint) },
+      doc: { blueprint, fleet, combat },
+      vitals: combat.playerVitals || newVitals(blueprint),
       log: 'The GM updated the bridge.'
     });
     revRef.current = Number(r.rev) || revRef.current;
     return r;
   }, 'Pushed to the bridge.');
+
+  // Take one of your station's extended actions: roll, work out what it
+  // writes, and send that. The server checks the fields against the station
+  // again — this call only decides what to ask for.
+  const act = (action) => run(async () => {
+    const roll = roll1d100();
+    const test = resolveTest(skill, 0, roll);
+    if (!test.success) {
+      await writeBridge({ code, vitals: {},
+        log: `${action.name}: failed on ${roll} against ${skill}.` })
+        .catch(() => null);
+      setNote(`${action.name}: failed — rolled ${roll} against ${skill}.`);
+      return null;
+    }
+    const outcome = actionOutcome(action.id, test.degrees, ship, {
+      targetId: aimed || undefined,
+      maxHull: hullById(blueprint.hullId)?.hullIntegrity
+    });
+    if (outcome.needsTarget) {
+      setErr(`${action.name} needs a target. Pick one under "Aimed at".`);
+      return null;
+    }
+    if (!outcome.vitals) {
+      setErr(`${action.name} has no effect to apply.`);
+      return null;
+    }
+    const r = await writeBridge({
+      code, vitals: outcome.vitals,
+      log: `${outcome.log} (rolled ${roll} against ${skill}).`
+    });
+    revRef.current = Number(r.rev) || revRef.current;
+    setNote(outcome.log);
+    return r;
+  });
 
   const isGmHere = Boolean(state && state.isGm);
   const ship = state && state.ship;
@@ -5037,6 +5075,44 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole, blueprint
                         </p>
                       </div>
                     )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {/* ---- the player's own station ---- */}
+          {!isGmHere && shipRole && ship && (
+            <>
+              <div className="rt-conds-h">
+                Your station {'·'} {roleById(shipRole)?.name}
+              </div>
+              <div className="rt-gmmods">
+                <label><span className="rt-der-k">Your skill</span>
+                  <input className="rt-field rt-numin" type="number" min="0" max="100"
+                    value={skill}
+                    onChange={(e) => setSkill(parseInt(e.target.value, 10) || 0)} />
+                </label>
+                <label><span className="rt-der-k">Aimed at</span>
+                  <select className="rt-sel" value={aimed}
+                    onChange={(e) => setAimed(e.target.value)}>
+                    <option value="">{'— no target —'}</option>
+                    {(ship.fleet || []).map((e, i) => (
+                      <option key={e.id || i} value={e.id}>
+                        {e.name || 'Contact'}{e.unscanned ? ' (unscanned)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <ul className="rt-list">
+                {EXTENDED_ACTIONS.filter((a) => mayTakeAction(a.id, shipRole)).map((a) => (
+                  <li key={a.id} className="rt-entry">
+                    <button className="rt-opt" disabled={busy}
+                      onClick={() => act(a)}>Roll</button>
+                    <span className="rt-entry-t">{a.name}</span>
+                    <span className="rt-entry-c">{a.skill}</span>
+                    <div className="rt-entry-d"><p>{a.effect}</p></div>
                   </li>
                 ))}
               </ul>

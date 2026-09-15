@@ -16,7 +16,16 @@
 export const SHIP_FIELDS = [
   'morale', 'population', 'hullIntegrity', 'power', 'componentStatus',
   'speed', 'heading', 'evasion', 'targetLocks', 'detection', 'jamming',
-  'translation', 'profitFactor', 'crewRatingBuff', 'diceModifiers', 'fires',
+  'translation', 'profitFactor', 'crewRatingBuff', 'fires',
+  // What the crew's augurs have revealed. Held apart from the fleet itself,
+  // which is the GM's: a scan is something the crew learns, not something they
+  // may edit about the enemy.
+  'scans',
+  // ponytail: diceModifiers is a shared bag — several stations grant buffs
+  // into it, each under its own key, and a write replaces the whole object.
+  // Two buffs in the same second would see the last one win. Fine for five
+  // people taking turns; if it ever matters, move to per-key writes.
+  'diceModifiers',
   // GM-only: no station owns these
   'phase', 'enemies'
 ];
@@ -35,13 +44,13 @@ export const SHIP_ROLES = [
       writes: ['diceModifiers'] }),
 
   R('firstofficer', 'First Officer', 'Seneschal (or any)', 'Discipline & internal security',
-    ['morale', 'crewRatingBuff', 'population'],
+    ['morale', 'crewRatingBuff', 'population', 'diceModifiers'],
     { name: 'Put Your Backs Into It!', test: 'Command',
       effect: 'Modifies the NPC crew’s Base Skill by +5 per Degree of Success.',
       writes: ['crewRatingBuff'] }),
 
   R('enginseer', 'Enginseer Prime', 'Explorator', 'Enginarium, plasma drive, tech-shrines',
-    ['hullIntegrity', 'power', 'componentStatus', 'fires'],
+    ['hullIntegrity', 'power', 'componentStatus', 'fires', 'diceModifiers'],
     { name: 'Emergency Repairs', test: 'Tech-Use',
       effect: 'Restores 1d5 Hull Integrity, or douses fires.',
       writes: ['hullIntegrity', 'fires'] }),
@@ -59,10 +68,10 @@ export const SHIP_ROLES = [
       writes: ['targetLocks', 'diceModifiers'] }),
 
   R('etherics', 'Master of Etherics', 'Void-Master', 'Sensorium & vox-casters',
-    ['detection', 'jamming'],
+    ['detection', 'jamming', 'scans'],
     { name: 'Focused Augury', test: 'Scrutiny + Detection',
       effect: 'Identifies vulnerable components on an enemy ship.',
-      writes: ['detection'] }),
+      writes: ['detection', 'scans'] }),
 
   R('factotum', 'High Factotum', 'Seneschal', 'Vaults, logistics, press-gangs',
     ['morale', 'profitFactor', 'population'],
@@ -83,7 +92,7 @@ export const SHIP_ROLES = [
       writes: ['jamming'] }),
 
   R('chirurgeon', 'Chief Chirurgeon', 'Missionary', 'Medicae decks, triage',
-    ['population', 'morale'],
+    ['population', 'morale', 'diceModifiers'],
     { name: 'Triage', test: 'Medicae',
       effect: 'Halves Population damage from a hull breach or macro-strike.',
       writes: ['population'] })

@@ -118,6 +118,96 @@ export const repairAmount = (degreesOfSuccess) => 1 + dos(degreesOfSuccess);
 export const holdFastMorale = (degreesOfSuccess) => 1 + dos(degreesOfSuccess);
 export const triageReduction = (degreesOfSuccess) => 1 + dos(degreesOfSuccess);
 
+/* ---------------------------- action outcomes ----------------------------
+   What a successful extended action writes. Returned as a vitals patch plus a
+   line for the log, so a station's terminal, the server and a test all agree
+   on the consequence rather than each computing it.
+
+   ctx carries what the action needs from outside the ship: the target it was
+   aimed at, the hull's maximum for a repair, the fire being doused. */
+
+export function actionOutcome(actionId, degreesOfSuccess, ship = {}, ctx = {}) {
+  const n = dos(degreesOfSuccess);
+  const v = (ship && ship.vitals) || {};
+  const action = actionById(actionId);
+  if (!action) return { vitals: null, log: null, unknown: true };
+
+  const patch = {};
+  let log = `${action.name}: ${n} degree${n === 1 ? '' : 's'} of success`;
+
+  switch (actionId) {
+    case 'emergency_repairs': {
+      if (ctx.douse) {
+        patch.fires = (v.fires || []).filter((f) => f.id !== ctx.douse);
+        log += ' — a fire is out';
+        break;
+      }
+      const amount = repairAmount(n);
+      const max = Number.isFinite(ctx.maxHull) ? ctx.maxHull : Infinity;
+      patch.hullIntegrity = Math.min(max, (Number(v.hullIntegrity) || 0) + amount);
+      log += ` — ${amount} Hull Integrity restored`;
+      break;
+    }
+
+    case 'evasive_manoeuvres':
+      patch.evasion = evasionPenalty(n);
+      log += ` — incoming attacks at ${patch.evasion}`;
+      break;
+
+    case 'lock_on_target':
+      patch.targetLocks = { ...(v.targetLocks || null),
+        [ctx.targetId || 'target']: lockBonus(n) };
+      log += ` — +${lockBonus(n)} to hit it`;
+      break;
+
+    case 'aid_machine_spirit':
+      patch.diceModifiers = { ...(v.diceModifiers || null),
+        [ctx.system || 'ship']: machineSpiritBonus(n) };
+      log += ` — +${machineSpiritBonus(n)} to ${ctx.system || 'the ship'}`;
+      break;
+
+    case 'active_augury':
+    case 'focused_augury': {
+      const scans = Array.isArray(v.scans) ? v.scans : [];
+      const id = ctx.targetId;
+      if (!id) return { vitals: null, log: null, needsTarget: true };
+      patch.scans = scans.includes(id) ? scans : [...scans, id];
+      log += actionId === 'focused_augury'
+        ? ' — its weak points are mapped; the next critical may be chosen'
+        : ' — its hull, shields and weapons are revealed';
+      break;
+    }
+
+    case 'backs_into_it':
+      patch.crewRatingBuff = backsIntoItBonus(n);
+      log += ` — crew rating +${backsIntoItBonus(n)} this turn`;
+      break;
+
+    case 'hold_fast':
+      patch.morale = Math.min(100, (Number(v.morale) ?? 100) + holdFastMorale(n));
+      log += ` — morale restored to ${patch.morale}`;
+      break;
+
+    case 'prepare_to_repel':
+      patch.diceModifiers = { ...(v.diceModifiers || null), boarding: 10 };
+      log += ' — +10 against boarding this turn';
+      break;
+
+    case 'triage':
+      // Triage mitigates damage that has not happened yet, so it is recorded
+      // for the GM's next population loss to consult rather than applied now.
+      patch.diceModifiers = { ...(v.diceModifiers || null),
+        triage: triageReduction(n) };
+      log += ` — the next Population loss is reduced by ${triageReduction(n)}`;
+      break;
+
+    default:
+      return { vitals: null, log: null, unknown: true };
+  }
+
+  return { vitals: patch, log, unknown: false };
+}
+
 /* ----------------------------------- range ----------------------------------- */
 
 export function rangeBand(distanceVU, weaponRange) {

@@ -7,8 +7,9 @@ import {
   rangeBand, rangeModifier, toHit, hitsScored,
   resolveAttack, interceptTorpedoes,
   CRITICALS, criticalEffect, hitAndRun, boardingRound, BOARDING_TARGET,
-  applyEvent, applyRepair, fireDamage
+  applyEvent, applyRepair, fireDamage, actionOutcome
 } from './voidcombat.js';
+import { deniedWrites } from './shiproles.js';
 import { targetSizeModifier, evadesFreely } from './ship.js';
 
 /* ---- the four-phase turn ---- */
@@ -366,6 +367,83 @@ assert.equal(actionById('triage').roles[0], 'chirurgeon');
 assert.equal(repairAmount(0), 1, '1 + DoS');
 assert.equal(repairAmount(3), 4);
 assert.equal(triageReduction(2), 3);
+
+/* ---- what each action actually writes ---- */
+
+{
+  const ship = { vitals: { hullIntegrity: 50, morale: 90, fires: [{ id: 'f1' }], scans: [] } };
+
+  // Repairs stop at the hull's maximum.
+  const rep = actionOutcome('emergency_repairs', 2, ship, { maxHull: 60 });
+  assert.equal(rep.vitals.hullIntegrity, 53, '1 + 2 degrees');
+  assert.match(rep.log, /3 Hull Integrity restored/);
+  assert.equal(actionOutcome('emergency_repairs', 9, ship, { maxHull: 52 })
+    .vitals.hullIntegrity, 52, 'and no further');
+
+  // Or it douses a fire instead of repairing.
+  const douse = actionOutcome('emergency_repairs', 1, ship, { douse: 'f1' });
+  assert.deepEqual(douse.vitals.fires, []);
+  assert.equal(douse.vitals.hullIntegrity, undefined, 'one or the other, not both');
+
+  // Evasion writes the penalty attackers will suffer.
+  assert.equal(actionOutcome('evasive_manoeuvres', 2, ship).vitals.evasion, -30);
+
+  // A lock is per target, and does not wipe another target's lock.
+  const lock = actionOutcome('lock_on_target', 3,
+    { vitals: { targetLocks: { e1: 5 } } }, { targetId: 'e2' });
+  assert.deepEqual(lock.vitals.targetLocks, { e1: 5, e2: 15 });
+
+  // An augury records the scan, which is what makes the enemy readable.
+  const scan = actionOutcome('active_augury', 1, ship, { targetId: 'e1' });
+  assert.deepEqual(scan.vitals.scans, ['e1']);
+  // scanning twice does not duplicate
+  assert.deepEqual(
+    actionOutcome('active_augury', 1, { vitals: { scans: ['e1'] } }, { targetId: 'e1' })
+      .vitals.scans, ['e1']);
+  // and it needs something to aim at
+  const noTarget = actionOutcome('active_augury', 2, ship, {});
+  assert.equal(noTarget.needsTarget, true);
+  assert.equal(noTarget.vitals, null);
+
+  assert.equal(actionOutcome('backs_into_it', 2, ship).vitals.crewRatingBuff, 10);
+
+  // Hold Fast restores morale and cannot push it past 100.
+  assert.equal(actionOutcome('hold_fast', 2, ship).vitals.morale, 93);
+  assert.equal(actionOutcome('hold_fast', 9, { vitals: { morale: 99 } }).vitals.morale, 100);
+
+  assert.equal(actionOutcome('prepare_to_repel', 0, ship).vitals.diceModifiers.boarding, 10);
+
+  // Triage mitigates damage that has not happened yet, so it is recorded for
+  // the next Population loss rather than applied now.
+  const triage = actionOutcome('triage', 2, ship);
+  assert.equal(triage.vitals.diceModifiers.triage, 3);
+  assert.equal(triage.vitals.population, undefined);
+
+  // Machine Spirit buffs a named system without clobbering another buff.
+  const spirit = actionOutcome('aid_machine_spirit', 2,
+    { vitals: { diceModifiers: { boarding: 10 } } }, { system: 'port1' });
+  assert.deepEqual(spirit.vitals.diceModifiers, { boarding: 10, port1: 10 });
+
+  // An unknown action writes nothing.
+  const bad = actionOutcome('summon_squiggoth', 3, ship);
+  assert.equal(bad.unknown, true);
+  assert.equal(bad.vitals, null);
+}
+
+// Every action in the table produces an outcome, so none is a dead button.
+for (const a of EXTENDED_ACTIONS) {
+  const r = actionOutcome(a.id, 1, { vitals: { hullIntegrity: 10, morale: 50 } },
+    { targetId: 'e1', maxHull: 60, system: 'ship' });
+  assert.equal(r.unknown, false, a.id + ' has an outcome');
+  assert.ok(r.vitals && Object.keys(r.vitals).length, a.id + ' writes something');
+  // ...and only fields EVERY role permitted to take it owns. Checking just
+  // the first role hid that Aid the Machine Spirit writes diceModifiers,
+  // which the Enginseer did not own.
+  for (const role of a.roles) {
+    assert.deepEqual(deniedWrites(role, Object.keys(r.vitals)), [],
+      `${a.id}: ${role} cannot write what the action produces`);
+  }
+}
 
 /* ---- GM events return a patch, never a mutation ---- */
 

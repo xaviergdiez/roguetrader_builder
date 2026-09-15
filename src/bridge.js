@@ -67,10 +67,10 @@ export const joinBridge = ({ code, charId, name, role }) =>
 
 export const leaveBridge = (code) => post({ action: 'leave', code });
 
-// `fields` is declared separately and checked against the patch on the server,
-// so a payload cannot write more than it admits to.
-export const patchShip = ({ code, patch, log }) =>
-  post({ action: 'patch', code, patch, fields: Object.keys(patch || {}), log });
+// Two surfaces, checked separately on the server: `vitals` keys are owned by
+// stations, `doc` fields (blueprint, fleet, combat) are the GM's.
+export const writeBridge = ({ code, vitals, doc, log }) =>
+  post({ action: 'write', code, vitals, doc, log });
 
 export const emitEvent = ({ code, event }) => post({ action: 'event', code, event });
 

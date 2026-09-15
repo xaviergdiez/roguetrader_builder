@@ -4,7 +4,7 @@
 //   POST /api/bridge  {action:"join", code, charId, name, role}
 //   POST /api/bridge  {action:"leave", code}
 //   GET  /api/bridge?code=<code>[&since=<rev>]         -> {dynasty, ship} | 204
-//   POST /api/bridge  {action:"patch", code, patch, fields}
+//   POST /api/bridge  {action:"write", code, vitals, doc, log}
 //   POST /api/bridge  {action:"event", code, event}
 //
 // WHY POLLING
@@ -27,8 +27,8 @@ import { requireUser, getUser, saveUser } from "../lib/auth.js";
 import {
   dynastyKey, shipKey, newCode, normaliseCode,
   newDynasty, isGm, memberOf, joinDynasty, leaveDynasty,
-  authorizePatch, authorizeEvent,
-  newShip, applyPatch, appendLog, redactShip, redactDynasty
+  authorizeWrite, authorizeEvent,
+  newShip, applyPatch, applyWrite, appendLog, redactShip, redactDynasty
 } from "../lib/bridge.js";
 import { applyEvent } from "../src/voidcombat.js";
 
@@ -171,27 +171,26 @@ export default async function handler(req, res) {
 
   /* -------------------------------- writing -------------------------------- */
 
-  if (action === "patch") {
-    const patch = body.patch && typeof body.patch === "object" ? body.patch : null;
-    // The fields are declared by the caller and checked against the patch, so
-    // a payload cannot claim to write `morale` and quietly also set `phase`.
-    const declared = Array.isArray(body.fields) ? body.fields : [];
-    if (!patch) return res.status(400).json({ error: "patch_required" });
+  if (action === "write") {
+    const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
+    const vitals = obj(body.vitals);
+    const doc = obj(body.doc);
+    if (!vitals && !doc) return res.status(400).json({ error: "nothing_to_write" });
 
-    const actual = Object.keys(patch);
-    const undeclared = actual.filter((f) => !declared.includes(f));
-    if (undeclared.length) {
-      return res.status(400).json({ error: "undeclared_fields", fields: undeclared });
-    }
-
-    const auth = authorizePatch(dynasty, uid, actual);
+    const auth = authorizeWrite(dynasty, uid, {
+      vitals: vitals ? Object.keys(vitals) : [],
+      doc: doc ? Object.keys(doc) : []
+    });
     if (!auth.ok) {
       return res.status(403).json({ error: auth.reason, denied: auth.denied });
     }
 
-    let next = applyPatch(ship, patch);
+    let next = applyWrite(ship, { vitals, doc });
     if (body.log) {
-      next = appendLog(next, { by: auth.role || "gm", text: String(body.log).slice(0, 300) });
+      next = appendLog(next, {
+        by: auth.isGm ? "gm" : (auth.role || "crew"),
+        text: String(body.log).slice(0, 300)
+      });
     }
     await redis.set(shipKey(code), next);
 

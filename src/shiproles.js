@@ -17,6 +17,11 @@ export const SHIP_FIELDS = [
   'morale', 'population', 'hullIntegrity', 'power', 'componentStatus',
   'speed', 'heading', 'evasion', 'targetLocks', 'detection', 'jamming',
   'translation', 'profitFactor', 'crewRatingBuff', 'fires',
+  // Spent absorbing a hit, restored when the turn wraps. It was missing from
+  // this list, which meant every dice roll in a live session published a field
+  // the check refused — even for the GM, since an unknown field is refused
+  // outright rather than waved through.
+  'voidShields',
   // What the crew's augurs have revealed. Held apart from the fleet itself,
   // which is the GM's: a scan is something the crew learns, not something they
   // may edit about the enemy.
@@ -50,7 +55,8 @@ export const SHIP_ROLES = [
       writes: ['crewRatingBuff'] }),
 
   R('enginseer', 'Enginseer Prime', 'Explorator', 'Enginarium, plasma drive, tech-shrines',
-    ['hullIntegrity', 'power', 'componentStatus', 'fires', 'diceModifiers'],
+    ['hullIntegrity', 'power', 'componentStatus', 'fires', 'diceModifiers',
+      'voidShields'],
     { name: 'Emergency Repairs', test: 'Tech-Use',
       effect: 'Restores 1d5 Hull Integrity, or douses fires.',
       writes: ['hullIntegrity', 'fires'] }),

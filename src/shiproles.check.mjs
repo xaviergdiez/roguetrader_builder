@@ -179,3 +179,51 @@ assert.equal(roleById('enginseer').department, 'Enginarium, plasma drive, tech-s
 assert.equal(roleById('nope'), null);
 
 console.log('shiproles: all checks passed (%d roles)', SHIP_ROLES.length);
+
+/* ---- every vitals key the app produces must be writable ----
+   voidShields was missing from SHIP_FIELDS, so every dice roll in a live
+   session published a field the check refused. Nothing caught it because
+   nothing compared the two lists. */
+
+{
+  const { newVitals } = await import('./ship.js');
+  const { actionOutcome, EXTENDED_ACTIONS, applyEvent } = await import('./voidcombat.js');
+  const { GM_EVENTS } = await import('./shiproles.js');
+
+  const bp = {
+    hullId: 'hull-lunar', dynastySP: 200, crew: 'competent',
+    essential: {}, weapons: [], supplemental: []
+  };
+
+  // what a fresh ship's vitals contain
+  for (const k of Object.keys(newVitals(bp))) {
+    assert.ok(SHIP_FIELDS.includes(k), `newVitals writes unknown field: ${k}`);
+  }
+
+  // what an attack writes: hull integrity and the shields it spent
+  for (const k of ['hullIntegrity', 'voidShields']) {
+    assert.ok(SHIP_FIELDS.includes(k), `an attack writes unknown field: ${k}`);
+    assert.equal(can(null, k, { isGm: true }), true, `a GM cannot write ${k}`);
+  }
+
+  // what every extended action writes
+  for (const a of EXTENDED_ACTIONS) {
+    const r = actionOutcome(a.id, 1, { vitals: { hullIntegrity: 10, morale: 50 } },
+      { targetId: 'e1', maxHull: 60, system: 'ship' });
+    for (const k of Object.keys(r.vitals || {})) {
+      assert.ok(SHIP_FIELDS.includes(k), `${a.id} writes unknown field: ${k}`);
+    }
+  }
+
+  // what every GM event writes
+  for (const e of GM_EVENTS) {
+    const r = applyEvent({ hullIntegrity: 40, morale: 80, population: 90, fires: [] },
+      { id: e.id, amount: 3, component: 'life-vitae', enemies: [] });
+    for (const k of Object.keys(r.patch || {})) {
+      assert.ok(SHIP_FIELDS.includes(k), `event ${e.id} writes unknown field: ${k}`);
+      assert.equal(can(null, k, { isGm: true }), true, `a GM cannot write ${k}`);
+    }
+  }
+}
+
+console.log('shiproles: writable-field coverage OK');

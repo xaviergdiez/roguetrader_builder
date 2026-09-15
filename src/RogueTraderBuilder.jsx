@@ -1398,7 +1398,7 @@ const CSS = `
 .rt-bridgevitals{flex-basis:auto;margin-top:0;}
 
 /* ---- GM dashboard ---- */
-.rt-gm{max-width:820px;}
+.rt-gm{width:min(1120px,94vw);}   /* see .rt-ship: width, not max-width */
 .rt-gmturn{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;
   padding:9px 11px;border:1px solid var(--brass-dim);background:var(--well);}
 .rt-gmphase{flex:1;min-width:120px;font-family:var(--display);font-size:16px;
@@ -1429,7 +1429,10 @@ const CSS = `
 .rt-gmline.event{border-left-color:var(--warp);}
 .rt-gmline.phase,.rt-gmline.initiative{border-left-color:var(--gold);color:var(--gold-lit);}
 
-.rt-ship{max-width:760px;}
+/* Sets width, NOT max-width: .rt-framer sets width:min(430px,94vw), and a
+   max-width cannot widen anything — so this panel was 430px the whole time
+   and the 760 that used to be here did nothing at all. */
+.rt-ship{width:min(1040px,94vw);}
 .rt-shiprow{display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;}
 .rt-shipfield{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
 .rt-shipfield.sp{flex:0 0 120px;}
@@ -1446,6 +1449,12 @@ const CSS = `
 .rt-shipbud-r{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
   color:var(--green-dim);margin-top:3px;}
 
+/* Two per row once there is room. Eight essential components stacked one to a
+   row in a 1040px dialog is a column of very wide, very short controls. */
+.rt-shipsels{display:grid;grid-template-columns:1fr;gap:0 18px;}
+@media (min-width:820px){
+  .rt-shipsels{grid-template-columns:1fr 1fr;}
+}
 .rt-shipsel{display:flex;align-items:center;gap:9px;margin-bottom:7px;}
 .rt-shipsel-k{flex:0 0 122px;font-family:var(--mono);font-size:10px;
   letter-spacing:.14em;text-transform:uppercase;color:var(--brass-lit);opacity:.85;}
@@ -4922,6 +4931,10 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
 
   const [state, setState] = useState(null);
   const [err, setErr] = useState('');
+  // The poll's own trouble, kept apart from an action's. A good poll used to
+  // clear `err`, which meant a refused order vanished from the screen within
+  // five seconds — the player saw nothing and assumed it had worked.
+  const [linkErr, setLinkErr] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [entry, setEntry] = useState('');
@@ -4934,16 +4947,16 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   // loop — a new interval on every answer would defeat the point of polling.
   useEffect(() => {
     if (!code) return undefined;
-    setErr('');
+    setLinkErr('');
     return pollBridge({
       code,
       getRev: () => revRef.current,
       onState: (s) => {
         if (s.ship) revRef.current = Number(s.ship.rev) || 0;
         setState(s);
-        setErr('');
+        setLinkErr('');
       },
-      onError: (e) => setErr(e.message)
+      onError: (e) => setLinkErr(e.message)
     });
   }, [code]);
 
@@ -5046,6 +5059,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
       </div>
 
       {err && <div className="rt-warn"><p>{err}</p></div>}
+      {linkErr && <div className="rt-warn"><p>{linkErr}</p></div>}
       {note && <div className="rt-note">{note}</div>}
 
       {!code ? (
@@ -6062,6 +6076,7 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
             Exactly one of each. A ship missing any of the eight is not
             spaceworthy, whatever its budget says.
           </p>
+          <div className="rt-shipsels">
           {ESSENTIAL_CATEGORIES.map((cat) => (
             <label key={cat} className="rt-shipsel">
               <span className="rt-shipsel-k">{ESSENTIAL_LABELS[cat]}</span>
@@ -6077,12 +6092,14 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
               </select>
             </label>
           ))}
+          </div>
 
           <div className="rt-conds-h">Weapons</div>
           <p className="rt-vox-hint">
             One per mount. The {hull.name} has {hull.slots.length}:
             {' '}{hull.slots.join(', ')}.
           </p>
+          <div className="rt-shipsels">
           {hull.slots.map((slot, i) => {
             const mounted = bp.weapons.find((w) => w.slotIx === i);
             return (
@@ -6100,6 +6117,7 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
               </label>
             );
           })}
+          </div>
 
           <div className="rt-conds-h">Supplemental components</div>
           <ul className="rt-list">

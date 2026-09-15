@@ -18,6 +18,8 @@ import {
 import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
 import {
   HULLS, COMPONENTS, ESSENTIAL_CATEGORIES, ESSENTIAL_LABELS, CREW_RATINGS,
+  SLOT_NAMES, WEAPON_CLASSES, allHulls, allComponents, isHomebrew, damageText,
+  validateHull, validateComponent, usableCustom,
   hullById, componentById, validate, stats, newVitals
 } from './ship.js';
 import { SHIP_ROLES, GM_EVENTS, roleById, rolesForCareer } from './shiproles.js';
@@ -1400,6 +1402,9 @@ const CSS = `
   margin-top:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
   color:var(--dim);}
 .rt-gmvitals b{color:var(--green);font-size:12px;}
+.rt-brewgrid{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;}
+.rt-brewfield{flex:1 1 110px;display:flex;flex-direction:column;gap:3px;}
+.rt-brewfield.wide{flex:1 1 100%;}
 .rt-gmsync{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
   color:var(--dim);}
 .rt-gmsync.on{color:var(--vox);}
@@ -2311,9 +2316,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [importOpen, setImportOpen] = useState(false);
   const [psyRating, setPsyRating] = useState(0);   // 0 = not a psyker
   const [blueprint, setBlueprint] = useState(EMPTY_BLUEPRINT);
+  // The table's homebrew hulls and components. Held here rather than in the
+  // blueprint so several ships can share them, and copied INTO the blueprint
+  // whenever it is edited so a ship pushed to the bridge arrives complete.
+  const [homebrew, setHomebrew] = useState(EMPTY_HOMEBREW);
   const [shipRole, setShipRole] = useState('');    // '' = no station
   const [shipOpen, setShipOpen] = useState(false);
   const [gmOpen, setGmOpen] = useState(false);
+  const [brewOpen, setBrewOpen] = useState(false);
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeCode, setBridgeCode] = useState('');
   const [fleet, setFleet] = useState([]);          // the GM's NPC ships
@@ -2364,6 +2374,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         setShipRole(s.shipRole || '');
         setFleet(Array.isArray(s.fleet) ? s.fleet : []);
         setBridgeCode(s.bridgeCode || '');
+        setHomebrew({ ...EMPTY_HOMEBREW, ...(s.homebrew || null) });
         setCombat({ ...EMPTY_COMBAT, ...(s.combat || null) });
         if (typeof s.xp === 'number') setXp(s.xp);
         if (typeof s.stepIx === 'number') setStepIx(s.stepIx);
@@ -2379,14 +2390,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
           fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode
+          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode, homebrew
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
   }, [name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
       fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode, loaded]);
+      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode, homebrew, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -2959,6 +2970,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       {shipOpen && (
         <ShipPanel
           blueprint={blueprint} setBlueprint={setBlueprint}
+          homebrew={homebrew} onEditHomebrew={() => setBrewOpen(true)}
           shipRole={shipRole} setShipRole={setShipRole}
           careerName={career ? career.name : ''}
           onClose={() => setShipOpen(false)}
@@ -2974,11 +2986,16 @@ export default function RogueTraderBuilder({ me, cloud }) {
         />
       )}
 
+      {brewOpen && (
+        <HomebrewEditor homebrew={homebrew} setHomebrew={setHomebrew}
+          onClose={() => setBrewOpen(false)} />
+      )}
+
       {gmOpen && (
         <GmPanel
           fleet={fleet} setFleet={setFleet}
           combat={combat} setCombat={setCombat}
-          blueprint={blueprint} bridgeCode={bridgeCode}
+          blueprint={blueprint} bridgeCode={bridgeCode} homebrew={homebrew}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -3001,6 +3018,8 @@ const EMPTY_BLUEPRINT = {
 // ship's live vitals. Kept apart from the blueprint, which is the ship as
 // built rather than the ship as it currently stands.
 const EMPTY_COMBAT = { phase: 'extended', order: [], playerVitals: null };
+
+const EMPTY_HOMEBREW = { hulls: [], components: [] };
 
 // Anything absent is defaulted rather than trusted: a blueprint saved before a
 // field existed would otherwise arrive as undefined and break the editor.
@@ -5164,9 +5183,9 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
    the dashboard shows and what a server would compute cannot diverge. */
 
 // The combat-relevant numbers for either kind of ship.
-function shipProfile(ship, blueprint) {
+function shipProfile(ship, blueprint, custom) {
   if (ship.player) {
-    const hull = hullById(blueprint.hullId);
+    const hull = hullById(blueprint.hullId, blueprint);
     const s = stats(blueprint, ship.vitals);
     if (!hull || !s) return null;
     return {
@@ -5180,7 +5199,9 @@ function shipProfile(ship, blueprint) {
       weapons: (blueprint.weapons || []).map((w) => w.componentId)
     };
   }
-  const hull = hullById(ship.hullId);
+  // An NPC ship is hull-backed and has no blueprint to carry definitions, so
+  // the catalogue is passed in.
+  const hull = hullById(ship.hullId, custom);
   if (!hull) return null;
   return {
     name: ship.name || hull.name,
@@ -5194,7 +5215,8 @@ function shipProfile(ship, blueprint) {
   };
 }
 
-function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, onClose }) {
+function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
+  homebrew, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -5221,7 +5243,9 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, on
     vitals: combat.playerVitals || newVitals(blueprint)
   };
   const ships = [playerShip, ...fleet];
-  const profileOf = (s) => shipProfile(s, blueprint);
+  const usable = usableCustom(homebrew);
+  const bpWithCustom = { ...blueprint, custom: usable };
+  const profileOf = (s) => shipProfile(s, bpWithCustom, usable);
   const byId = (id) => ships.find((s) => s.id === id);
 
   const say = (entry) => setLog((p) => [{ ...entry, key: newId() }, ...p].slice(0, 30));
@@ -5286,7 +5310,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, on
   /* ---- fleet ---- */
 
   const addNpc = (hullId) => {
-    const hull = hullById(hullId);
+    const hull = hullById(hullId, usable);
     if (!hull) return;
     const n = fleet.filter((s) => s.hullId === hullId).length;
     setFleet([...fleet, {
@@ -5350,11 +5374,14 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, on
   const targetShip = byId(targetId);
   const attackerP = attacker ? profileOf(attacker) : null;
   const targetP = targetShip ? profileOf(targetShip) : null;
-  const weapon = componentById(weaponId);
+  const weapon = componentById(weaponId, usable);
 
   const hit = targetP && weapon ? toHit({
     ballisticSkill: bs,
     weaponId,
+    // passed explicitly so a homebrew weapon's range is honoured: toHit
+    // resolves ids against the built-ins only
+    weaponRange: weapon.range,
     distanceVU: distance,
     targetClass: targetP.cls,
     lockDoS,
@@ -5375,6 +5402,10 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, on
     const rolls = Array.from({ length: hits }, () => d(10));
     const res = resolveAttack({
       weaponId,
+      // likewise: the stats travel with the call so homebrew resolves
+      weaponClass: weapon.weaponClass,
+      strength: weapon.str,
+      damageBonus: weapon.damageBonus,
       hits,
       damageRolls: rolls,
       pointBlank: hit.pointBlank,
@@ -5505,7 +5536,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, on
         <span className="rt-shipsel-k">Add enemy</span>
         <select className="rt-sel" value="" onChange={(e) => addNpc(e.target.value)}>
           <option value="">{'— pick a hull —'}</option>
-          {HULLS.map((h) => (
+          {allHulls(usable).map((h) => (
             <option key={h.id} value={h.id}>{h.name} ({h.cls})</option>
           ))}
         </select>
@@ -5535,9 +5566,9 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, on
       <label className="rt-shipsel">
         <span className="rt-shipsel-k">Weapon</span>
         <select className="rt-sel" value={weaponId} onChange={(e) => setWeaponId(e.target.value)}>
-          {COMPONENTS.filter((c) => c.category === 'weapon').map((c) => (
+          {allComponents(usable).filter((c) => c.category === 'weapon').map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name} (Str {c.str}, {c.damage}, rng {c.range})
+              {c.name} (Str {c.str}, {damageText(c)}, rng {c.range})
             </option>
           ))}
         </select>
@@ -5610,7 +5641,27 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, on
   );
 }
 
-function ShipPanel({ blueprint, setBlueprint, shipRole, setShipRole, careerName, onClose }) {
+
+/* ------------------------------ HOMEBREW EDITOR ------------------------------
+   Define a hull or a component for the table. Validated as you type and
+   refused while it is wrong, because an unvalidated definition does not fail
+   loudly — it quietly makes every ship that uses it wrong.
+
+   Kept deliberately plain: number fields and a mount picker, no wizard. */
+
+const BLANK_HULL = {
+  id: '', name: '', cls: 'Light Cruiser', speed: 6, manoeuvre: 10, detection: 15,
+  armour: 18, hullIntegrity: 50, turrets: 1, space: 50, sp: 45,
+  slots: ['prow', 'port', 'starboard'], source: 'Homebrew'
+};
+
+const BLANK_COMPONENT = {
+  id: '', name: '', category: 'weapon', power: -4, space: 2, sp: 1,
+  weaponClass: 'macro', str: 3, damageDice: 1, damageBonus: 2, crit: 5, range: 6,
+  note: ''
+};
+
+function HomebrewEditor({ homebrew, setHomebrew, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -5618,12 +5669,202 @@ function ShipPanel({ blueprint, setBlueprint, shipRole, setShipRole, careerName,
   }, []);
   const close = () => dialogRef.current && dialogRef.current.close();
 
-  const bp = blueprint;
-  const hull = hullById(bp.hullId);
+  const [kind, setKind] = useState('hull');
+  const [hull, setHull] = useState(BLANK_HULL);
+  const [comp, setComp] = useState(BLANK_COMPONENT);
+
+  const draft = kind === 'hull' ? hull : comp;
+  const setDraft = kind === 'hull' ? setHull : setComp;
+  const errors = kind === 'hull' ? validateHull(hull) : validateComponent(comp);
+
+  const add = () => {
+    if (errors.length) return;
+    const key = kind === 'hull' ? 'hulls' : 'components';
+    setHomebrew({ ...homebrew, [key]: [...(homebrew[key] || []), draft] });
+    setDraft(kind === 'hull' ? BLANK_HULL : BLANK_COMPONENT);
+  };
+
+  const drop = (key, id) => setHomebrew({
+    ...homebrew, [key]: (homebrew[key] || []).filter((x) => x.id !== id)
+  });
+
+  const num = (field, label, opts = {}) => (
+    <label className="rt-brewfield">
+      <span className="rt-der-k">{label}</span>
+      <input className="rt-field rt-numin" type="number" value={draft[field] ?? 0}
+        min={opts.min} step={opts.step ?? 1}
+        onChange={(e) => setDraft({ ...draft, [field]: parseInt(e.target.value, 10) || 0 })} />
+    </label>
+  );
+
+  const text = (field, label, placeholder) => (
+    <label className="rt-brewfield wide">
+      <span className="rt-der-k">{label}</span>
+      <input className="rt-field" value={draft[field] ?? ''} placeholder={placeholder}
+        onChange={(e) => setDraft({ ...draft, [field]: e.target.value })} />
+    </label>
+  );
+
+  const toggleSlot = (slot) => {
+    const slots = hull.slots || [];
+    // Clicking a mount adds one; clicking it again removes one. A hull may
+    // carry several of the same mount, which is why this counts rather than
+    // toggles a set.
+    setHull({ ...hull, slots: slots.includes(slot)
+      ? slots.filter((s, i) => i !== slots.indexOf(slot))
+      : [...slots, slot] });
+  };
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer rt-ship" onClose={onClose}
+      aria-label="Homebrew">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">Homebrew</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+
+      <p className="rt-vox-hint">
+        Hulls and components of your own. They appear alongside the built-ins
+        everywhere, and travel with any ship that uses them {'\u2014'} a
+        homebrew ship pushed to the bridge arrives complete.
+      </p>
+
+      <div className="rt-opts">
+        <button className={'rt-opt' + (kind === 'hull' ? ' on' : '')}
+          onClick={() => setKind('hull')}>Hull</button>
+        <button className={'rt-opt' + (kind === 'component' ? ' on' : '')}
+          onClick={() => setKind('component')}>Component</button>
+      </div>
+
+      <div className="rt-brewgrid">
+        {text('id', 'Id', kind === 'hull' ? 'hull-maekao' : 'weap-maekao-battery')}
+        {text('name', 'Name', kind === 'hull' ? 'Ma\u2019Kao Pattern' : 'Ma\u2019Kao Battery')}
+
+        {kind === 'hull' ? (
+          <>
+            <label className="rt-brewfield wide">
+              <span className="rt-der-k">Class (sets target size)</span>
+              <input className="rt-field" value={hull.cls}
+                onChange={(e) => setHull({ ...hull, cls: e.target.value })}
+                placeholder="Light Cruiser" />
+            </label>
+            {num('speed', 'Speed')}
+            {num('manoeuvre', 'Manoeuvre')}
+            {num('detection', 'Detection')}
+            {num('armour', 'Armour', { min: 1 })}
+            {num('hullIntegrity', 'Hull Integrity', { min: 1 })}
+            {num('turrets', 'Turrets', { min: 0 })}
+            {num('space', 'Space', { min: 1 })}
+            {num('sp', 'Ship Points', { min: 1 })}
+          </>
+        ) : (
+          <>
+            <label className="rt-brewfield wide">
+              <span className="rt-der-k">Category</span>
+              <select className="rt-sel" value={comp.category}
+                onChange={(e) => setComp({ ...comp, category: e.target.value })}>
+                {ESSENTIAL_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>{ESSENTIAL_LABELS[c]}</option>
+                ))}
+                <option value="weapon">Weapon</option>
+                <option value="supplemental">Supplemental</option>
+              </select>
+            </label>
+            {num('power', 'Power (negative draws)')}
+            {num('space', 'Space', { min: 0 })}
+            {num('sp', 'Ship Points', { min: 0 })}
+            {comp.category === 'weapon' && (
+              <>
+                <label className="rt-brewfield wide">
+                  <span className="rt-der-k">Weapon class</span>
+                  <select className="rt-sel" value={comp.weaponClass}
+                    onChange={(e) => setComp({ ...comp, weaponClass: e.target.value })}>
+                    {WEAPON_CLASSES.map((w) => (
+                      <option key={w} value={w}>{w}</option>
+                    ))}
+                  </select>
+                </label>
+                {num('str', 'Strength (caps hits)', { min: 1 })}
+                {num('damageBonus', 'Damage bonus', { min: 0 })}
+                {num('crit', 'Crit rating', { min: 1 })}
+                {num('range', 'Range VU', { min: 1 })}
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {errors.length > 0 ? (
+        <div className="rt-warn">{errors.map((e, i) => <p key={i}>{e}</p>)}</div>
+      ) : (
+        <div className="rt-note">Ready to add.</div>
+      )}
+
+      <div className="rt-btnrow">
+        <button className="rt-btn" disabled={errors.length > 0} onClick={add}>
+          Add {kind}
+        </button>
+      </div>
+
+      {['hulls', 'components'].map((key) => (
+        (homebrew[key] || []).length > 0 && (
+          <div key={key}>
+            <div className="rt-conds-h">
+              Your {key} ({homebrew[key].length})
+            </div>
+            <ul className="rt-list">
+              {homebrew[key].map((x) => {
+                const bad = key === 'hulls' ? validateHull(x) : validateComponent(x);
+                return (
+                  <li key={x.id || Math.random()} className="rt-entry">
+                    <span className="rt-entry-t">{x.name || '(unnamed)'}</span>
+                    <span className="rt-entry-c">{x.id}</span>
+                    <button className="rt-rm" onClick={() => drop(key, x.id)}
+                      aria-label={'Remove ' + (x.name || x.id)}>&times;</button>
+                    {bad.length > 0 && (
+                      <div className="rt-entry-d">
+                        <p className="rt-entry-s">
+                          Not usable: {bad.join(' ')}
+                        </p>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )
+      ))}
+    </dialog>
+  );
+}
+
+function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
+  shipRole, setShipRole, careerName, onClose }) {
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  // Only the entries that validate are attached, so one half-finished
+  // definition cannot make every ship using the others illegal. They are
+  // attached to the blueprint itself so a ship pushed to the bridge carries
+  // its own definitions and needs no catalogue on the other end.
+  const usable = usableCustom(homebrew);
+  const bp = { ...blueprint, custom: usable };
+  const hull = hullById(bp.hullId, bp);
   const { errors, budget: b } = validate(bp);
   const derived = stats(bp);
 
-  const set = (patch) => setBlueprint({ ...bp, ...patch });
+  // `custom` is derived on every render from the library, so it is stripped
+  // before saving: persisting it would freeze a stale copy into the blueprint
+  // and later edits to the library would not reach it.
+  const set = (patch) => {
+    const { custom, ...rest } = { ...bp, ...patch };
+    setBlueprint(rest);
+  };
 
   // Changing hull clears the weapons: the mounts it had may not exist on the
   // new one, and silently keeping an unmountable weapon is how a blueprint
@@ -5649,9 +5890,10 @@ function ShipPanel({ blueprint, setBlueprint, shipRole, setShipRole, careerName,
       : [...bp.supplemental, id]
   });
 
-  const inCategory = (category) => COMPONENTS.filter((c) => c.category === category);
-  const weaponOptions = COMPONENTS.filter((c) => c.category === 'weapon');
-  const supplementals = COMPONENTS.filter((c) => c.category === 'supplemental');
+  const catalogue = allComponents(bp);
+  const inCategory = (category) => catalogue.filter((c) => c.category === category);
+  const weaponOptions = catalogue.filter((c) => c.category === 'weapon');
+  const supplementals = catalogue.filter((c) => c.category === 'supplemental');
 
   // A station is a suggestion from the career, but any role can be taken:
   // a crew short of players doubles up, and the First Officer is open to all.
@@ -5705,9 +5947,18 @@ function ShipPanel({ blueprint, setBlueprint, shipRole, setShipRole, careerName,
         <div className="rt-note">A legal blueprint. {hull.name} {hull.cls}.</div>
       )}
 
+      {/* Opened from here, rendered at the app root: a <dialog> nested inside
+          another one closed BOTH when the inner was dismissed. */}
+      <div className="rt-btnrow">
+        <button className="rt-btn ghost" onClick={onEditHomebrew}>
+          Homebrew{(usable.hulls.length + usable.components.length) > 0
+            ? ` (${usable.hulls.length + usable.components.length})` : ''}
+        </button>
+      </div>
+
       <div className="rt-conds-h">Hull</div>
       <div className="rt-cards">
-        {HULLS.map((h) => (
+        {allHulls(bp).map((h) => (
           <div key={h.id} className={'rt-card' + (bp.hullId === h.id ? ' sel' : '')}
             onClick={() => pickHull(h.id)}>
             <div className="rt-card-h">
@@ -5784,7 +6035,7 @@ function ShipPanel({ blueprint, setBlueprint, shipRole, setShipRole, careerName,
                   <option value="">{'— empty —'}</option>
                   {weaponOptions.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.name} (Str {c.str}, {c.damage}, crit {c.crit}, rng {c.range})
+                      {c.name} (Str {c.str}, {damageText(c)}, crit {c.crit}, rng {c.range})
                     </option>
                   ))}
                 </select>

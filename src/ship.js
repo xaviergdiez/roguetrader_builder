@@ -110,8 +110,169 @@ export const COMPONENTS = [
     { note: '+1 Turret Rating.', mods: { turrets: 1 } })
 ];
 
-export const hullById = (id) => HULLS.find((h) => h.id === id) || null;
-export const componentById = (id) => COMPONENTS.find((c) => c.id === id) || null;
+/* -------------------------------- homebrew --------------------------------
+   A table can define its own hulls and components. They are the same shape as
+   the built-ins, so nothing downstream needs to know which is which.
+
+   Definitions travel with the blueprint that uses them, in `bp.custom`. That
+   is deliberate: a homebrew ship pushed to the shared bridge then arrives
+   complete, and no player needs the GM's catalogue to read it. Passing a
+   catalogue separately is supported for the hull-backed NPC ships, which have
+   no blueprint to carry one.
+
+   Everything is validated before it is trusted. A hull with no armour, or a
+   weapon with a range of zero, would not fail loudly — it would quietly make
+   every calculation that touches it wrong. */
+
+const catalogue = (custom) => ({
+  hulls: Array.isArray(custom && custom.hulls) ? custom.hulls : [],
+  components: Array.isArray(custom && custom.components) ? custom.components : []
+});
+
+// A blueprint's own definitions, or an explicitly passed catalogue.
+const customOf = (source) => {
+  if (!source) return catalogue(null);
+  // a blueprint carries them under .custom; a bare catalogue is used as-is
+  return catalogue(source.custom || source);
+};
+
+export const allHulls = (source) => [...HULLS, ...customOf(source).hulls];
+export const allComponents = (source) =>
+  [...COMPONENTS, ...customOf(source).components];
+
+export const hullById = (id, source) =>
+  allHulls(source).find((h) => h.id === id) || null;
+export const componentById = (id, source) =>
+  allComponents(source).find((c) => c.id === id) || null;
+
+// "1d10+2". Built-ins carry a `damage` string for display; a homebrew weapon
+// is defined by its dice and bonus, so the string is derived rather than
+// asked for twice and left to disagree with itself.
+export function damageText(component) {
+  const c = component || {};
+  if (c.damage) return c.damage;
+  const dice = Number(c.damageDice) || 0;
+  const bonus = Number(c.damageBonus) || 0;
+  if (!dice) return bonus ? `+${bonus}` : '';
+  return `${dice}d10${bonus > 0 ? `+${bonus}` : bonus < 0 ? bonus : ''}`;
+}
+
+export const isHomebrew = (id) =>
+  !HULLS.some((h) => h.id === id) && !COMPONENTS.some((c) => c.id === id);
+
+export const SLOT_NAMES = ['prow', 'dorsal', 'port', 'starboard'];
+export const WEAPON_CLASSES = ['macro', 'lance', 'torpedo'];
+
+const isInt = (v) => Number.isInteger(Number(v));
+const posInt = (v) => isInt(v) && Number(v) > 0;
+const nonNegInt = (v) => isInt(v) && Number(v) >= 0;
+
+// Errors in a homebrew hull, as messages meant to be shown. Empty means usable.
+export function validateHull(hull) {
+  const e = [];
+  const h = hull || {};
+  if (!String(h.id || '').trim()) e.push('The hull needs an id.');
+  else if (HULLS.some((b) => b.id === h.id)) {
+    // Overriding a built-in silently would be worse than refusing: a sheet
+    // would read "Lunar-class" and have someone else's numbers.
+    e.push(`"${h.id}" is already a built-in hull. Choose another id.`);
+  }
+  if (!String(h.name || '').trim()) e.push('The hull needs a name.');
+  // The class string drives the target-size modifier, so a blank one silently
+  // makes a battleship as hard to hit as a frigate.
+  if (!String(h.cls || '').trim()) e.push('The hull needs a class (it sets target size).');
+
+  for (const [key, label] of [['speed', 'Speed'], ['detection', 'Detection'],
+    ['manoeuvre', 'Manoeuvre']]) {
+    if (!isInt(h[key])) e.push(`${label} must be a whole number.`);
+  }
+  for (const [key, label] of [['armour', 'Armour'], ['hullIntegrity', 'Hull Integrity'],
+    ['space', 'Space'], ['sp', 'Ship Points']]) {
+    if (!posInt(h[key])) e.push(`${label} must be a whole number above zero.`);
+  }
+  if (!nonNegInt(h.turrets)) e.push('Turret Rating must be zero or more.');
+
+  if (!Array.isArray(h.slots) || h.slots.length === 0) {
+    e.push('The hull needs at least one weapon mount.');
+  } else {
+    const bad = h.slots.filter((s) => !SLOT_NAMES.includes(s));
+    if (bad.length) e.push(`Unknown mount(s): ${[...new Set(bad)].join(', ')}.`);
+  }
+  return e;
+}
+
+// Errors in a homebrew component.
+export function validateComponent(component) {
+  const e = [];
+  const c = component || {};
+  if (!String(c.id || '').trim()) e.push('The component needs an id.');
+  else if (COMPONENTS.some((b) => b.id === c.id)) {
+    e.push(`"${c.id}" is already a built-in component. Choose another id.`);
+  }
+  if (!String(c.name || '').trim()) e.push('The component needs a name.');
+
+  const categories = [...ESSENTIAL_CATEGORIES, 'weapon', 'supplemental'];
+  if (!categories.includes(c.category)) {
+    e.push(`Category must be one of: ${categories.join(', ')}.`);
+  }
+  // Signed: a plasma drive generates, everything else draws.
+  if (!isInt(c.power)) e.push('Power must be a whole number (negative to draw).');
+  if (c.category === 'plasmaDrive' && Number(c.power) <= 0) {
+    e.push('A plasma drive must generate power, so Power must be positive.');
+  }
+  if (c.category !== 'plasmaDrive' && Number(c.power) > 0) {
+    e.push('Only a plasma drive generates power.');
+  }
+  if (!nonNegInt(c.space)) e.push('Space must be zero or more.');
+  if (!nonNegInt(c.sp)) e.push('Ship Points must be zero or more.');
+
+  if (c.category === 'weapon') {
+    if (!WEAPON_CLASSES.includes(c.weaponClass)) {
+      e.push(`A weapon needs a class: ${WEAPON_CLASSES.join(', ')}.`);
+    }
+    // Strength caps the hits an attack can score, so zero means it can never
+    // hit anything.
+    if (!posInt(c.str)) e.push('Strength must be a whole number above zero.');
+    if (!nonNegInt(c.damageBonus)) e.push('Damage bonus must be zero or more.');
+    // Range zero reads as "out of range" everywhere, so the weapon could never
+    // fire — see rangeBand in voidcombat.js.
+    if (!posInt(c.range)) e.push('Range must be above zero, or it can never fire.');
+    if (!posInt(c.crit)) e.push('Crit rating must be a whole number above zero.');
+  }
+  return e;
+}
+
+// Everything wrong with a whole homebrew catalogue, keyed by entry.
+export function validateCustom(custom) {
+  const { hulls, components } = catalogue(custom);
+  const out = [];
+  const seen = new Set();
+  for (const h of hulls) {
+    for (const msg of validateHull(h)) out.push({ kind: 'hull', id: h && h.id, msg });
+    if (h && h.id) {
+      if (seen.has(h.id)) out.push({ kind: 'hull', id: h.id, msg: 'Duplicate id.' });
+      seen.add(h.id);
+    }
+  }
+  for (const c of components) {
+    for (const msg of validateComponent(c)) out.push({ kind: 'component', id: c && c.id, msg });
+    if (c && c.id) {
+      if (seen.has(c.id)) out.push({ kind: 'component', id: c.id, msg: 'Duplicate id.' });
+      seen.add(c.id);
+    }
+  }
+  return out;
+}
+
+// Only the entries that pass, so one broken definition does not take the rest
+// of the table's homebrew with it.
+export function usableCustom(custom) {
+  const { hulls, components } = catalogue(custom);
+  return {
+    hulls: hulls.filter((h) => validateHull(h).length === 0),
+    components: components.filter((c) => validateComponent(c).length === 0)
+  };
+}
 
 /* ------------------------------- target size -------------------------------
    A kilometre-long frigate is far harder to hit than an eight-kilometre
@@ -166,15 +327,15 @@ export const crewRating = (id) =>
 const listed = (bp) => {
   const out = [];
   for (const cat of ESSENTIAL_CATEGORIES) {
-    const c = componentById(bp && bp.essential && bp.essential[cat]);
+    const c = componentById(bp && bp.essential && bp.essential[cat], bp);
     if (c) out.push(c);
   }
   for (const w of (bp && bp.weapons) || []) {
-    const c = componentById(w && w.componentId);
+    const c = componentById(w && w.componentId, bp);
     if (c) out.push(c);
   }
   for (const id of (bp && bp.supplemental) || []) {
-    const c = componentById(id);
+    const c = componentById(id, bp);
     if (c) out.push(c);
   }
   return out;
@@ -189,13 +350,13 @@ export const powerUsed = (bp) =>
 export const spaceUsed = (bp) => listed(bp).reduce((n, c) => n + c.space, 0);
 
 export function spSpent(bp) {
-  const hull = hullById(bp && bp.hullId);
+  const hull = hullById(bp && bp.hullId, bp);
   const crew = crewRating(bp && bp.crew);
   return (hull ? hull.sp : 0) + crew.sp + listed(bp).reduce((n, c) => n + c.sp, 0);
 }
 
 export function budget(bp) {
-  const hull = hullById(bp && bp.hullId);
+  const hull = hullById(bp && bp.hullId, bp);
   const dynastySP = Number((bp && bp.dynastySP) ?? 0);
   return {
     dynastySP,
@@ -221,12 +382,12 @@ const slotCounts = (hull) => (hull ? hull.slots : []).reduce((m, s) => {
 // Every way a blueprint can be illegal, as messages meant to be shown.
 export function validate(bp) {
   const errors = [];
-  const hull = hullById(bp && bp.hullId);
+  const hull = hullById(bp && bp.hullId, bp);
   if (!hull) return { ok: false, errors: ['No hull chosen.'], budget: budget(bp) };
 
   for (const cat of ESSENTIAL_CATEGORIES) {
     const id = bp.essential && bp.essential[cat];
-    const c = componentById(id);
+    const c = componentById(id, bp);
     if (!c) { errors.push(`Missing an essential component: ${cat}.`); continue; }
     // a component installed in the wrong category would pass every arithmetic
     // check while leaving the ship without, say, a Geller Field
@@ -238,7 +399,7 @@ export function validate(bp) {
   const have = slotCounts(hull);
   const want = {};
   for (const w of bp.weapons || []) {
-    const c = componentById(w && w.componentId);
+    const c = componentById(w && w.componentId, bp);
     if (!c) continue;
     if (c.category !== 'weapon') {
       errors.push(`${c.name} is not a weapon and cannot be mounted.`);
@@ -271,7 +432,7 @@ export const POP_PENALTY_THRESHOLD = 0.75;
 export const POP_MANOEUVRE_PENALTY = -5;
 
 export function stats(bp, vitals) {
-  const hull = hullById(bp && bp.hullId);
+  const hull = hullById(bp && bp.hullId, bp);
   if (!hull) return null;
   const comps = listed(bp);
   const sum = (key) => comps.reduce((n, c) => n + ((c.mods && c.mods[key]) || 0), 0);
@@ -298,7 +459,7 @@ export function stats(bp, vitals) {
 // Starting vitals for a finished blueprint.
 export function newVitals(bp) {
   const s = stats(bp);
-  const hull = hullById(bp && bp.hullId);
+  const hull = hullById(bp && bp.hullId, bp);
   return {
     population: 100,
     morale: s ? s.maxMorale : 100,

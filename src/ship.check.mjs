@@ -2,6 +2,9 @@
 import assert from 'node:assert/strict';
 import {
   HULLS, COMPONENTS, ESSENTIAL_CATEGORIES, CREW_RATINGS,
+  SLOT_NAMES, WEAPON_CLASSES,
+  allHulls, allComponents, isHomebrew,
+  validateHull, validateComponent, validateCustom, usableCustom, damageText,
   hullById, componentById, crewRating,
   powerGenerated, powerUsed, spaceUsed, spSpent, budget, validate,
   stats, newVitals, POP_PENALTY_THRESHOLD
@@ -264,3 +267,201 @@ assert.equal(spaceUsed({ supplemental: ['comp-does-not-exist'] }), 0);
 
 console.log('ship: all checks passed (%d hulls, %d components)',
   HULLS.length, COMPONENTS.length);
+
+/* ============================== HOMEBREW ============================== */
+
+const goodHull = {
+  id: 'hull-maekao', name: 'Ma\u2019Kao Pattern', cls: 'Light Cruiser',
+  speed: 7, manoeuvre: 18, detection: 22, armour: 18, hullIntegrity: 58,
+  turrets: 2, space: 62, sp: 52, slots: ['prow', 'port', 'starboard']
+};
+
+const goodGun = {
+  id: 'weap-maekao-battery', name: 'Ma\u2019Kao Battery', category: 'weapon',
+  power: -5, space: 3, sp: 2,
+  weaponClass: 'macro', str: 4, damageDice: 1, damageBonus: 3, crit: 4, range: 8
+};
+
+/* ---- a valid definition passes ---- */
+
+assert.deepEqual(validateHull(goodHull), []);
+assert.deepEqual(validateComponent(goodGun), []);
+assert.deepEqual(validateCustom({ hulls: [goodHull], components: [goodGun] }), []);
+
+/* ---- and is then resolvable and usable ---- */
+
+{
+  const custom = { hulls: [goodHull], components: [goodGun] };
+  assert.equal(allHulls(custom).length, HULLS.length + 1);
+  assert.equal(allComponents(custom).length, COMPONENTS.length + 1);
+  assert.equal(hullById('hull-maekao', custom).name, 'Ma\u2019Kao Pattern');
+  assert.equal(componentById('weap-maekao-battery', custom).str, 4);
+  // ...and invisible without the catalogue, so a built-in lookup is unchanged
+  assert.equal(hullById('hull-maekao'), null);
+  assert.equal(componentById('weap-maekao-battery'), null);
+  assert.equal(hullById('hull-lunar', custom).name, 'Lunar-class', 'built-ins still resolve');
+
+  assert.equal(isHomebrew('hull-maekao'), true);
+  assert.equal(isHomebrew('hull-lunar'), false);
+  assert.equal(isHomebrew('weap-macrocannon-mars'), false);
+}
+
+/* ---- a blueprint carries its own definitions, so it validates alone ---- */
+
+{
+  const bp = {
+    hullId: 'hull-maekao',
+    dynastySP: 80,
+    crew: 'competent',
+    custom: { hulls: [goodHull], components: [goodGun] },
+    essential: {
+      plasmaDrive: 'drive-jovian3', warpEngine: 'warp-strelov1',
+      gellerField: 'geller-basic', voidShield: 'shield-single',
+      bridge: 'bridge-combat', lifeSustainer: 'life-vitae',
+      crewQuarters: 'quarters-voidsmen', augurArray: 'augur-m100'
+    },
+    weapons: [{ slot: 'prow', componentId: 'weap-maekao-battery' }],
+    supplemental: []
+  };
+
+  const v = validate(bp);
+  assert.deepEqual(v.errors, [], 'a homebrew blueprint is legal on its own');
+  // 25 essential draw + 5 for the homebrew gun
+  assert.equal(v.budget.usedPower, 30);
+  assert.equal(v.budget.totalPower, 60);
+  // 29 essential space (12+10+0+1+1+2+3+0) + 3 for the gun
+  assert.equal(v.budget.usedSpace, 32);
+  assert.equal(v.budget.totalSpace, 62, 'the homebrew hull\u2019s Space is used');
+  // hull 52 + gun 2
+  assert.equal(v.budget.spentSP, 54);
+
+  // the homebrew hull drives the derived stats
+  const st = stats(bp);
+  assert.equal(st.speed, 7);
+  assert.equal(st.armour, 18);
+  assert.equal(st.hullIntegrity, 58);
+  assert.equal(st.turrets, 2);
+  assert.equal(newVitals(bp).hullIntegrity, 58);
+
+  // and its mounts are enforced like any other hull's
+  const bad = validate({ ...bp,
+    weapons: [{ slot: 'dorsal', componentId: 'weap-maekao-battery' }] });
+  assert.ok(bad.errors.some((e) => /no dorsal mount/.test(e)), bad.errors.join('; '));
+
+  // Without its definitions the same blueprint is not silently half-valid:
+  // the hull is simply missing.
+  const orphaned = validate({ ...bp, custom: null });
+  assert.equal(orphaned.ok, false);
+  assert.deepEqual(orphaned.errors, ['No hull chosen.']);
+}
+
+/* ---- broken definitions are refused, with a reason ---- */
+
+const hullErr = (patch) => validateHull({ ...goodHull, ...patch });
+
+assert.ok(hullErr({ id: '' }).some((m) => /needs an id/.test(m)));
+assert.ok(hullErr({ name: '  ' }).some((m) => /needs a name/.test(m)));
+// The class string sets the target-size modifier, so a blank one would make a
+// battleship as easy to hit as a frigate.
+assert.ok(hullErr({ cls: '' }).some((m) => /target size/.test(m)));
+assert.ok(hullErr({ armour: 0 }).some((m) => /Armour/.test(m)));
+assert.ok(hullErr({ armour: 'thick' }).some((m) => /Armour/.test(m)));
+assert.ok(hullErr({ hullIntegrity: -5 }).some((m) => /Hull Integrity/.test(m)));
+assert.ok(hullErr({ space: 0 }).some((m) => /Space/.test(m)));
+assert.ok(hullErr({ sp: 0 }).some((m) => /Ship Points/.test(m)));
+assert.ok(hullErr({ turrets: -1 }).some((m) => /Turret/.test(m)));
+assert.ok(hullErr({ speed: 1.5 }).some((m) => /Speed/.test(m)));
+assert.ok(hullErr({ slots: [] }).some((m) => /at least one weapon mount/.test(m)));
+assert.ok(hullErr({ slots: ['keel'] }).some((m) => /Unknown mount/.test(m)));
+// manoeuvre may be negative — a transport is sluggish
+assert.deepEqual(hullErr({ manoeuvre: -10 }), []);
+
+// Shadowing a built-in is refused: a sheet would read "Lunar-class" and carry
+// someone else's numbers.
+assert.ok(hullErr({ id: 'hull-lunar' }).some((m) => /already a built-in/.test(m)));
+
+const compErr = (patch) => validateComponent({ ...goodGun, ...patch });
+
+assert.ok(compErr({ category: 'nonsense' }).some((m) => /Category must be/.test(m)));
+assert.ok(compErr({ id: 'weap-macrocannon-mars' }).some((m) => /already a built-in/.test(m)));
+assert.ok(compErr({ space: -1 }).some((m) => /Space/.test(m)));
+// Only a plasma drive generates power.
+assert.ok(compErr({ power: 5 }).some((m) => /Only a plasma drive/.test(m)));
+assert.deepEqual(validateComponent({
+  id: 'drive-custom', name: 'Custom Drive', category: 'plasmaDrive',
+  power: 70, space: 14, sp: 0
+}), []);
+assert.ok(validateComponent({
+  id: 'drive-dud', name: 'Dud', category: 'plasmaDrive', power: -5, space: 1, sp: 0
+}).some((m) => /must generate power/.test(m)));
+
+// Weapon-only rules
+assert.ok(compErr({ weaponClass: 'plasma' }).some((m) => /needs a class/.test(m)));
+assert.ok(compErr({ str: 0 }).some((m) => /Strength/.test(m)));
+// Range zero reads as "out of range" everywhere, so it could never fire.
+assert.ok(compErr({ range: 0 }).some((m) => /never fire/.test(m)));
+assert.ok(compErr({ crit: 0 }).some((m) => /Crit/.test(m)));
+// ...and none of those apply to a supplemental
+assert.deepEqual(validateComponent({
+  id: 'comp-shrine', name: 'Shrine of the Emperor Ascendant',
+  category: 'supplemental', power: -1, space: 2, sp: 1
+}), []);
+
+assert.deepEqual(WEAPON_CLASSES, ['macro', 'lance', 'torpedo']);
+assert.deepEqual(SLOT_NAMES, ['prow', 'dorsal', 'port', 'starboard']);
+
+/* ---- a duplicate id inside the catalogue is caught ---- */
+
+{
+  const dupes = validateCustom({
+    hulls: [goodHull, { ...goodHull, name: 'Other' }],
+    components: []
+  });
+  assert.ok(dupes.some((d) => d.msg === 'Duplicate id.'), JSON.stringify(dupes));
+
+  // a component cannot reuse a hull's id either
+  const across = validateCustom({
+    hulls: [goodHull],
+    components: [{ ...goodGun, id: 'hull-maekao' }]
+  });
+  assert.ok(across.some((d) => d.msg === 'Duplicate id.'));
+}
+
+/* ---- one broken entry does not take the rest with it ---- */
+
+{
+  const mixed = {
+    hulls: [goodHull, { id: 'hull-broken', name: 'Broken' }],
+    components: [goodGun, { id: 'comp-broken' }]
+  };
+  assert.ok(validateCustom(mixed).length > 0);
+
+  const usable = usableCustom(mixed);
+  assert.deepEqual(usable.hulls.map((h) => h.id), ['hull-maekao']);
+  assert.deepEqual(usable.components.map((c) => c.id), ['weap-maekao-battery']);
+}
+
+/* ---- absent, empty and malformed catalogues are all just "no homebrew" ---- */
+
+assert.deepEqual(validateCustom(null), []);
+assert.deepEqual(validateCustom({}), []);
+assert.deepEqual(validateCustom({ hulls: 'nope', components: 7 }), []);
+assert.equal(allHulls(null).length, HULLS.length);
+assert.equal(allHulls({ hulls: null }).length, HULLS.length);
+assert.equal(allComponents(undefined).length, COMPONENTS.length);
+assert.deepEqual(usableCustom(null), { hulls: [], components: [] });
+
+console.log('ship: homebrew checks passed');
+
+/* ---- the damage string is derived when a homebrew weapon has none ---- */
+
+assert.equal(damageText(componentById('weap-macrocannon-mars')), '1d10+2',
+  'a built-in keeps its own string');
+assert.equal(damageText({ damageDice: 1, damageBonus: 3 }), '1d10+3');
+assert.equal(damageText({ damageDice: 2, damageBonus: 0 }), '2d10');
+assert.equal(damageText({ damageDice: 1, damageBonus: -1 }), '1d10-1');
+assert.equal(damageText({ damageBonus: 4 }), '+4', 'no dice, just a bonus');
+assert.equal(damageText({}), '');
+assert.equal(damageText(null), '');
+
+console.log('ship: damage text OK');

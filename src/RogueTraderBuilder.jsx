@@ -1400,6 +1400,9 @@ const CSS = `
   margin-top:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
   color:var(--dim);}
 .rt-gmvitals b{color:var(--green);font-size:12px;}
+.rt-gmsync{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
+  color:var(--dim);}
+.rt-gmsync.on{color:var(--vox);}
 .rt-gmdead{opacity:.5;}
 .rt-gmdead .rt-entry-t{text-decoration:line-through;}
 .rt-gmevade{display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--brass-lit);}
@@ -2975,7 +2978,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         <GmPanel
           fleet={fleet} setFleet={setFleet}
           combat={combat} setCombat={setCombat}
-          blueprint={blueprint}
+          blueprint={blueprint} bridgeCode={bridgeCode}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -5191,7 +5194,7 @@ function shipProfile(ship, blueprint) {
   };
 }
 
-function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, onClose }) {
+function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -5222,6 +5225,55 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, onClose }) {
   const byId = (id) => ships.find((s) => s.id === id);
 
   const say = (entry) => setLog((p) => [{ ...entry, key: newId() }, ...p].slice(0, 30));
+
+  /* ---- publishing ----
+     Driven by an effect watching the shared state rather than a call in each
+     handler. Every action here mutates fleet or combat, so watching those two
+     cannot miss one — where a call per handler is a list to keep in step, and
+     the one that gets forgotten is invisible until a player asks why their
+     screen is stale.
+
+     Debounced, because a burst of clicks would otherwise be a burst of writes
+     against the command budget, and the players only need the settled state. */
+  const [pushed, setPushed] = useState(null);
+  // The last state actually sent. Guarding on content rather than on "is this
+  // the first run" because a first-run flag does not survive StrictMode, which
+  // mounts, tears down and mounts again: the ref was already true on the
+  // second pass, so opening the panel pushed — the very clobber the guard was
+  // there to prevent.
+  const lastSent = useRef(null);
+
+  // The newest log line, so the bridge log reads as what the GM just did
+  // rather than "the GM updated the bridge". Declared above the effect that
+  // closes over it: reading a const from above its declaration is only safe
+  // while the read is deferred, and this project has already had one TDZ
+  // error blank every screen.
+  const logRef = useRef(null);
+
+  useEffect(() => {
+    if (!bridgeCode) return undefined;
+
+    const snapshot = JSON.stringify({ fleet, combat });
+    // Opening the panel is not a change. Remember what was there and send
+    // nothing until it differs.
+    if (lastSent.current === null) { lastSent.current = snapshot; return undefined; }
+    if (lastSent.current === snapshot) return undefined;
+
+    const t = setTimeout(() => {
+      writeBridge({
+        code: bridgeCode,
+        doc: { fleet, combat },
+        vitals: combat.playerVitals || newVitals(blueprint),
+        log: logRef.current
+      }).then((r) => {
+        lastSent.current = snapshot;
+        setPushed({ rev: r.rev, at: Date.now() });
+      }).catch((e) => say({ kind: 'miss', text: 'Bridge: ' + e.message }));
+    }, 700);
+    return () => clearTimeout(t);
+  }, [fleet, combat, bridgeCode]);
+
+  logRef.current = log.length ? log[0].text : null;
 
   const setVitals = (id, patch) => {
     if (id === 'player') {
@@ -5390,6 +5442,11 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, onClose }) {
         <b className="rt-gmphase">{PHASE_LABELS[combat.phase] || PHASE_LABELS.extended}</b>
         <button className="rt-opt" onClick={advance}>Advance</button>
         <button className="rt-opt" onClick={rollInitiative}>Roll initiative</button>
+        <span className={'rt-gmsync' + (bridgeCode ? ' on' : '')}>
+          {bridgeCode
+            ? `live to ${bridgeCode}${pushed ? ` \u00B7 rev ${pushed.rev}` : '\u2026'}`
+            : 'local only'}
+        </span>
       </div>
       {combat.order && combat.order.length > 0 && (
         <p className="rt-vox-hint">

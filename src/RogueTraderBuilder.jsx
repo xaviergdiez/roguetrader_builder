@@ -25,6 +25,9 @@ import {
   PHASES, PHASE_LABELS, nextPhase, initiativeOrder, toHit, hitsScored,
   resolveAttack, criticalEffect, applyEvent
 } from './voidcombat.js';
+import {
+  createDynasty, joinBridge, leaveBridge, patchShip, pollBridge
+} from './bridge.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
   POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
@@ -1381,6 +1384,10 @@ const CSS = `
 
 .rt-headbtn.ship{border-color:var(--green-dim);color:var(--green);}
 .rt-headbtn.gm{border-color:var(--rust);color:var(--rust);}
+.rt-headbtn.bridge{border-color:var(--vox);color:var(--vox);}
+.rt-headbtn.bridge.on{border-color:var(--gold);color:var(--gold-lit);}
+.rt-bridgecode{letter-spacing:.22em;font-family:var(--mono);font-size:15px;}
+.rt-bridgevitals{flex-basis:auto;margin-top:0;}
 
 /* ---- GM dashboard ---- */
 .rt-gm{max-width:820px;}
@@ -2303,6 +2310,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [shipRole, setShipRole] = useState('');    // '' = no station
   const [shipOpen, setShipOpen] = useState(false);
   const [gmOpen, setGmOpen] = useState(false);
+  const [bridgeOpen, setBridgeOpen] = useState(false);
+  const [bridgeCode, setBridgeCode] = useState('');
   const [fleet, setFleet] = useState([]);          // the GM's NPC ships
   const [combat, setCombat] = useState(EMPTY_COMBAT);
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
@@ -2350,6 +2359,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         setBlueprint(readBlueprint(s.blueprint));
         setShipRole(s.shipRole || '');
         setFleet(Array.isArray(s.fleet) ? s.fleet : []);
+        setBridgeCode(s.bridgeCode || '');
         setCombat({ ...EMPTY_COMBAT, ...(s.combat || null) });
         if (typeof s.xp === 'number') setXp(s.xp);
         if (typeof s.stepIx === 'number') setStepIx(s.stepIx);
@@ -2365,14 +2375,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
           fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat
+          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
   }, [name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
       fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
-      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, loaded]);
+      finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode, loaded]);
 
   /* ---- aggregation ---- */
   const build = useMemo(() => {
@@ -2770,6 +2780,11 @@ export default function RogueTraderBuilder({ me, cloud }) {
               title="Voidship blueprint: hull, components, and your station">SHIP</button>
             <button className="rt-headbtn gm" onClick={() => setGmOpen(true)}
               title="GM dashboard: the fleet, the turn, attacks and events">GM</button>
+            <button className={'rt-headbtn bridge' + (bridgeCode ? ' on' : '')}
+              onClick={() => setBridgeOpen(true)}
+              title="The shared bridge: join a table or run one">
+              {bridgeCode || 'BRIDGE'}
+            </button>
             {psyAvailable && (
               <button className="rt-headbtn psy" onClick={() => setPsyOpen(true)}
                 title="Focus Power, Psychic Phenomena and Perils of the Warp">PSY</button>
@@ -2939,6 +2954,15 @@ export default function RogueTraderBuilder({ me, cloud }) {
           shipRole={shipRole} setShipRole={setShipRole}
           careerName={career ? career.name : ''}
           onClose={() => setShipOpen(false)}
+        />
+      )}
+
+      {bridgeOpen && (
+        <BridgePanel
+          code={bridgeCode} setCode={setBridgeCode}
+          characterName={name} charId={charId} shipRole={shipRole}
+          blueprint={blueprint} fleet={fleet} combat={combat}
+          onClose={() => setBridgeOpen(false)}
         />
       )}
 
@@ -4798,6 +4822,249 @@ const QUICK_LINES = [
    illegal ship should be visibly illegal while you are building it, not on a
    submit. Nothing here blocks an over-budget blueprint — a GM may well allow
    one — but validate() lists every reason it is illegal. */
+
+/* ------------------------------- THE BRIDGE -------------------------------
+   Create a table as GM, or join one with the code. Once connected, the shared
+   ship is polled and shown live: this is the panel that proves the loop, since
+   a GM's event lands on every other screen within one poll.
+
+   The GM pushes their blueprint and running battle up; players read. Writing
+   from a station goes through the same patch call, which the server checks
+   against the station's fields. */
+
+function BridgePanel({ code, setCode, characterName, charId, shipRole, blueprint,
+  fleet, combat, onClose }) {
+  const dialogRef = useRef(null);
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  const [state, setState] = useState(null);
+  const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [entry, setEntry] = useState('');
+  const [dynastyName, setDynastyName] = useState('');
+  const revRef = useRef(0);
+
+  // The poll reads the rev through a ref so changing it does not restart the
+  // loop — a new interval on every answer would defeat the point of polling.
+  useEffect(() => {
+    if (!code) return undefined;
+    setErr('');
+    return pollBridge({
+      code,
+      getRev: () => revRef.current,
+      onState: (s) => {
+        if (s.ship) revRef.current = Number(s.ship.rev) || 0;
+        setState(s);
+        setErr('');
+      },
+      onError: (e) => setErr(e.message)
+    });
+  }, [code]);
+
+  const run = async (fn, ok) => {
+    setBusy(true); setErr(''); setNote('');
+    try {
+      const r = await fn();
+      if (ok) setNote(ok);
+      return r;
+    } catch (e) {
+      setErr(e.message);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const create = () => run(async () => {
+    const r = await createDynasty(dynastyName || 'An unnamed dynasty');
+    revRef.current = Number(r.ship?.rev) || 0;
+    setState(r);
+    setCode(r.dynasty.code);
+    return r;
+  }, 'Table created. Read the code out to your players.');
+
+  const join = () => run(async () => {
+    const r = await joinBridge({
+      code: entry.trim().toUpperCase(),
+      charId, name: characterName, role: shipRole
+    });
+    revRef.current = Number(r.ship?.rev) || 0;
+    setState(r);
+    setCode(r.dynasty.code);
+    return r;
+  }, 'Joined.');
+
+  const leave = () => run(async () => {
+    await leaveBridge(code);
+    setState(null);
+    setCode('');
+  }, 'Left the table.');
+
+  // The GM's copy is authoritative for the ship as built and the battle in
+  // progress, so pushing is one call rather than a merge.
+  const push = () => run(async () => {
+    const r = await patchShip({
+      code,
+      patch: { blueprint, fleet, combat, vitals: combat.playerVitals || newVitals(blueprint) },
+      log: 'The GM updated the bridge.'
+    });
+    revRef.current = Number(r.rev) || revRef.current;
+    return r;
+  }, 'Pushed to the bridge.');
+
+  const isGmHere = Boolean(state && state.isGm);
+  const ship = state && state.ship;
+  const dynasty = state && state.dynasty;
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer rt-ship" onClose={onClose}
+      aria-label="The bridge">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">The bridge</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+
+      {err && <div className="rt-warn"><p>{err}</p></div>}
+      {note && <div className="rt-note">{note}</div>}
+
+      {!code ? (
+        <>
+          <p className="rt-vox-hint">
+            One table has one ship and one GM: whoever creates it. Everyone else
+            joins with the code and takes a station.
+          </p>
+
+          <div className="rt-conds-h">Join a table</div>
+          <div className="rt-shiprow">
+            <label className="rt-shipfield">
+              <span className="rt-der-k">Code</span>
+              <input className="rt-field" value={entry} maxLength={8}
+                onChange={(e) => setEntry(e.target.value.toUpperCase())}
+                placeholder="AB3K9P" />
+            </label>
+            <button className="rt-btn" disabled={busy || entry.trim().length < 6}
+              onClick={join}>Join</button>
+          </div>
+          {!shipRole && (
+            <p className="rt-vox-hint">
+              You have no station yet {'—'} pick one under SHIP and your
+              terminal will know what you may change.
+            </p>
+          )}
+
+          <div className="rt-conds-h">Or run one as GM</div>
+          <div className="rt-shiprow">
+            <label className="rt-shipfield">
+              <span className="rt-der-k">Dynasty name</span>
+              <input className="rt-field" value={dynastyName}
+                onChange={(e) => setDynastyName(e.target.value)}
+                placeholder="The Ma’Kao Dynasty" />
+            </label>
+            <button className="rt-btn ghost" disabled={busy} onClick={create}>Create</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="rt-gmturn">
+            <span className="rt-der-k">Code</span>
+            <b className="rt-gmphase rt-bridgecode">{code}</b>
+            <span className="rt-der-k">{isGmHere ? 'You are the GM' : 'Crew'}</span>
+            {isGmHere && (
+              <button className="rt-opt" disabled={busy} onClick={push}>Push my ship</button>
+            )}
+            {!isGmHere && (
+              <button className="rt-opt" disabled={busy} onClick={leave}>Leave</button>
+            )}
+          </div>
+
+          {!state && <p className="rt-vox-hint">Connecting{'…'}</p>}
+
+          {dynasty && (
+            <>
+              <div className="rt-conds-h">{dynasty.name} {'·'} {(dynasty.members || []).length} aboard</div>
+              <ul className="rt-list">
+                {(dynasty.members || []).map((m, i) => {
+                  const r = roleById(m.role);
+                  return (
+                    <li key={i} className="rt-entry">
+                      <span className="rt-entry-t">{m.name}</span>
+                      <span className="rt-entry-c">{r ? r.name : 'no station'}</span>
+                      {r && <div className="rt-entry-d"><p>{r.department}</p></div>}
+                    </li>
+                  );
+                })}
+                {(dynasty.members || []).length === 0 && (
+                  <li className="rt-entry"><span className="rt-entry-t">
+                    Nobody has joined yet.
+                  </span></li>
+                )}
+              </ul>
+            </>
+          )}
+
+          {ship && ship.vitals && (
+            <>
+              <div className="rt-conds-h">The ship {'·'} rev {ship.rev}</div>
+              <div className="rt-gmvitals rt-bridgevitals">
+                <span>HULL <b>{ship.vitals.hullIntegrity ?? '—'}</b></span>
+                <span>MORALE <b>{ship.vitals.morale ?? '—'}</b></span>
+                <span>POP <b>{ship.vitals.population ?? '—'}</b></span>
+                <span>PHASE <b>{PHASE_LABELS[ship.combat?.phase] || '—'}</b></span>
+              </div>
+            </>
+          )}
+
+          {ship && (ship.fleet || []).length > 0 && (
+            <>
+              <div className="rt-conds-h">Contacts</div>
+              <ul className="rt-list">
+                {ship.fleet.map((e, i) => (
+                  <li key={e.id || i} className="rt-entry">
+                    <span className="rt-entry-t">{e.name || 'Unknown contact'}</span>
+                    <span className="rt-entry-c">
+                      {e.unscanned ? 'unscanned' : `HULL ${e.vitals?.hullIntegrity ?? '?'}`}
+                    </span>
+                    {e.unscanned && (
+                      <div className="rt-entry-d">
+                        <p className="rt-entry-s">
+                          No augur reading. An Active Augury reveals its hull,
+                          shields and weapons.
+                        </p>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {ship && (ship.log || []).length > 0 && (
+            <>
+              <div className="rt-conds-h">Bridge log</div>
+              <ul className="rt-gmlog">
+                {ship.log.map((l, i) => (
+                  <li key={i} className={'rt-gmline ' + (l.event ? 'event' : '')}>
+                    {l.text}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <p className="rt-vox-hint">
+            Updating every {Math.round((state?.pollSeconds || 5))} seconds while
+            this panel is open.
+          </p>
+        </>
+      )}
+    </dialog>
+  );
+}
 
 /* ------------------------------ GM DASHBOARD ------------------------------
    The GM's side of the bridge: the fleet, the turn, the attack resolver and

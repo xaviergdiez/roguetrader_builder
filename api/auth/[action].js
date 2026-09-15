@@ -3,6 +3,7 @@ import {
   setCookie,
   clearCookie,
   getSession,
+  getSessionRecord,
   createSession,
   destroySession,
   getUser,
@@ -51,7 +52,16 @@ export default async function handler(req, res) {
 
   if (action === "google") {
     if (missingEnv(res, "GOOGLE_CLIENT_ID")) return;
-    const state = randomToken();
+    // Which door: /api/auth/google is a player, ?gm=1 is the GM. The intent
+    // rides inside `state` rather than a second cookie, so it is still the
+    // one value compared on the way back and cannot drift from it.
+    //
+    // It is self-asserted: anyone may use the GM door. It decides which
+    // surface you get and whether you may open a table — authority over a
+    // particular table stays bound to the account that created it, so a
+    // player signing in this way cannot seize someone else's game.
+    const wantsGm = req.query.gm === "1";
+    const state = `${randomToken()}.${wantsGm ? "1" : "0"}`;
     setCookie(res, "gstate", state, 600);
     const url = new URL(GOOGLE_AUTH);
     url.searchParams.set("client_id", envValue("GOOGLE_CLIENT_ID"));
@@ -71,6 +81,8 @@ export default async function handler(req, res) {
       return res.status(400).send("Invalid OAuth state");
     }
     clearCookie(res, "gstate");
+    // Only meaningful because the whole string was compared above.
+    const asGm = String(state).endsWith(".1");
 
     const tokenRes = await fetch(GOOGLE_TOKEN, {
       method: "POST",
@@ -101,16 +113,20 @@ export default async function handler(req, res) {
       return res.status(403).send("That Google account has no verified email address.");
     }
 
-    // Single-owner gate. Unset or blank OWNER_EMAIL lets any Google account in,
-    // which is why envValue treats "" as absent rather than as a value to match.
-    const owner = envValue("OWNER_EMAIL");
-    if (owner && email !== owner) {
+    // Allowlist gate. OWNER_EMAIL takes a comma-separated list, because a
+    // table needs more than one account: with a single address set, nobody but
+    // the owner could ever sign in and the shared bridge was unusable.
+    // Unset or blank lets any Google account in, which is why envValue treats
+    // "" as absent rather than as a value to match.
+    const allowed = (envValue("OWNER_EMAIL") || "")
+      .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+    if (allowed.length && !allowed.includes(String(email).toLowerCase())) {
       return res.status(403).send("This app is not open for signups yet.");
     }
 
     const existing = await getUser(sub);
     await saveUser(sub, { email, name, chars: existing?.chars ?? [] });
-    await createSession(res, sub);
+    await createSession(res, sub, { gm: asGm });
     return res.redirect(302, "/");
   }
 
@@ -120,10 +136,12 @@ export default async function handler(req, res) {
   }
 
   if (action === "me") {
-    const uid = await getSession(req);
-    if (!uid) return res.status(401).json({ error: "unauthenticated" });
-    const user = await getUser(uid);
-    return res.status(200).json({ uid, email: user?.email, name: user?.name });
+    const rec = await getSessionRecord(req);
+    if (!rec || !rec.uid) return res.status(401).json({ error: "unauthenticated" });
+    const user = await getUser(rec.uid);
+    return res.status(200).json({
+      uid: rec.uid, email: user?.email, name: user?.name, gm: rec.gm
+    });
   }
 
   return res.status(404).json({ error: "unknown_action" });

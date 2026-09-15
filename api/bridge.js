@@ -23,7 +23,7 @@
 // controls with the same functions; only this copy counts.
 
 import { redis } from "../lib/storage.js";
-import { requireUser, getUser, saveUser } from "../lib/auth.js";
+import { requireSession, getUser, saveUser } from "../lib/auth.js";
 import {
   dynastyKey, shipKey, newCode, normaliseCode,
   newDynasty, isGm, memberOf, joinDynasty, leaveDynasty,
@@ -66,8 +66,9 @@ async function forget(uid, code) {
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
-  const uid = await requireUser(req, res);
-  if (!uid) return;
+  const session = await requireSession(req, res);
+  if (!session) return;
+  const { uid } = session;
 
   /* ------------------------------- reading ------------------------------- */
 
@@ -109,6 +110,12 @@ export default async function handler(req, res) {
   /* ------------------------------- creating ------------------------------- */
 
   if (action === "create") {
+    // Only a GM session may open a table. Checked here and not merely hidden
+    // in the UI, because the UI is not a gate: the button being absent stops
+    // nobody from posting this.
+    if (!session.gm) {
+      return res.status(403).json({ error: "gm_session_required" });
+    }
     let code = null;
     for (let i = 0; i < CODE_TRIES && !code; i++) {
       const candidate = newCode();

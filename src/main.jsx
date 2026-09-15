@@ -7,7 +7,10 @@ import Login from "./Login.jsx";
 // roster stays in localStorage. Run `vercel dev` to exercise the real Google +
 // Upstash path. In a production build DEV is false, so a signed-out visitor
 // gets the login screen.
-const DEV_USER = { email: "local@dev", name: "Local dev" };
+// gm:true under `npm run dev` so the GM surface is reachable without an
+// OAuth round trip. In a production build DEV is false and the real session
+// decides.
+const DEV_USER = { email: "local@dev", name: "Local dev", gm: true };
 
 function Root() {
   const [me, setMe] = useState(undefined); // undefined = loading, null = signed out

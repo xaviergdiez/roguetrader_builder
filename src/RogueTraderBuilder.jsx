@@ -2779,8 +2779,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
             <button className="rt-headbtn" onClick={() => setRosterOpen(true)}>ROSTER</button>
             <button className="rt-headbtn ship" onClick={() => setShipOpen(true)}
               title="Voidship blueprint: hull, components, and your station">SHIP</button>
-            <button className="rt-headbtn gm" onClick={() => setGmOpen(true)}
-              title="GM dashboard: the fleet, the turn, attacks and events">GM</button>
+            {/* The door they signed in through, reported by /api/auth/me.
+                A player never sees the GM dashboard at all. */}
+            {me?.gm && (
+              <button className="rt-headbtn gm" onClick={() => setGmOpen(true)}
+                title="GM dashboard: the fleet, the turn, attacks and events">GM</button>
+            )}
             <button className={'rt-headbtn bridge' + (bridgeCode ? ' on' : '')}
               onClick={() => setBridgeOpen(true)}
               title="The shared bridge: join a table or run one">
@@ -4833,8 +4837,8 @@ const QUICK_LINES = [
    from a station goes through the same patch call, which the server checks
    against the station's fields. */
 
-function BridgePanel({ code, setCode, characterName, charId, shipRole, blueprint,
-  fleet, combat, onClose }) {
+function BridgePanel({ code, setCode, characterName, charId, shipRole,
+  blueprint, fleet, combat, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;

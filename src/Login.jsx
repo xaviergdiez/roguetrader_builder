@@ -43,6 +43,11 @@ const CSS = `
   transition:filter .14s,border-color .14s,color .14s;}
 .rt-login-b:hover{border-color:#c9a961;color:#eef4ec;filter:brightness(1.2);}
 .rt-login-b:focus-visible{outline:2px solid #e0b955;outline-offset:2px;}
+.rt-login-gm{margin-top:10px;color:#e8998b;border-color:#a52a1e;
+  background:linear-gradient(180deg,#2a1410,#180b08);}
+.rt-login-gm:hover{border-color:#c0552a;color:#f0b09a;}
+.rt-login-n{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:10px;
+  line-height:1.7;letter-spacing:.06em;color:#5f9a74;margin:16px 0 0;}
 `;
 
 export default function Login() {
@@ -65,7 +70,17 @@ export default function Login() {
             Six steps from home world to career, the dice that follow, and a dossier
             your crew can actually read at the table.
           </p>
+          {/* Two doors. The GM one is self-asserted — it decides which
+              surface you get and whether you may open a table, not who owns
+              one; a table's authority stays with the account that created it. */}
           <a className="rt-login-b" href="/api/auth/google">Sign in with Google</a>
+          <a className="rt-login-b rt-login-gm" href="/api/auth/google?gm=1">
+            Sign in as Game Master
+          </a>
+          <p className="rt-login-n">
+            Players take a station on the bridge. The Game Master runs the ship,
+            the enemy fleet and the events.
+          </p>
         </div>
       </div>
     </div>

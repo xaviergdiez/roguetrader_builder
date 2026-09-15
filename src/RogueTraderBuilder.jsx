@@ -1359,7 +1359,7 @@ const CSS = `
 .rt-diff.on span{color:#3d2c06;}
 
 /* ---- import dialog ---- */
-.rt-import{width:min(560px,94vw);}
+.rt-framer.rt-import{width:min(620px,94vw);}
 .rt-import .rt-field{margin-bottom:7px;}
 .rt-import-tab{font-size:14px;}
 .rt-import-ta{min-height:90px;font-size:11.5px;color:var(--text);}
@@ -1398,7 +1398,6 @@ const CSS = `
 .rt-bridgevitals{flex-basis:auto;margin-top:0;}
 
 /* ---- GM dashboard ---- */
-.rt-gm{width:min(1120px,94vw);}   /* see .rt-ship: width, not max-width */
 .rt-gmturn{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;
   padding:9px 11px;border:1px solid var(--brass-dim);background:var(--well);}
 .rt-gmphase{flex:1;min-width:120px;font-family:var(--display);font-size:16px;
@@ -1429,10 +1428,17 @@ const CSS = `
 .rt-gmline.event{border-left-color:var(--warp);}
 .rt-gmline.phase,.rt-gmline.initiative{border-left-color:var(--gold);color:var(--gold-lit);}
 
-/* Sets width, NOT max-width: .rt-framer sets width:min(430px,94vw), and a
-   max-width cannot widen anything — so this panel was 430px the whole time
-   and the 760 that used to be here did nothing at all. */
-.rt-ship{width:min(1040px,94vw);}
+/* Two classes, and width rather than max-width. Both matter, and each was a
+   separate bug:
+     max-width cannot widen anything, so the 760 first written here never
+       applied to a .rt-framer already set to width:min(430px,94vw);
+     and .rt-framer is declared LATER in this stylesheet, so a single-class
+       .rt-ship ties on specificity and loses on source order.
+   Compound selector, so order stops mattering. */
+.rt-framer.rt-ship{width:min(1040px,94vw);}
+/* The GM dashboard carries rt-ship as well, and the two selectors tie on
+   specificity, so this has to come after it to win. */
+.rt-framer.rt-gm{width:min(1120px,94vw);}
 .rt-shiprow{display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;}
 .rt-shipfield{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
 .rt-shipfield.sp{flex:0 0 120px;}

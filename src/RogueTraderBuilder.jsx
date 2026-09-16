@@ -185,6 +185,35 @@ const HOME_WORLDS = [
     }]
   },
   {
+    id: 'fortress',
+    name: 'Fortress World',
+    blurb: 'Raised behind guns that never cool, on a world that has been under siege '
+      + 'longer than anyone can remember. Vigilance came before speech.',
+    mods: { per: 5, wp: 5, fel: -5 },
+    // Every fortress worlder is drilled in it from childhood. Spelled exactly
+    // as the Arch-Militant package spells it, so the two dedupe into one line
+    // instead of listing the same skill twice on the dossier.
+    skills: ['Secret Tongue (Military) (Int)'],
+    traits: [
+      'Never Stop Shooting: semi-automatic burst as a Half Action, once per turn. '
+        + 'Spend a Fate Point and you may do it twice in a turn.',
+      'Bred for War: loyal to a fault and inflexible with it — −5 to all '
+        + 'Interaction Skill Tests in civic surroundings.'
+    ],
+    woundDie: () => d(5) + 1,
+    woundText: '2 × Toughness Bonus + 1d5+1',
+    // 1-8 gives three Fate Points, 9-10 gives four.
+    fateTable: [[8, 3], [10, 4]],
+    choices: [{
+      id: 'ftw_doctrine',
+      label: 'Combat Doctrine',
+      options: [
+        { label: 'Nerves of Steel', talents: ['Nerves of Steel'] },
+        { label: 'Sprint', talents: ['Sprint'] }
+      ]
+    }]
+  },
+  {
     id: 'aeldari',
     name: 'Aeldari',
     blurb: 'Born of the elder kin, shaped by millennial tradition and psychic evolution. Every reflex is honed; every wound more fragile.',
@@ -446,6 +475,32 @@ const BIRTHRIGHTS = [
         { label: '+3 Fellowship', mods: { fel: 3 } }
       ]
     }]
+  },
+  {
+    id: 'trooper',
+    name: 'Trooper',
+    blurb: 'One of the trillions who hold the line. Separated from your regiment by '
+      + 'bad orders, worse luck or a bogged-down bureaucracy, and still standing.',
+    // Unconditional, unlike the choice-attached rolls elsewhere: the spec
+    // applies it to every Trooper.
+    insanityRoll: () => d(5),
+    notes: ['1d5 Insanity Points'],
+    choices: [
+      {
+        id: 'tr_skill', label: 'Advanced training',
+        options: [
+          { label: 'Medicae', skills: ['Medicae'] },
+          { label: 'Driver (Ground Vehicle)', skills: ['Driver (Ground Vehicle)'] }
+        ]
+      },
+      {
+        id: 'tr_bonus', label: 'Bonus',
+        options: [
+          { label: '+5 Weapon Skill', mods: { ws: 5 } },
+          { label: '+5 Ballistic Skill', mods: { bs: 5 } }
+        ]
+      }
+    ]
   }
 ];
 

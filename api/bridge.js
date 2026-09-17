@@ -8,6 +8,7 @@
 //   GET  /api/bridge?code=<code>[&since=<rev>]         -> {dynasty, ship} | 204
 //   POST /api/bridge  {action:"write", code, vitals, doc, log}
 //   POST /api/bridge  {action:"event", code, event}
+//   POST /api/bridge  {action:"message", code, to, text}           (GM only)
 //
 // WHY POLLING
 //
@@ -29,7 +30,7 @@ import { requireSession, getUser, saveUser } from "../lib/auth.js";
 import {
   dynastyKey, shipKey, newCode, normaliseCode,
   newDynasty, isGm, memberOf, joinDynasty, leaveDynasty,
-  assignNpc, unassignNpc,
+  assignNpc, unassignNpc, addMessage, charIdsFor,
   authorizeWrite, authorizeEvent,
   newShip, applyPatch, applyWrite, appendLog, redactShip, redactDynasty
 } from "../lib/bridge.js";
@@ -96,7 +97,7 @@ export default async function handler(req, res) {
 
     return res.status(200).json({
       dynasty: redactDynasty(dynasty, { isGm: gm }),
-      ship: redactShip(ship, { isGm: gm }),
+      ship: redactShip(ship, { isGm: gm, charIds: charIdsFor(dynasty, uid) }),
       isGm: gm,
       pollSeconds: POLL_SECONDS
     });
@@ -157,7 +158,10 @@ export default async function handler(req, res) {
 
   if (action === "join") {
     const { dynasty: next, error } = joinDynasty(dynasty, {
-      uid, charId: body.charId, name: body.name, role: body.role
+      uid, charId: body.charId, name: body.name, role: body.role,
+      // The player publishes their own reference card: the GM cannot read
+      // another account's character sheet, so it has to come from them.
+      card: body.card
     });
     // The Rogue Trader is the GM's character; a player asking for that
     // station is told so rather than seated somewhere else.
@@ -167,7 +171,7 @@ export default async function handler(req, res) {
     const gm = isGm(next, uid);
     return res.status(200).json({
       dynasty: redactDynasty(next, { isGm: gm }),
-      ship: redactShip(ship, { isGm: gm }),
+      ship: redactShip(ship, { isGm: gm, charIds: charIdsFor(next, uid) }),
       isGm: gm,
       pollSeconds: POLL_SECONDS
     });
@@ -193,7 +197,7 @@ export default async function handler(req, res) {
     }
 
     const { dynasty: next, error } = assignNpc(dynasty, {
-      uid, charId: body.charId, name: body.name, role: body.role
+      uid, charId: body.charId, name: body.name, role: body.role, card: body.card
     });
     if (error) {
       // 409 rather than 400 for the cap: the request is well formed, the
@@ -245,6 +249,23 @@ export default async function handler(req, res) {
       ship: redactShip(next, { isGm: auth.isGm }),
       rev: next.rev
     });
+  }
+
+  /* --------------------------- a private word ---------------------------
+     GM to one character. Appended here rather than written as a field, so a
+     client holding a stale copy cannot drop everyone else's messages by
+     sending the whole list back. */
+
+  if (action === "message") {
+    if (!isGm(dynasty, uid)) return res.status(403).json({ error: "gm_only" });
+
+    const { ship: next, error } = addMessage(ship, {
+      to: body.to, text: body.text
+    });
+    if (error) return res.status(400).json({ error });
+
+    await redis.set(shipKey(code), next);
+    return res.status(200).json({ ship: next, rev: next.rev });
   }
 
   if (action === "event") {

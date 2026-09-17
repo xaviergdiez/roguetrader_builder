@@ -66,8 +66,14 @@ const post = (body) => call('', {
 
 export const createDynasty = (name) => post({ action: 'create', name });
 
-export const joinBridge = ({ code, charId, name, role }) =>
-  post({ action: 'join', code, charId, name, role });
+// The card is published by the player, because the GM cannot read another
+// account's character sheet. It is GM-only once stored.
+export const joinBridge = ({ code, charId, name, role, card }) =>
+  post({ action: 'join', code, charId, name, role, card });
+
+// A private word from the GM to one character.
+export const sendMessage = ({ code, to, text }) =>
+  post({ action: 'message', code, to, text });
 
 export const leaveBridge = (code) => post({ action: 'leave', code });
 

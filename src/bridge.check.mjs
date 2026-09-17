@@ -22,7 +22,7 @@ globalThis.fetch = async (url, opts) => {
 
 const {
   createDynasty, joinBridge, writeBridge, emitEvent, readBridge,
-  assignNpc, unassignNpc, pollBridge, ABSENT
+  assignNpc, unassignNpc, sendMessage, pollBridge, ABSENT
 } = await import('./bridge.js');
 
 const reset = () => { calls.length = 0; };
@@ -77,6 +77,30 @@ assert.match(calls[0].url, /since=7/);
 reset();
 await readBridge({ code: 'AB3K9P' });
 assert.equal(/since=/.test(calls[0].url), false, 'no rev, no since');
+
+/* ---- joining publishes a card, and the GM can send a private word ---- */
+
+reset();
+nextResponse = () => ({ status: 200, body: { dynasty: { code: 'AB3K9P' } } });
+await joinBridge({
+  code: 'AB3K9P', charId: 'c1', name: 'Kell', role: 'ordnance',
+  card: { career: 'Arch-Militant', secret: 'deserted' }
+});
+{
+  const sent = JSON.parse(calls[0].opts.body);
+  assert.equal(sent.card.career, 'Arch-Militant');
+  assert.equal(sent.card.secret, 'deserted', 'the card is published by its owner');
+}
+
+reset();
+await sendMessage({ code: 'AB3K9P', to: 'c1', text: 'The Navigator is lying.' });
+assert.deepEqual(JSON.parse(calls[0].opts.body), {
+  action: 'message', code: 'AB3K9P', to: 'c1', text: 'The Navigator is lying.'
+});
+
+// Only the GM may send one.
+nextResponse = () => ({ status: 403, body: { error: 'gm_only' } });
+await assert.rejects(sendMessage({ code: 'AB3K9P', to: 'c1', text: 'x' }), /Only the GM/);
 
 /* ---- the GM's officers are addressed by character ---- */
 

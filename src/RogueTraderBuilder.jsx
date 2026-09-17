@@ -32,7 +32,7 @@ import {
 } from './voidcombat.js';
 import {
   createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, pollBridge,
-  assignNpc, unassignNpc
+  assignNpc, unassignNpc, sendMessage
 } from './bridge.js';
 import {
   EMPTY as EMPTY_HOMEBREW, normalise as readHomebrew, isEmpty as homebrewEmpty,
@@ -1464,6 +1464,15 @@ const CSS = `
   margin-top:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
   color:var(--dim);}
 .rt-gmvitals b{color:var(--green);font-size:12px;}
+.rt-crewchars{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;
+  color:var(--green);margin:3px 0;}
+/* The two the GM reaches for, marked so they are findable at a glance in a
+   list of eight officers. */
+.rt-crewsecret{border-left:2px solid var(--crimson);padding-left:7px;
+  color:var(--bad);}
+.rt-crewfavour{border-left:2px solid var(--brass);padding-left:7px;
+  color:var(--brass-lit);}
+.rt-whisper .rt-entry-t{color:var(--vox);font-style:italic;}
 .rt-npcseat{flex-basis:100%;display:flex;align-items:center;gap:8px;margin-top:5px;}
 .rt-npcseat .rt-sel{flex:1;min-width:0;}
 .rt-brewgrid{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0;}
@@ -2886,6 +2895,30 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
   const onDossier = stepIx === 7;
   // leaving the dossier re-arms the collapsed control bar for next time
+  /* The reference card this character publishes to the bridge.
+
+     Assembled here because the GM cannot read it: a character lives under a
+     key only its owner can reach, so the sheet has to volunteer a summary.
+     Secret and Favour are pulled out of the notes, where the sheet importer
+     puts them, because they are the two the GM reaches for at the table. */
+  const noteStartingWith = (re) => {
+    const hit = [...build.notes, ...extras.notes].find((x) => re.test(x));
+    return hit ? hit.replace(/^[^:]*:\s*/, '') : '';
+  };
+
+  const crewCard = useMemo(() => ({
+    career: career ? career.name : '',
+    homeWorld: home ? home.name : '',
+    characteristics: totals || {},
+    wounds: ws ? `${ws.current} / ${ws.max}` : '',
+    fate: fateShown,
+    skills: [...build.skills, ...extras.skills],
+    talents: [...build.talents, ...extras.talents],
+    traits: [...build.traits, ...extras.traits],
+    secret: noteStartingWith(/^Secret/i),
+    favour: noteStartingWith(/^Favour/i)
+  }), [career, home, totals, ws, fateShown, build, extras]);
+
   useEffect(() => { if (!onDossier) setNavOpen(false); }, [onDossier]);
 
   // Vox-Synthesiser is Explorator flavour (a Magos' binary-cant vox-caster);
@@ -3109,6 +3142,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           code={bridgeCode} setCode={setBridgeCode}
           characterName={name} charId={charId} shipRole={shipRole}
           blueprint={blueprint} fleet={fleet} combat={combat} roster={roster}
+          card={crewCard}
           onClose={() => setBridgeOpen(false)}
         />
       )}
@@ -4987,7 +5021,7 @@ const QUICK_LINES = [
    against the station's fields. */
 
 function BridgePanel({ code, setCode, characterName, charId, shipRole,
-  blueprint, fleet, combat, roster, onClose }) {
+  blueprint, fleet, combat, roster, card, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -5007,6 +5041,9 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const [dynastyName, setDynastyName] = useState('');
   const [skill, setSkill] = useState(40);
   const [aimed, setAimed] = useState('');
+  const [tab, setTab] = useState('bridge');
+  const [msgTo, setMsgTo] = useState('');
+  const [msgText, setMsgText] = useState('');
   const revRef = useRef(0);
 
   // The poll reads the rev through a ref so changing it does not restart the
@@ -5051,7 +5088,9 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const join = () => run(async () => {
     const r = await joinBridge({
       code: entry.trim().toUpperCase(),
-      charId, name: characterName, role: shipRole
+      charId, name: characterName, role: shipRole,
+      // Published by its owner: the GM has no way to read the sheet.
+      card
     });
     revRef.current = Number(r.ship?.rev) || 0;
     setState(r);
@@ -5128,6 +5167,13 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     return r;
   }, `${c.name} stood down.`);
 
+  const whisper = () => run(async () => {
+    const r = await sendMessage({ code, to: msgTo, text: msgText });
+    revRef.current = Number(r.rev) || revRef.current;
+    setMsgText('');
+    return r;
+  }, 'Sent, to that character alone.');
+
   const isGmHere = Boolean(state && state.isGm);
   const ship = state && state.ship;
   const dynasty = state && state.dynasty;
@@ -5182,6 +5228,23 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
         </>
       ) : (
         <>
+          {isGmHere && (
+            <div className="rt-dtabs" role="tablist">
+              {[['bridge', 'Bridge'], ['crew', 'Crew']].map(([id, label]) => (
+                <button key={id} role="tab" aria-selected={tab === id}
+                  className={'rt-dtab' + (tab === id ? ' on' : '')}
+                  onClick={() => setTab(id)}>
+                  {label}
+                  {id === 'crew' && (
+                    <span className="rt-dtab-n">
+                      {((dynasty && dynasty.members) || []).length}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="rt-gmturn">
             <span className="rt-der-k">Code</span>
             <b className="rt-gmphase rt-bridgecode">{code}</b>
@@ -5221,7 +5284,114 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
             </>
           )}
 
-          {isGmHere && (
+          {/* ---- the GM's crew reference ----
+              Every character aboard, with the Secret and Favour the sheet
+              volunteered, and a private word to one of them. Cards arrive
+              GM-only: redactDynasty strips them for everyone else, so this
+              view has no player equivalent. */}
+          {isGmHere && tab === 'crew' && (
+            <>
+              <div className="rt-conds-h">
+                The crew {'·'} {((dynasty && dynasty.members) || []).length} aboard
+              </div>
+              {((dynasty && dynasty.members) || []).length === 0 ? (
+                <p className="rt-vox-hint">
+                  Nobody aboard yet. Read the code out, or seat an officer from
+                  your roster under Bridge.
+                </p>
+              ) : (
+                <ul className="rt-list">
+                  {(dynasty.members || []).map((m, i) => {
+                    const r = roleById(m.role);
+                    const c = m.card;
+                    return (
+                      <li key={m.charId || i} className="rt-entry">
+                        <span className="rt-entry-t">
+                          {m.name}{m.npc ? ' \u00B7 NPC' : ''}
+                        </span>
+                        <span className="rt-entry-c">
+                          {r ? r.name : 'no station'}
+                        </span>
+                        {c ? (
+                          <div className="rt-entry-d">
+                            <p className="rt-entry-s">
+                              {[c.career, c.homeWorld].filter(Boolean).join(' \u00B7 ')}
+                              {c.wounds ? ` \u00B7 ${c.wounds} wounds` : ''}
+                              {c.fate != null ? ` \u00B7 ${c.fate} fate` : ''}
+                            </p>
+                            {Object.keys(c.characteristics || {}).length > 0 && (
+                              <p className="rt-crewchars">
+                                {CHAR_KEYS.filter((k) => c.characteristics[k] != null)
+                                  .map((k) => `${CHAR_SHORT[k]} ${c.characteristics[k]}`)
+                                  .join('   ')}
+                              </p>
+                            )}
+                            {c.talents && c.talents.length > 0 && (
+                              <p><b>Talents</b> {'\u2014'} {c.talents.join(', ')}</p>
+                            )}
+                            {c.traits && c.traits.length > 0 && (
+                              <p><b>Traits</b> {'\u2014'} {c.traits.join(' ')}</p>
+                            )}
+                            {c.secret && (
+                              <p className="rt-crewsecret">
+                                <b>Secret</b> {'\u2014'} {c.secret}
+                              </p>
+                            )}
+                            {c.favour && (
+                              <p className="rt-crewfavour">
+                                <b>Favour</b> {'\u2014'} {c.favour}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="rt-entry-d">
+                            <p className="rt-entry-s">
+                              No card published. They joined before this existed,
+                              or from an older build {'\u2014'} rejoining the
+                              bridge sends one.
+                            </p>
+                          </div>
+                        )}
+                        {m.charId && (
+                          <button className="rt-opt" disabled={busy}
+                            onClick={() => { setMsgTo(m.charId); setTab('crew'); }}>
+                            Whisper
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+
+              <div className="rt-conds-h">A private word</div>
+              <p className="rt-vox-hint">
+                Reaches that character alone. The others cannot read it {'\u2014'}
+                the server filters every copy by who it is addressed to.
+              </p>
+              <label className="rt-shipsel">
+                <span className="rt-shipsel-k">To</span>
+                <select className="rt-sel" value={msgTo}
+                  onChange={(e) => setMsgTo(e.target.value)}>
+                  <option value="">{'\u2014 choose a character \u2014'}</option>
+                  {(dynasty.members || []).filter((m) => m.charId).map((m) => (
+                    <option key={m.charId} value={m.charId}>
+                      {m.name}{m.npc ? ' (NPC)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <textarea className="rt-ta" value={msgText} rows={3}
+                onChange={(e) => setMsgText(e.target.value)}
+                placeholder="The Navigator has been lying to you about the route." />
+              <div className="rt-btnrow">
+                <button className="rt-btn" disabled={busy || !msgTo || !msgText.trim()}
+                  onClick={whisper}>Send</button>
+              </div>
+            </>
+          )}
+
+          {isGmHere && tab === 'bridge' && (
             <>
               <div className="rt-conds-h">Your officers</div>
               <p className="rt-vox-hint">
@@ -5300,6 +5470,27 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                         </p>
                       </div>
                     )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          {/* ---- a private word from the GM ----
+              Only what is addressed to a character this account holds ever
+              reaches here: the server filters every copy. */}
+          {!isGmHere && ship && (ship.messages || []).length > 0 && (
+            <>
+              <div className="rt-conds-h">
+                From the GM {'·'} for you alone
+              </div>
+              <ul className="rt-list">
+                {ship.messages.map((m) => (
+                  <li key={m.id} className="rt-entry rt-whisper">
+                    <span className="rt-entry-t">{m.text}</span>
+                    <span className="rt-entry-c">
+                      {new Date(m.at).toLocaleTimeString()}
+                    </span>
                   </li>
                 ))}
               </ul>

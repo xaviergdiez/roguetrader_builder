@@ -433,6 +433,139 @@ export function criticalEffect(roll) {
   return CRITICALS.find((c) => c.roll === n) || null;
 }
 
+/* --------------------------- applying a critical ---------------------------
+   The table above describes what happens; this makes it happen. Until now a
+   critical printed its name and nothing else, so the GM read "Thrusters
+   Damaged" and then adjusted Speed by hand — or forgot to.
+
+   Dice are injected as functions, so a test is deterministic and the app is
+   not. `component` is which system takes it, where the entry needs one: the
+   caller picks, because only the caller knows what the ship has installed. */
+
+const CONDITIONS = {
+  shieldsCollapsed: 'shields_collapsed',
+  noExtendedActions: 'no_extended_actions',
+  ethericsDown: 'etherics_down',
+  adrift: 'adrift',
+  annihilated: 'annihilated'
+};
+
+export { CONDITIONS };
+
+const withCondition = (state, flag) => {
+  const had = Array.isArray(state && state.conditions) ? state.conditions : [];
+  return had.includes(flag) ? had : [...had, flag];
+};
+
+export function applyCritical(state, roll, {
+  d5 = () => 3, d10 = () => 5, d100 = () => 50, component = null, base = {}
+} = {}) {
+  const effect = criticalEffect(roll);
+  if (!effect) return { effect: null, vitals: null, rolled: {}, unknown: true };
+
+  const s = state || {};
+  const patch = {};
+  const rolled = {};
+  const notes = [];
+
+  // Speed and Detection are published by the crew, but an NPC ship has no
+  // crew and no stored value — and subtracting 20 from nothing produced a
+  // Detection of -20 on a hull that has 47. The hull's figure is the
+  // fallback, supplied by the caller because only it knows the hull.
+  const at = (k) => {
+    const live = Number(s[k]);
+    return Number.isFinite(live) ? live : (Number(base[k]) || 0);
+  };
+
+  const dropPop = (n) => { patch.population = clamp100(vital(s.population, 100) - n); };
+  const dropMorale = (n) => { patch.morale = clamp100(vital(s.morale, 100) - n); };
+  const damage = (id, status) => {
+    if (!id) return;
+    patch.componentStatus = { ...(s.componentStatus || {}), [id]: status };
+  };
+
+  switch (effect.name) {
+    case 'Depressurized': {
+      rolled.population = d5();
+      dropPop(rolled.population);
+      damage(component, 'damaged');
+      if (!component) notes.push('Mark a random component damaged.');
+      break;
+    }
+    case 'Fire!': {
+      rolled.morale = d5();
+      dropMorale(rolled.morale);
+      patch.fires = [...(s.fires || []),
+        { id: `fire-${Date.now().toString(36)}`, location: component || 'unspecified' }];
+      notes.push('Burns for 1d5 Hull Integrity a turn until doused.');
+      break;
+    }
+    case 'Sensors Damaged':
+      patch.detection = at('detection') - 20;
+      patch.conditions = withCondition(s, CONDITIONS.ethericsDown);
+      notes.push('The Master of Etherics can take no actions.');
+      break;
+
+    case 'Thrusters Damaged':
+      rolled.speed = d10();
+      patch.speed = Math.max(0, at('speed') - rolled.speed);
+      patch.manoeuvrePenalty = (Number(s.manoeuvrePenalty) || 0) + 20;
+      break;
+
+    case 'Armour Cracked':
+      rolled.armour = d5();
+      patch.armourDamage = (Number(s.armourDamage) || 0) + rolled.armour;
+      notes.push('Until repaired in drydock.');
+      break;
+
+    case 'Shield Collapse':
+      patch.voidShields = 0;
+      patch.conditions = withCondition(s, CONDITIONS.shieldsCollapsed);
+      notes.push('Cannot be restored for the rest of this combat.');
+      break;
+
+    case 'Component Destroyed':
+      damage(component, 'destroyed');
+      if (!component) notes.push('Name the component that is destroyed.');
+      break;
+
+    case 'Bridge Smashed': {
+      rolled.morale = d10();
+      rolled.population = d5();
+      dropMorale(rolled.morale);
+      dropPop(rolled.population);
+      patch.conditions = withCondition(s, CONDITIONS.noExtendedActions);
+      break;
+    }
+    case 'Drive Damaged':
+      patch.power = 0;
+      patch.speed = 0;
+      patch.conditions = withCondition(s, CONDITIONS.adrift);
+      damage(component, 'offline');
+      notes.push('The plasma drive is offline and the ship is adrift.');
+      break;
+
+    case 'Annihilation':
+      rolled.survivors = d100();
+      patch.hullIntegrity = 0;
+      patch.conditions = withCondition(s, CONDITIONS.annihilated);
+      notes.push(`Any survivors take ${rolled.survivors} damage.`);
+      break;
+
+    default:
+      return { effect, vitals: null, rolled: {}, unknown: true };
+  }
+
+  return { effect, vitals: patch, rolled, notes, unknown: false };
+}
+
+// Void shields come back each round — unless a Shield Collapse took them out
+// for the rest of the combat. Restoring them regardless is what made that
+// critical purely cosmetic.
+export const shieldsRestorable = (state) =>
+  !(Array.isArray(state && state.conditions)
+    && state.conditions.includes(CONDITIONS.shieldsCollapsed));
+
 /* ------------------------------ hit and run ------------------------------
    An opposed Command test. The winner rolls on the critical table and applies
    it straight to the enemy ship, past shields and armour entirely. */

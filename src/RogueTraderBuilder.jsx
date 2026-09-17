@@ -5,6 +5,9 @@ import { readRoster, writeRoster, upsert, remove as removeChar, newId,
 import { parseGear, gearInfo, CRAFT, GEAR } from './gear.js';
 import { woundState, applyDamage, adjustMax } from './wounds.js';
 import { roll1d100, resolveTest, DIFFICULTIES } from './dice.js';
+import {
+  LOCATIONS, DAMAGE_TYPES, hitLocation, locationById, resolveHit, furyTriggered
+} from './crits.js';
 import { conditionalsFor } from './effects.js';
 import {
   MODES as PSY_MODES, MAX_PUSH, effectivePsyRating, phenomenaModifier,
@@ -27,7 +30,7 @@ import {
 } from './shiproles.js';
 import {
   PHASES, PHASE_LABELS, nextPhase, initiativeOrder, toHit, hitsScored,
-  resolveAttack, criticalEffect, applyEvent,
+  resolveAttack, applyCritical, applyEvent,
   EXTENDED_ACTIONS, mayTakeAction, actionOutcome
 } from './voidcombat.js';
 import {
@@ -1696,6 +1699,51 @@ const CSS = `
 .rt-rollr-v{font-family:var(--mono);font-size:9.5px;color:var(--dim);}
 .rt-rollr-o{flex:1;text-align:right;font-family:var(--mono);font-size:10px;
   letter-spacing:.06em;color:var(--text);}
+
+/* ---- hit resolution: location, damage type, the critical table ---- */
+.rt-hit{margin:9px 0 0;padding:10px;border:1px solid var(--brass-dim);
+  border-left:2px solid var(--crimson);background:rgba(16,7,6,.6);}
+.rt-hit-h{display:flex;align-items:baseline;gap:8px;margin-bottom:8px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--dim);}
+.rt-hit-h b{font-family:var(--display);font-size:12.5px;letter-spacing:.08em;
+  text-transform:none;color:var(--brass-lit);}
+.rt-hit-h span{margin-left:auto;font-size:9px;color:var(--dim);}
+.rt-picks{display:grid;grid-template-columns:repeat(auto-fit,minmax(74px,1fr));gap:4px;
+  margin-bottom:7px;}
+.rt-pick{cursor:pointer;padding:5px 4px;font-family:var(--mono);font-size:9px;
+  letter-spacing:.06em;color:var(--dim);border:1px solid var(--brass-dim);
+  background:rgba(6,12,8,.6);transition:color .14s,border-color .14s;}
+.rt-pick:hover{color:var(--text);border-color:var(--brass);}
+.rt-pick.on{color:#161004;border-color:var(--gold-lit);
+  background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
+@media (pointer:coarse){.rt-pick{padding:9px 4px;}}
+.rt-nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(86px,1fr));gap:6px;
+  margin-bottom:8px;}
+.rt-num{display:flex;flex-direction:column;gap:2px;font-family:var(--mono);
+  font-size:8.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);}
+.rt-num input{width:100%;padding:5px 6px;font-family:var(--display);font-size:13px;
+  color:var(--bone);border:1px solid var(--brass-dim);background:rgba(0,0,0,.45);}
+.rt-num input:focus{outline:none;border-color:var(--gold);}
+.rt-hitline{font-family:var(--mono);font-size:10px;line-height:1.5;letter-spacing:.04em;
+  color:var(--text);margin:8px 0 7px;}
+.rt-hitline b{font-size:12px;color:var(--green);}
+.rt-hitline i{font-style:normal;color:var(--bad);}
+.rt-critrow{display:flex;gap:8px;padding:5px 7px;margin-bottom:3px;
+  border-left:2px solid var(--crimson);background:rgba(0,0,0,.35);}
+.rt-critlv{flex:none;min-width:20px;text-align:center;font-family:var(--display);
+  font-size:13px;font-weight:600;color:var(--bad);}
+.rt-crittx{flex:1;min-width:0;font-size:12.5px;line-height:1.35;color:var(--text);}
+.rt-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px;}
+.rt-chip{padding:2px 6px;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+  color:var(--brass-lit);border:1px solid var(--brass-dim);background:rgba(0,0,0,.4);}
+.rt-chip.bad{color:#2b0c08;border-color:var(--crimson);
+  background:linear-gradient(180deg,#c4483a,var(--crimson));}
+.rt-fury{width:100%;cursor:pointer;padding:8px;margin-top:7px;
+  font-family:var(--display);font-weight:700;font-size:11px;letter-spacing:.16em;
+  text-transform:uppercase;color:#2b0c08;border:1px solid var(--crimson);
+  background:linear-gradient(180deg,#c4483a,var(--crimson));transition:filter .14s;}
+.rt-fury:hover{filter:brightness(1.12);}
 
 /* the brass gauges — wounds, fate, profit factor */
 .rt-derived{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0;}
@@ -4023,7 +4071,7 @@ function EliteAdvanceDialog({ onAdd, onClose }) {
 
 const ROLL_LOG_MAX = 6;
 
-function TestRoller({ charName, base, history, onRoll, conditionals = [] }) {
+function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [] }) {
   const [mod, setMod] = useState(0);
   const [on, setOn] = useState([]);   // indexes of applied conditionals
 
@@ -4068,6 +4116,14 @@ function TestRoller({ charName, base, history, onRoll, conditionals = [] }) {
         Roll d100
       </button>
 
+      {/* A landed Weapon Skill or Ballistic Skill test is an attack, so the
+          hit follows it here rather than in a separate screen. Keyed on the
+          roll, so each new attack starts from a clean panel. */}
+      {(charKey === 'ws' || charKey === 'bs') && history[0] && history[0].success && (
+        <HitPanel key={history[0].id} roll={history[0].roll} target={target}
+          melee={charKey === 'ws'} />
+      )}
+
       {history.length > 0 && (
         <ul className="rt-rolllog">
           {history.map((r, i) => (
@@ -4082,6 +4138,165 @@ function TestRoller({ charName, base, history, onRoll, conditionals = [] }) {
             </li>
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/* --------------------------- HIT RESOLUTION ---------------------------
+   A Weapon Skill or Ballistic Skill test that lands is an attack, and an
+   attack has a location, a damage type and often a critical. The location is
+   the attack roll READ BACKWARDS, so it comes from the roll that just
+   happened rather than being asked for again.
+
+   The target's armour and Wounds are typed in: this sheet belongs to the
+   attacker and knows nothing about what it just shot at. */
+
+const N = (v) => {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const MOD_LABEL = { arm: 'that arm' };
+
+function HitPanel({ roll, target, melee }) {
+  const auto = hitLocation(roll);
+  const [loc, setLoc] = useState(auto ? auto.id : 'body');
+  const [type, setType] = useState(melee ? 'rending' : 'impact');
+  const [dice, setDice] = useState('1');
+  const [bonus, setBonus] = useState('0');
+  const [dmg, setDmg] = useState(null);     // { dice, total, fury }
+  const [fury, setFury] = useState(null);   // null, or the confirmation roll
+  const [t, setT] = useState({ pen: '0', armour: '0', tb: '0', wounds: '0', crit: '0' });
+
+  const set = (k) => (e) => setT((p) => ({ ...p, [k]: e.target.value }));
+  const count = Math.max(1, Math.min(10, N(dice)));
+
+  const rollDamage = () => {
+    const faces = Array.from({ length: count }, () => d(10));
+    setFury(null);
+    setDmg({
+      dice: faces,
+      total: faces.reduce((a, b) => a + b, 0) + N(bonus),
+      fury: furyTriggered(faces)
+    });
+  };
+
+  // Righteous Fury is earned by a natural 10 and confirmed by a second attack
+  // roll against the same target. Only then does the table come out.
+  const confirmFury = () => {
+    const r = roll1d100();
+    const test = resolveTest(target, 0, r);
+    setFury({ roll: r, confirmed: test.success, d5: test.success ? d(5) : 0 });
+  };
+
+  const res = dmg ? resolveHit({
+    damage: dmg.total, penetration: N(t.pen), armour: N(t.armour),
+    toughnessBonus: N(t.tb), wounds: N(t.wounds), critSoFar: N(t.crit),
+    type, location: loc, fury
+  }) : null;
+  const rows = res ? [...res.rows, ...res.furyRows] : [];
+  const sum = res ? res.summary : null;
+
+  return (
+    <div className="rt-hit">
+      <div className="rt-hit-h">
+        Hit location <b>{locationById(loc).name}</b>
+        {auto && <span>d100 {roll} reversed = {auto.roll}</span>}
+      </div>
+
+      <div className="rt-picks">
+        {LOCATIONS.map((l) => (
+          <button key={l.id} className={'rt-pick' + (loc === l.id ? ' on' : '')}
+            onClick={() => setLoc(l.id)} aria-pressed={loc === l.id}>{l.name}</button>
+        ))}
+      </div>
+      <div className="rt-picks">
+        {DAMAGE_TYPES.map((x) => (
+          <button key={x.id} className={'rt-pick' + (type === x.id ? ' on' : '')}
+            onClick={() => setType(x.id)} aria-pressed={type === x.id}>
+            {x.name} ({x.code})
+          </button>
+        ))}
+      </div>
+
+      <div className="rt-nums">
+        <label className="rt-num">d10
+          <input inputMode="numeric" value={dice}
+            onChange={(e) => setDice(e.target.value)} /></label>
+        <label className="rt-num">Bonus
+          <input inputMode="numeric" value={bonus}
+            onChange={(e) => setBonus(e.target.value)} /></label>
+        <label className="rt-num">Pen
+          <input inputMode="numeric" value={t.pen} onChange={set('pen')} /></label>
+        <label className="rt-num">Armour
+          <input inputMode="numeric" value={t.armour} onChange={set('armour')} /></label>
+        <label className="rt-num">Target TB
+          <input inputMode="numeric" value={t.tb} onChange={set('tb')} /></label>
+        <label className="rt-num">Wounds left
+          <input inputMode="numeric" value={t.wounds} onChange={set('wounds')} /></label>
+        <label className="rt-num">Crit taken
+          <input inputMode="numeric" value={t.crit} onChange={set('crit')} /></label>
+      </div>
+
+      <button className="rt-rollbtn" onClick={rollDamage}>
+        Roll {count}d10{N(bonus) ? (N(bonus) > 0 ? '+' : '') + N(bonus) : ''} damage
+      </button>
+
+      {res && (
+        <>
+          <p className="rt-hitline">
+            {dmg.total} damage ({dmg.dice.join(' + ')}
+            {N(bonus) ? (N(bonus) > 0 ? ' + ' : ' − ') + Math.abs(N(bonus)) : ''})
+            {' less '}{res.soak} soak = <b>{res.taken}</b>
+            <br />
+            {res.woundsLost} Wounds lost, {res.woundsLeft} left
+            {res.overflow > 0
+              ? <> · <i>{res.overflow} critical damage</i> — total {res.critTotal}</>
+              : ' · no critical from Wounds'}
+          </p>
+
+          {dmg.fury && !fury && (
+            <button className="rt-fury" onClick={confirmFury}>
+              Righteous Fury — a natural 10, confirm with another attack roll
+            </button>
+          )}
+          {fury && (
+            <p className="rt-hitline">
+              Fury confirmation d100 {fury.roll} vs {target} —{' '}
+              {fury.confirmed
+                ? <i>confirmed, 1d5 = {fury.d5}</i>
+                : 'it does not land, no critical'}
+            </p>
+          )}
+
+          {rows.map((r, i) => (
+            <div key={i} className="rt-critrow">
+              <span className="rt-critlv">{r.level}</span>
+              <span className="rt-crittx">{r.effect}</span>
+            </div>
+          ))}
+
+          {sum && rows.length > 0 && (
+            <div className="rt-chips">
+              {sum.dead && (
+                <span className="rt-chip bad">
+                  Dead{sum.delay ? ' — may act until ' + sum.delay : ''}
+                </span>
+              )}
+              {sum.fatigue > 0 && <span className="rt-chip">{sum.fatigue} Fatigue</span>}
+              {sum.conditions.map((c) => <span key={c} className="rt-chip">{c}</span>)}
+              {sum.lost.map((l, i) => (
+                <span key={i} className="rt-chip bad">Lost: {l}</span>
+              ))}
+              {Object.entries(sum.mods).map(([k, v]) => (
+                <span key={k} className="rt-chip">
+                  {MOD_LABEL[k] || CHAR_NAMES[k] || k} {v}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -4136,6 +4351,7 @@ function StatSheet({ totals, mods, rolls, onReroll, picked }) {
           </div>
           {rollFor === k && (
             <TestRoller
+              charKey={k}
               charName={CHAR_NAMES[k]}
               base={totals[k]}
               history={log[k] || []}
@@ -5585,6 +5801,7 @@ function shipProfile(ship, blueprint, custom) {
       turretRating: s.turrets,
       voidShields: s.voidShields,
       detection: s.detection,
+      speed: s.speed,
       maxHull: hull.hullIntegrity,
       weapons: (blueprint.weapons || []).map((w) => w.componentId)
     };
@@ -5600,6 +5817,7 @@ function shipProfile(ship, blueprint, custom) {
     turretRating: Number.isFinite(ship.turretRating) ? ship.turretRating : hull.turrets,
     voidShields: Number.isFinite(ship.voidShields) ? ship.voidShields : 1,
     detection: hull.detection,
+    speed: hull.speed,
     maxHull: hull.hullIntegrity,
     weapons: ship.weapons || []
   };
@@ -5802,13 +6020,24 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       target: {
         turretRating: targetP.turretRating,
         voidShields: targetShip.vitals.voidShields ?? targetP.voidShields,
-        armour: targetP.armour,
+        // Armour Cracked is stored as a penalty rather than rewritten into
+        // the hull, so it has to be subtracted at the point of use.
+        armour: Math.max(0, targetP.armour - (targetShip.vitals.armourDamage || 0)),
         hullIntegrity: targetShip.vitals.hullIntegrity
       }
     });
-    setVitals(targetId, {
+    const damaged = {
+      ...targetShip.vitals,
       hullIntegrity: res.hullIntegrity,
       voidShields: res.shieldsRemaining
+    };
+    // A triggered critical rolls here rather than waiting for the GM to
+    // remember the button: the table is the consequence of the hit.
+    const crit = res.criticalTriggered ? critOn(damaged, targetP) : null;
+    setVitals(targetId, {
+      hullIntegrity: res.hullIntegrity,
+      voidShields: res.shieldsRemaining,
+      ...(crit ? crit.vitals : null)
     });
     say({ kind: res.netHullDamage > 0 ? 'hit' : 'soak', roll, test, res, rolls,
       text: `${attackerP.name} → ${targetP.name}: rolled ${roll} against ${hit.target}`
@@ -5817,14 +6046,43 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         + (res.shieldsStop ? `, ${res.shieldsStop} on the shields` : '')
         + `, ${res.combinedDamage} damage less ${res.armourMitigation} armour`
         + ` = ${res.netHullDamage} to the hull.`
-        + (res.criticalTriggered ? ' CRITICAL.' : '')
         + (res.destroyed ? ' The ship is crippled.' : '') });
+    if (crit) say({ kind: 'critical', text: crit.text });
+  };
+
+  /* ---- criticals ----
+     The table used to print its own name and stop there, which left the GM
+     adjusting Speed and Population by hand. Now the row is applied. Dice are
+     rolled here so voidcombat stays pure; `component` is picked here too,
+     because only this side knows what the target has bolted on. */
+
+  const critOn = (vitals, profile, roll = d(10)) => {
+    const weapons = (profile && profile.weapons) || [];
+    const res = applyCritical(vitals, roll, {
+      d5: () => d(5),
+      d10: () => d(10),
+      d100: () => roll1d100(),
+      component: weapons.length ? weapons[Math.floor(Math.random() * weapons.length)] : null,
+      base: profile ? { detection: profile.detection, speed: profile.speed } : {}
+    });
+    if (res.unknown || !res.effect) return null;
+    const changes = Object.entries(res.vitals || {})
+      .map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ');
+    return {
+      ...res,
+      text: `Critical ${roll} on ${profile ? profile.name : 'the ship'}: `
+        + `${res.effect.name} — ${res.effect.effect}`
+        + (changes ? ` [${changes}]` : '')
+        + (res.notes && res.notes.length ? ` ${res.notes.join(' ')}` : '')
+    };
   };
 
   const rollCritical = () => {
-    const roll = d(10);
-    const effect = criticalEffect(roll);
-    say({ kind: 'critical', text: `Critical ${roll}: ${effect.name} — ${effect.effect}` });
+    if (!targetShip || !targetP) return;
+    const crit = critOn(targetShip.vitals, targetP);
+    if (!crit) return;
+    setVitals(targetId, crit.vitals);
+    say({ kind: 'critical', text: crit.text });
   };
 
   /* ---- events ---- */
@@ -5986,7 +6244,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
 
       <div className="rt-btnrow">
         <button className="rt-btn" disabled={!hit || !hit.canFire} onClick={fire}>Fire</button>
-        <button className="rt-btn ghost" onClick={rollCritical}>Roll critical</button>
+        <button className="rt-btn ghost" disabled={!targetP} onClick={rollCritical}>Roll critical</button>
       </div>
 
       {/* ---- events ---- */}

@@ -22,6 +22,12 @@ export const SHIP_FIELDS = [
   // the check refused — even for the GM, since an unknown field is refused
   // outright rather than waved through.
   'voidShields',
+  // Persistent damage the critical table inflicts on stats the hull otherwise
+  // supplies: Armour Cracked and Thrusters Damaged are reductions that last
+  // until repaired, so they are stored as penalties rather than by rewriting
+  // the hull. `conditions` holds the table's flags — shields collapsed for the
+  // combat, no Extended Actions next turn, adrift.
+  'armourDamage', 'manoeuvrePenalty', 'conditions',
   // What the crew's augurs have revealed. Held apart from the fleet itself,
   // which is the GM's: a scan is something the crew learns, not something they
   // may edit about the enemy.
@@ -56,7 +62,7 @@ export const SHIP_ROLES = [
 
   R('enginseer', 'Enginseer Prime', 'Explorator', 'Enginarium, plasma drive, tech-shrines',
     ['hullIntegrity', 'power', 'componentStatus', 'fires', 'diceModifiers',
-      'voidShields'],
+      'voidShields', 'armourDamage', 'manoeuvrePenalty', 'conditions'],
     { name: 'Emergency Repairs', test: 'Tech-Use',
       effect: 'Restores 1d5 Hull Integrity, or douses fires.',
       writes: ['hullIntegrity', 'fires'] }),

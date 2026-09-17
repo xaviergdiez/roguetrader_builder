@@ -6,7 +6,8 @@ import {
   evasionPenalty, EVASION_CAP, lockBonus, repairAmount, triageReduction,
   rangeBand, rangeModifier, toHit, hitsScored,
   resolveAttack, interceptTorpedoes,
-  CRITICALS, criticalEffect, hitAndRun, boardingRound, BOARDING_TARGET,
+  CRITICALS, criticalEffect, applyCritical, shieldsRestorable, CONDITIONS,
+  hitAndRun, boardingRound, BOARDING_TARGET,
   applyEvent, applyRepair, fireDamage, actionOutcome
 } from './voidcombat.js';
 import { deniedWrites } from './shiproles.js';
@@ -487,6 +488,121 @@ for (const a of EXTENDED_ACTIONS) {
   assert.equal(burn.patch.hullIntegrity, 48);
   // no fires, no patch
   assert.deepEqual(fireDamage({ hullIntegrity: 56, fires: [] }, []).patch, {});
+}
+
+/* ---- a critical applies its row, it does not just name it ---- */
+
+// Every entry has to produce a patch, or the table is decoration again. The
+// two that need a component to aim at are the exceptions, and they say so.
+{
+  const ship = {
+    hullIntegrity: 40, population: 80, morale: 75, speed: 7, detection: 30,
+    power: 45, voidShields: 2
+  };
+  const dice = { d5: () => 3, d10: () => 4, d100: () => 62, component: 'weap-lance' };
+  for (const c of CRITICALS) {
+    const r = applyCritical(ship, c.roll, dice);
+    assert.equal(r.unknown, false, 'critical ' + c.roll + ' is unhandled');
+    assert.ok(r.vitals && Object.keys(r.vitals).length,
+      'critical ' + c.roll + ' changes nothing');
+  }
+  // Without a component, the rows that need one say what the GM must pick
+  // rather than silently doing nothing.
+  const noTarget = applyCritical(ship, 7, { ...dice, component: null });
+  assert.deepEqual(noTarget.vitals, {});
+  assert.match(noTarget.notes.join(' '), /component/i);
+}
+
+// The individual rows, since each one is a different kind of patch.
+{
+  const ship = {
+    hullIntegrity: 40, population: 80, morale: 75, speed: 7, detection: 30,
+    power: 45, voidShields: 2, armour: 18
+  };
+  const dice = { d5: () => 3, d10: () => 4, d100: () => 62, component: 'weap-lance' };
+  const at = (roll) => applyCritical(ship, roll, dice);
+
+  assert.equal(at(1).vitals.population, 77);                  // Depressurized
+  assert.equal(at(1).vitals.componentStatus['weap-lance'], 'damaged');
+
+  assert.equal(at(2).vitals.morale, 72);                      // Fire!
+  assert.equal(at(2).vitals.fires.length, 1, 'and a fire starts burning');
+
+  assert.equal(at(3).vitals.detection, 10);                   // Sensors Damaged
+  assert.ok(at(3).vitals.conditions.includes(CONDITIONS.ethericsDown));
+
+  assert.equal(at(4).vitals.speed, 3);                        // Thrusters Damaged
+  assert.equal(at(4).vitals.manoeuvrePenalty, 20);
+
+  // Armour Cracked is stored as a penalty, not by rewriting the hull's armour,
+  // because the hull is shared data and the damage belongs to this ship.
+  assert.equal(at(5).vitals.armourDamage, 3);
+  assert.equal(at(5).vitals.armour, undefined);
+
+  assert.equal(at(6).vitals.voidShields, 0);                  // Shield Collapse
+  assert.ok(at(6).vitals.conditions.includes(CONDITIONS.shieldsCollapsed));
+
+  assert.equal(at(7).vitals.componentStatus['weap-lance'], 'destroyed');
+
+  assert.equal(at(8).vitals.morale, 71);                      // Bridge Smashed
+  assert.equal(at(8).vitals.population, 77);
+  assert.ok(at(8).vitals.conditions.includes(CONDITIONS.noExtendedActions));
+
+  assert.equal(at(9).vitals.power, 0);                        // Drive Damaged
+  assert.equal(at(9).vitals.speed, 0);
+  assert.ok(at(9).vitals.conditions.includes(CONDITIONS.adrift));
+
+  assert.equal(at(10).vitals.hullIntegrity, 0);               // Annihilation
+  assert.match(at(10).notes.join(' '), /62 damage/, 'survivors take the 1d100');
+
+  // Population and Morale are percentages and cannot run past their ends.
+  const dying = applyCritical({ population: 2, morale: 1 }, 8,
+    { d5: () => 5, d10: () => 9 });
+  assert.equal(dying.vitals.population, 0);
+  assert.equal(dying.vitals.morale, 0);
+
+  // Speed cannot go negative either.
+  assert.equal(applyCritical({ speed: 2 }, 4, { d10: () => 9 }).vitals.speed, 0);
+
+  // A stat the crew has not published falls back to the hull's figure, or
+  // Sensors Damaged reads a Detection of -20 on a hull that has 47.
+  assert.equal(applyCritical({}, 3, { base: { detection: 47 } }).vitals.detection, 27);
+  assert.equal(applyCritical({}, 3, {}).vitals.detection, -20,
+    'with no hull figure there is nothing to fall back to');
+  assert.equal(applyCritical({}, 4, { d10: () => 3, base: { speed: 8 } }).vitals.speed, 5);
+  assert.equal(applyCritical({ detection: 30 }, 3, { base: { detection: 47 } }).vitals.detection, 10,
+    'a published value wins over the hull');
+
+  // Conditions accumulate rather than replacing what is already there.
+  const twice = applyCritical({ conditions: [CONDITIONS.adrift] }, 6, dice);
+  assert.deepEqual(twice.vitals.conditions,
+    [CONDITIONS.adrift, CONDITIONS.shieldsCollapsed]);
+
+  // A roll off the table is reported, not applied.
+  assert.equal(applyCritical(ship, 0, dice).unknown, true);
+}
+
+// Shields come back every round, unless a collapse took them for the combat.
+assert.equal(shieldsRestorable({ conditions: [] }), true);
+assert.equal(shieldsRestorable({}), true);
+assert.equal(shieldsRestorable({ conditions: [CONDITIONS.shieldsCollapsed] }), false);
+
+// Every field a critical writes has to be a field the bridge accepts, or the
+// GM's own patch comes back refused — which is how voidShields was caught
+// crossing the wire as an unwritable field during a live session.
+{
+  const ship = { hullIntegrity: 40, population: 80, morale: 75, speed: 7,
+    detection: 30, power: 45, voidShields: 2 };
+  const dice = { d5: () => 3, d10: () => 4, d100: () => 62, component: 'weap-lance' };
+  for (const c of CRITICALS) {
+    const keys = Object.keys(applyCritical(ship, c.roll, dice).vitals || {});
+    assert.deepEqual(deniedWrites('lordcaptain', keys, { isGm: true }), [],
+      'critical ' + c.roll + ' writes a field the bridge refuses: ' + keys.join(', '));
+  }
+  // And the persistent damage lands on the station that repairs it.
+  assert.deepEqual(
+    deniedWrites('enginseer', ['armourDamage', 'manoeuvrePenalty', 'conditions', 'voidShields']),
+    []);
 }
 
 console.log('voidcombat: all checks passed (%d actions, %d criticals)',

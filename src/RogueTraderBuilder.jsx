@@ -9,9 +9,14 @@ import {
   LOCATIONS, DAMAGE_TYPES, hitLocation, locationById, resolveHit, furyTriggered
 } from './crits.js';
 import {
-  AUGMETICS, gradeOf, labelFor, costOf, freeUsedIn, STARTING_MAX,
+  AUGMETICS, gradeOf, labelFor, costOf, freeUsedIn, STARTING_MAX, acquisition,
   conditionalsFor as augConditionalsFor
 } from './augmetics.js';
+import {
+  EMPTY as EMPTY_PURSE, read as readPurse, balance as purseBalance,
+  spent as purseSpent, grant as purseGrant, spend as purseSpend,
+  refund as purseRefund, canAfford, fmt as fmtThrones
+} from './purse.js';
 import { conditionalsFor } from './effects.js';
 import {
   MODES as PSY_MODES, MAX_PUSH, effectivePsyRating, phenomenaModifier,
@@ -1749,6 +1754,31 @@ const CSS = `
   background:linear-gradient(180deg,#c4483a,var(--crimson));transition:filter .14s;}
 .rt-fury:hover{filter:brightness(1.12);}
 
+/* ---- the purse: Throne Gelt granted, spent, and on what ---- */
+.rt-purse{margin:0 0 12px;padding:10px 11px;
+  border:1px solid var(--brass-dim);border-left:2px solid var(--gold);
+  background:rgba(16,12,4,.55);}
+.rt-purse-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--dim);}
+.rt-purse-b{margin-left:auto;font-family:var(--display);font-size:18px;font-weight:600;
+  letter-spacing:.04em;color:var(--gold-lit);}
+.rt-purse-b.over{color:var(--bad);}
+.rt-purse-r{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px;margin-bottom:8px;}
+.rt-purse-r .rt-num{flex:1 1 84px;}
+.rt-purse-r .rt-num.wide{flex:2 1 150px;}
+.rt-purse-r .rt-btn{flex:0 0 auto;padding:7px 12px;font-size:11px;}
+.rt-spends{list-style:none;margin:0;padding:0;}
+.rt-spend{display:flex;align-items:baseline;gap:8px;padding:4px 6px;margin-bottom:3px;
+  border-left:2px solid var(--brass-dim);background:rgba(0,0,0,.3);}
+.rt-spend-n{flex:1;min-width:0;font-size:12.5px;color:var(--text);}
+.rt-spend-c{font-family:var(--mono);font-size:10.5px;color:var(--gold-lit);}
+.rt-aug-av{margin:0 0 6px;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;
+  color:var(--brass-lit);}
+.rt-aug-req{padding:1px 6px;font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;
+  text-transform:uppercase;color:#161004;border:1px solid var(--gold-lit);
+  background:var(--gold);}
+
 /* ---- augmetics and power armour ---- */
 /* Sets width, NOT max-width: .rt-framer sets width:min(430px,94vw) and a
    max-width cannot widen anything. Compound selector so source order between
@@ -2930,6 +2960,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const removeExtra = (kind, value) =>
     setExtras((p) => ({ ...p, [kind]: p[kind].filter((v) => v !== value) }));
 
+  // Throne Gelt. The grant is set by the GM, purchases are lines against it,
+  // and deleting a line gives the money back — see purse.js.
+  const grantThrones = (n) => setExtras((p) => ({ ...p, purse: purseGrant(p.purse, n) }));
+  const spendThrones = (line) => setExtras((p) => ({ ...p, purse: purseSpend(p.purse, line) }));
+  const refundThrones = (id) => setExtras((p) => ({ ...p, purse: purseRefund(p.purse, id) }));
+
   const buyAdvance = (a) => setExtras((p) => (
     p.advances.some((x) => x.name === a.name) ? p
       : { ...p, advances: [...p.advances, { name: a.name, type: a.type, cost: a.cost, rank: a.rank }] }
@@ -3115,6 +3151,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
             onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance}
             onBuyCharAdvance={buyCharAdvance} onRefundCharAdvance={refundCharAdvance}
+            onGrantThrones={grantThrones} onSpendThrones={spendThrones}
+            onRefundThrones={refundThrones}
             onAddEliteAdvance={addEliteAdvance} onRemoveEliteAdvance={removeEliteAdvance}
             onFate={(n) => setFateAdj((a) => a + n)}
             onProfit={(n) => setProfitAdj((a) => a + n)}
@@ -3277,11 +3315,16 @@ const STARTING_XP_DEFAULT = 5000;   // a starting Explorer, per the rank table
 // stat (0-4, one per ADVANCE_LEVELS tier) — see tierFor/CHAR_ADVANCE_COST.
 const EMPTY_EXTRAS = {
   skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [], advances: [],
-  charAdvances: {}, eliteAdvances: []
+  charAdvances: {}, eliteAdvances: [], purse: EMPTY_PURSE
 };
 // merges a stored extras object over the empty shape, so an older save that
 // predates a category still loads
-const readExtras = (v) => ({ ...EMPTY_EXTRAS, ...(v || {}) });
+const readExtras = (v) => ({
+  ...EMPTY_EXTRAS, ...(v || {}),
+  // normalised rather than spread, so a stored purse with junk in it cannot
+  // put NaN Thrones on the sheet
+  purse: readPurse(v && v.purse)
+});
 
 /* --------------------------- EQUIPMENT ROWS ---------------------------
    Data and parsing live in gear.js; these are just the rows. */
@@ -4099,6 +4142,65 @@ function EliteAdvanceDialog({ onAdd, onClose }) {
   );
 }
 
+/* ------------------------------ THE PURSE ------------------------------
+   Throne Gelt, for the things the tables price in coin. A Rogue Trader
+   dynasty buys through Profit Factor, so this sits beside that rather than
+   replacing it: the grant is whatever the GM has handed over, purchases are
+   lines against it, and deleting a line refunds it.
+
+   The record-a-purchase row exists because the gear catalogue has no printed
+   prices — only bionics and power armour come with a figure, and everything
+   else a party buys still has to come out of the same purse. */
+
+function PursePanel({ purse, onGrant, onSpend, onRefund }) {
+  const [label, setLabel] = useState('');
+  const [cost, setCost] = useState('');
+  const p = readPurse(purse);
+  const left = purseBalance(p);
+  const trimmed = label.trim();
+
+  const record = () => {
+    if (!trimmed) return;
+    onSpend({ id: 'buy-' + newId(), label: trimmed, cost: N(cost) });
+    setLabel(''); setCost('');
+  };
+
+  return (
+    <div className="rt-purse">
+      <div className="rt-purse-h">
+        Throne Gelt
+        <span>{fmtThrones(p.thrones)} granted · {fmtThrones(purseSpent(p))} spent</span>
+        <b className={'rt-purse-b' + (left < 0 ? ' over' : '')}>{fmtThrones(left)}</b>
+      </div>
+
+      <div className="rt-purse-r">
+        <label className="rt-num">Granted
+          <input inputMode="numeric" value={p.thrones}
+            onChange={(e) => onGrant(e.target.value)} /></label>
+        <label className="rt-num wide">Purchase
+          <input value={label} onChange={(e) => setLabel(e.target.value)}
+            placeholder="Best lasgun, passage, a bribe" /></label>
+        <label className="rt-num">Cost
+          <input inputMode="numeric" value={cost}
+            onChange={(e) => setCost(e.target.value)} /></label>
+        <button className="rt-btn" onClick={record} disabled={!trimmed}>Record</button>
+      </div>
+
+      {p.spends.length > 0 && (
+        <ul className="rt-spends">
+          {p.spends.map((x) => (
+            <li key={x.id} className="rt-spend">
+              <span className="rt-spend-n">{x.label}</span>
+              <span className="rt-spend-c">{fmtThrones(x.cost)}</span>
+              <RemoveBtn label={x.label} onRemove={() => onRefund(x.id)} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ------------------- AUGMETICS AND POWER ARMOUR -------------------
    Three acquisition routes, and the sheet has to tell them apart. An
    Explorator or a Forge World upbringing takes one or two implants as
@@ -4108,7 +4210,8 @@ function EliteAdvanceDialog({ onAdd, onClose }) {
    as well as a gear line: the XP has to land where every other off-table
    purchase is counted. */
 
-function AugmeticDialog({ careerId, originId, talents = [], gear = [], onTake, onClose }) {
+function AugmeticDialog({ careerId, originId, talents = [], gear = [],
+  purse, profitFactor = 0, onTake, onClose }) {
   const dialogRef = useRef(null);
   const [grades, setGrades] = useState({});
   const [q, setQ] = useState('');
@@ -4122,6 +4225,7 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [], onTake, o
   const held = new Set(gear.map((x) => String(x).toLowerCase()));
   const who = { careerId, originId, talents };
   const freeUsed = freeUsedIn(gear, who);
+  const left = purseBalance(purse);
   const needle = q.trim().toLowerCase();
   const shown = AUGMETICS.filter((a) => !needle
     || (a.name + ' ' + a.stats + ' ' + a.access).toLowerCase().includes(needle));
@@ -4134,12 +4238,14 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [], onTake, o
         <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
       </div>
       <p className="rt-vox-hint">
-        An Explorator, or anyone raised on a Forge World, takes up to{' '}
-        {STARTING_MAX} implants as initial gear for nothing — {freeUsed} of{' '}
-        {STARTING_MAX} used. Anything else is bought in Throne Gelt during
-        downtime, subject to the region's Availability, or granted by the GM as
-        an Elite Advance. Taking one here adds the gear and, where it is not
-        free, the XP against your Elite Advances.
+        An Explorator, a Missionary, or anyone raised on a Forge World takes up
+        to {STARTING_MAX} implants as initial gear for nothing — {freeUsed} of{' '}
+        {STARTING_MAX} used. Anything else is either bought in Throne Gelt,
+        which draws on the purse and needs an Acquisition test at the quoted
+        target, or granted by the GM as an Elite Advance for XP. Training
+        talents are never bought with coin, so power armour charges its
+        training in XP whichever route the suit itself takes.
+        {' '}<b>{fmtThrones(left)} Thrones</b> in the purse.
       </p>
 
       <input className="rt-field" value={q} onChange={(e) => setQ(e.target.value)}
@@ -4160,17 +4266,21 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [], onTake, o
                 const label = labelFor(a.id, grade);
                 const cost = costOf(a.id, grade, { ...who, freeUsed });
                 const owned = held.has(label.toLowerCase());
-                const price = cost.free ? 'Initial gear — no XP, no Thrones'
-                  : cost.gelt != null
-                    ? cost.gelt.toLocaleString() + ' Thrones · ' + cost.totalXp.toLocaleString() + ' XP'
-                    : cost.geltNote + ' · ' + cost.totalXp.toLocaleString() + ' XP';
+                const acq = acquisition(a.id, grade, { profitFactor });
+                const affordable = cost.gelt != null && canAfford(purse, cost.gelt);
                 return (
                   <li key={a.id} className={'rt-aug' + (owned ? ' owned' : '')}>
                     <div className="rt-aug-h">
                       <b>{a.name}</b>
                       {cost.free && <span className="rt-aug-free">initial gear</span>}
+                      {!cost.free && cost.requisition
+                        && <span className="rt-aug-req">requisition</span>}
                     </div>
                     <p className="rt-aug-s">{a.stats}</p>
+                    <p className="rt-aug-av">
+                      {acq.rating} ({acq.mod}) · Acquisition target {acq.target}
+                      {' at Profit Factor '}{profitFactor}
+                    </p>
                     <p className="rt-aug-a">{a.access}</p>
                     {a.grades.length > 1 && (
                       <div className="rt-aug-g">
@@ -4185,13 +4295,36 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [], onTake, o
                     <p className="rt-aug-e">{g.effect}</p>
                     <div className="rt-aug-f">
                       <span className="rt-aug-p">
-                        {price}
-                        {cost.training && ' — includes ' + cost.training.name}
+                        {cost.free ? 'Initial gear — no XP, no Thrones'
+                          : cost.gelt != null ? fmtThrones(cost.gelt) + ' Thrones'
+                            : cost.geltNote}
+                        {cost.training && ' · ' + cost.training.name
+                          + ' ' + cost.training.xp + ' XP'}
                       </span>
-                      <button className="rt-btn" disabled={owned}
-                        onClick={() => onTake({ id: a.id, grade, label, cost, kind: a.kind })}>
-                        {owned ? 'On the sheet' : cost.free ? 'Take it' : 'Buy it'}
-                      </button>
+                      {cost.free ? (
+                        <button className="rt-btn" disabled={owned}
+                          onClick={() => onTake({ id: a.id, grade, label, cost, route: 'free' })}>
+                          {owned ? 'On the sheet' : 'Take it'}
+                        </button>
+                      ) : (
+                        <>
+                          {cost.gelt != null && (
+                            <button className="rt-btn" disabled={owned || !affordable}
+                              title={affordable ? undefined : 'Not enough Thrones in the purse'}
+                              onClick={() => onTake({ id: a.id, grade, label, cost, route: 'thrones' })}>
+                              {owned ? 'On the sheet' : 'Buy · ' + fmtThrones(cost.gelt)}
+                            </button>
+                          )}
+                          {/* Hidden rather than disabled once it is owned: a
+                              disabled button with no label is just a hole. */}
+                          {!owned && (
+                            <button className="rt-btn ghost"
+                              onClick={() => onTake({ id: a.id, grade, label, cost, route: 'xp' })}>
+                              Elite Advance · {cost.totalXp.toLocaleString()} XP
+                            </button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </li>
                 );
@@ -4803,6 +4936,7 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
   psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance,
   onBuyCharAdvance, onRefundCharAdvance, onAddEliteAdvance, onRemoveEliteAdvance,
+  onGrantThrones, onSpendThrones, onRefundThrones,
   onFate, onProfit, spentAdj = 0, onSpentAdj }) {
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
@@ -4854,10 +4988,16 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
   // against the Elite Advances — the one place off-table purchases are
   // counted. Power armour brings its training talent along as a second entry
   // so the talent shows up on the sheet as a talent, not as fine print.
-  const takeAugmetic = ({ label, cost }) => {
+  const takeAugmetic = ({ id, grade, label, cost, route }) => {
     onAddExtra('gear', label);
-    if (!cost.free) onAddEliteAdvance({ name: label, type: 'Trait', cost: cost.xp });
-    if (cost.training) {
+    // Coin or XP, never both — but a training talent is always XP, because no
+    // amount of Thrones teaches anyone to walk in powered plate.
+    if (route === 'thrones') {
+      onSpendThrones({ id: 'aug-' + id + '-' + grade, label, cost: cost.gelt });
+    } else if (route === 'xp') {
+      onAddEliteAdvance({ name: label, type: 'Trait', cost: cost.xp });
+    }
+    if (route !== 'free' && cost.training) {
       onAddEliteAdvance({ name: cost.training.name, type: 'Talent', cost: cost.training.xp });
     }
   };
@@ -5114,6 +5254,11 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
         )}
 
         {tab === 'gear' && (
+          <PursePanel purse={extras.purse} onGrant={onGrantThrones}
+            onSpend={onSpendThrones} onRefund={onRefundThrones} />
+        )}
+
+        {tab === 'gear' && (
           career || extras.gear.length
             ? <GearList gear={career ? career.gear : ''} extra={extras.gear}
                 hidden={extras.gearDropped}
@@ -5365,6 +5510,8 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
           originId={build.picked.home ? build.picked.home.id : null}
           talents={allTalents}
           gear={allGear}
+          purse={extras.purse}
+          profitFactor={profitFactor}
           onTake={takeAugmetic}
           onClose={() => setAddingAug(false)}
         />

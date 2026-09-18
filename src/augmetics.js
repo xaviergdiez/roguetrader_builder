@@ -24,6 +24,60 @@
 
 const G = (grade, gelt, xp, effect) => ({ grade, gelt, xp, effect });
 
+/* ------------------------------ availability ------------------------------
+   Thrones are only half of a purchase: the other half is whether the item can
+   be found at all. Rogue Trader tests Profit Factor against the rating, so
+   the modifier is the useful part and the app can quote the target.
+
+   The two ratings the table states are Very Rare, for the Light Power Armour
+   and the Good-grade Bionic Arm. The rest are graded to match: a Common
+   bionic limb is stock at any decent void-station, a relic suit of Astartes
+   plate is not for sale at any price. */
+
+export const AVAILABILITY = [
+  { rating: 'Ubiquitous', mod: 50 },
+  { rating: 'Abundant', mod: 30 },
+  { rating: 'Plentiful', mod: 20 },
+  { rating: 'Common', mod: 10 },
+  { rating: 'Average', mod: 0 },
+  { rating: 'Scarce', mod: -10 },
+  { rating: 'Rare', mod: -20 },
+  { rating: 'Very Rare', mod: -30 },
+  { rating: 'Extremely Rare', mod: -40 },
+  { rating: 'Near Unique', mod: -50 },
+  { rating: 'Unique', mod: -60 }
+];
+
+export const availabilityMod = (rating) => {
+  const hit = AVAILABILITY.find((a) => a.rating === rating);
+  return hit ? hit.mod : 0;
+};
+
+// The Acquisition test a purchase needs: Profit Factor, modified by how hard
+// the thing is to find. Quoted, never rolled here — whether the Expanse can
+// supply it is the GM's call, and scale and circumstance modify it further.
+export function acquisition(id, grade, { profitFactor = 0 } = {}) {
+  const a = augmeticById(id);
+  if (!a) return null;
+  const rating = ratingFor(a, grade);
+  const mod = availabilityMod(rating);
+  return { rating, mod, target: Math.floor(Number(profitFactor) || 0) + mod };
+}
+
+// A Good-grade article is harder to find than the standard one: one step up
+// the ladder, which is how the table can price a Common arm at 500 Thrones
+// and call the Good one Very Rare.
+function ratingFor(a, grade) {
+  const base = a.availability || 'Average';
+  if (grade !== 'Good' && grade !== 'Best') return base;
+  const i = AVAILABILITY.findIndex((x) => x.rating === base);
+  if (i === -1) return base;
+  const step = grade === 'Best' ? 2 : 1;
+  return AVAILABILITY[Math.min(AVAILABILITY.length - 1, i + step)].rating;
+}
+
+export { ratingFor };
+
 export const AUGMETICS = [
   /* ---- bionics and implants ---- */
   {
@@ -32,8 +86,11 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Replaces a lost arm · Good: +10 Strength for that arm, +1 AP',
     desc: 'A steel-and-ceramite limb. The Mechanicus considers the flesh it replaced an upgrade paid for in advance.',
-    access: 'Tech-Priest starting cybernetic option; Forge World origin',
-    careers: ['explorator'],
+    availability: 'Rare',
+    // A Missionary's arm is a scar of a campaign, not a Mechanicus fitting,
+    // and the table lists it as a starting cybernetic option on that footing.
+    access: 'Tech-Priest starting cybernetic option; Forge World origin; a limb lost on a missionary campaign',
+    careers: ['explorator', 'missionary'],
     origins: ['forge'],
     grades: [
       G('Common', 500, 100, 'Replaces the limb. No modifier.'),
@@ -49,6 +106,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Replaces a lost leg · Good: +10 Jump/Climb, +1 AP, +2m Movement',
     desc: 'Augmetic legs are common enough in the void that nobody looks twice at the gait.',
+    availability: 'Rare',
     access: 'Tech-Priest starting cybernetic option',
     careers: ['explorator'],
     origins: ['forge'],
@@ -66,6 +124,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Replaces eyes or ears · Good: Heightened Senses, Dark-Sight, or Targeter (+10 BS)',
     desc: 'Augmetic eyes rarely match the colour of the ones they replaced, and the Cult sees no reason they should.',
+    availability: 'Rare',
     access: 'Tech-Priest starting gear option',
     careers: ['explorator'],
     origins: ['forge'],
@@ -84,6 +143,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Built-in rebreather, +20 vs toxins and gas · Good: 1 hour in vacuum',
     desc: 'Lungs of filtered bellows and sealed tubing. The cough never entirely goes away.',
+    availability: 'Rare',
     access: 'Tech-Priest, Guardsman, or Assassin replacement',
     careers: ['explorator', 'archmilitant', 'voidmaster'],
     origins: ['forge'],
@@ -101,6 +161,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Neural interface · +10 Tech-Use and Pilot with linked systems',
     desc: 'A socket at the base of the skull. Machines answer faster than a hand ever could.',
+    availability: 'Very Rare',
     access: 'Tech-Priest, Adept, or Secutor Rank 4+',
     careers: ['explorator', 'seneschal'],
     origins: ['forge'],
@@ -119,6 +180,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Cogitator link · +10 Logic and Lore · Good: Unnatural Intelligence (x2), Total Recall',
     desc: 'A cogitator grafted to the brain. What it remembers, it remembers exactly, whether or not that is a mercy.',
+    availability: 'Very Rare',
     access: 'High-rank Adept, Tech-Priest, or Savant',
     careers: ['explorator', 'seneschal'],
     origins: ['forge'],
@@ -137,6 +199,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Micro-mesh under the skin · AP 1 body (Good: AP 2) · stacks with worn armour',
     desc: 'Woven mesh slid beneath the skin. Invisible until something fails to go through it.',
+    availability: 'Very Rare',
     access: 'Assassin, Guardsman, or Scum',
     careers: ['archmilitant', 'voidmaster'],
     origins: [],
@@ -152,6 +215,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Auxiliary cyber-limb — optical, gun or servo · optical grants +10 Perception',
     desc: 'A mechanical limb rising from the spine. Which pattern says a great deal about its owner.',
+    availability: 'Very Rare',
     access: 'Tech-Priest starting options and rank advances',
     careers: ['explorator'],
     origins: ['forge'],
@@ -170,6 +234,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Cerebral governor · +20 to resist mind-reading and interrogation',
     desc: 'A governor wired into the will. It protects what it is told to protect, including from its host.',
+    availability: 'Extremely Rare',
     access: 'Inquisitorial Acolytes and Mind Cleansed agents — GM grant only',
     careers: [],
     origins: [],
@@ -186,6 +251,7 @@ export const AUGMETICS = [
     kind: 'Bionic',
     stats: 'Surgical rebuild into a cybernetic chassis · alters base characteristics and grants traits',
     desc: 'What comes back is not quite the same person, and the Mechanicus regards that as an improvement.',
+    availability: 'Extremely Rare',
     access: 'Post-incapacitation, or the reward for burning a Fate Point',
     careers: [],
     origins: [],
@@ -205,9 +271,13 @@ export const AUGMETICS = [
     kind: 'Power Armour',
     stats: 'AP 7 all · +10 Strength, Unnatural Strength (x2) · vox-caster, photo-visor, rebreather',
     desc: 'The lightest powered plate the Imperium fields. Still unmistakable in a corridor.',
-    access: 'Inquisitorial requisition, or a high noble’s reward',
+    availability: 'Very Rare',
+    access: 'Requisitioned through the Ecclesiarchy or Ordo Hereticus, granted by a Mission Commandery, or a high noble’s reward',
     careers: [],
     origins: [],
+    // Not a free slot: a requisition route is standing that the GM can
+    // honour, where everyone else needs the Thrones or the XP.
+    requisition: ['missionary'],
     requires: 'Power Armour Training',
     trainingXp: 200,
     grades: [
@@ -223,6 +293,7 @@ export const AUGMETICS = [
     kind: 'Power Armour',
     stats: 'AP 8 (9 body) · +20 Strength, Unnatural Strength (x2) · auto-senses, 12-hour seal',
     desc: 'Inquisitorial plate, and a statement that the matter is no longer open to discussion.',
+    availability: 'Extremely Rare',
     access: 'High-level Inquisitorial assignment, or an Inquisitor Lord’s gift',
     careers: [],
     origins: [],
@@ -242,7 +313,9 @@ export const AUGMETICS = [
     kind: 'Power Armour',
     stats: 'AP 7 (8 body) · form-fitted · +10 Strength · auto-senses, helmet vox, sealed',
     desc: 'Fitted to one wearer and to no other. Removing it from her is a theological problem as much as a practical one.',
+    availability: 'Extremely Rare',
     access: 'Issued as standard to Sororitas Militant ranks; 300 XP as an Elite Advance for anyone else',
+    requisition: ['missionary'],
     careers: [],
     origins: [],
     requires: 'Power Armour Training',
@@ -262,6 +335,7 @@ export const AUGMETICS = [
     kind: 'Power Armour',
     stats: 'AP 8 (10 body) · +20 Strength · recoil suppression, auto-senses, bio-monitors, auto-medicae',
     desc: 'A relic of the Adeptus Astartes. Wearing one without the Black Carapace is an exercise in being worn by it.',
+    availability: 'Unique',
     access: 'Relic. Requires Space Marine Physiology and the Black Carapace',
     careers: [],
     origins: [],
@@ -337,6 +411,15 @@ export const isFreeFor = (id, { careerId, originId } = {}) => {
 
 export const freeFor = (who) => AUGMETICS.filter((a) => isFreeFor(a.id, who));
 
+// A standing claim on the item through an institution: the Ecclesiarchy will
+// issue a Missionary a suit of light plate where it would sell one to nobody.
+// It still costs Thrones or XP — what it removes is the GM's "how would you
+// even have this?"
+export const hasRequisition = (id, { careerId } = {}) => {
+  const a = augmeticById(id);
+  return Boolean(a && careerId && (a.requisition || []).includes(careerId));
+};
+
 // How many of the free slots a sheet has already spent. The rule is one or
 // two implants at creation, so the third has to be bought like anyone else's.
 export const freeUsedIn = (labels, who) => (labels || []).reduce((n, label) => {
@@ -357,6 +440,7 @@ export function costOf(id, grade, { careerId, originId, talents = [], freeUsed =
     ? { name: a.requires, xp: a.trainingXp } : null;
   return {
     free,
+    requisition: hasRequisition(id, { careerId }),
     gelt: free ? 0 : g.gelt,
     geltNote: a.geltNote || null,
     xp: free ? 0 : g.xp,

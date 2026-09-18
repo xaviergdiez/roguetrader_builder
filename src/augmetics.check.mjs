@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   AUGMETICS, augmeticById, gradeOf, labelFor, readLabel, conditionalsOf,
   conditionalsFor, isFreeFor, freeFor, freeUsedIn, costOf, STARTING_MAX,
-  AUGMETIC_GEAR
+  AUGMETIC_GEAR, AVAILABILITY, availabilityMod, acquisition, hasRequisition
 } from './augmetics.js';
 import { gearInfo, GEAR } from './gear.js';
 
@@ -163,6 +163,60 @@ assert.equal(STARTING_MAX, 2);
 assert.equal(costOf('astartes-power-armour', 'Common', {}).gelt, null);
 assert.match(costOf('astartes-power-armour', 'Common', {}).geltNote, /relic/i);
 assert.equal(costOf('nonsense', 'Common', {}), null);
+
+/* ---- availability: Thrones are only half of a purchase ---- */
+
+// Every entry is findable somewhere on the ladder, or the dialog quotes a
+// modifier of 0 for something that should be all but unobtainable.
+for (const a of AUGMETICS) {
+  assert.ok(AVAILABILITY.some((x) => x.rating === a.availability),
+    a.id + ' has no availability rating: ' + a.availability);
+}
+
+// The ladder itself: harder to find means a worse modifier, all the way down.
+for (let i = 1; i < AVAILABILITY.length; i++) {
+  assert.ok(AVAILABILITY[i].mod < AVAILABILITY[i - 1].mod, 'the ladder is out of order');
+}
+assert.equal(availabilityMod('Very Rare'), -30);
+assert.equal(availabilityMod('nonsense'), 0);
+
+// The two ratings the table states outright.
+assert.equal(acquisition('bionic-arm', 'Good', {}).rating, 'Very Rare');
+assert.equal(acquisition('light-power-armour', 'Common', {}).rating, 'Very Rare');
+
+// A Good article is a step rarer than the standard one, which is how the same
+// item is Rare at 500 Thrones and Very Rare at 1,500.
+assert.equal(acquisition('bionic-arm', 'Common', {}).rating, 'Rare');
+assert.equal(acquisition('bionic-arm', 'Common', {}).mod, -20);
+
+// The target is Profit Factor against that modifier.
+assert.equal(acquisition('bionic-arm', 'Good', { profitFactor: 40 }).target, 10);
+assert.equal(acquisition('bionic-arm', 'Good', { profitFactor: 0 }).target, -30);
+assert.equal(acquisition('astartes-power-armour', 'Common', { profitFactor: 40 }).target, -20,
+  'a relic stays out of reach however rich the dynasty is');
+assert.equal(acquisition('nonsense', 'Common', {}), null);
+
+// The ladder cannot be stepped off the bottom.
+assert.equal(acquisition('astartes-power-armour', 'Best', {}).rating, 'Unique');
+
+/* ---- requisition: standing, not a discount ---- */
+
+// The Ecclesiarchy will issue a Missionary light plate. It still costs.
+assert.equal(hasRequisition('light-power-armour', { careerId: 'missionary' }), true);
+assert.equal(hasRequisition('light-power-armour', { careerId: 'seneschal' }), false);
+assert.equal(hasRequisition('bionic-arm', { careerId: 'missionary' }), false);
+assert.equal(hasRequisition('light-power-armour', {}), false);
+{
+  const c = costOf('light-power-armour', 'Common', { careerId: 'missionary' });
+  assert.equal(c.requisition, true);
+  assert.equal(c.free, false, 'a requisition route is not a free slot');
+  assert.equal(c.gelt, 10000);
+  assert.equal(c.totalXp, 500);
+}
+
+// The arm, however, is a starting option for a Missionary as the table has it.
+assert.equal(isFreeFor('bionic-arm', { careerId: 'missionary' }), true);
+assert.equal(costOf('bionic-arm', 'Good', { careerId: 'missionary' }).xp, 0);
 
 /* ---- conditionals come from what is actually worn ---- */
 

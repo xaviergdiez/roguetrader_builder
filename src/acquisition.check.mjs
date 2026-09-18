@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import {
   AVAILABILITY, availabilityMod, rarer, SCALE, scaleFor, scaleById, YARDSTICK,
-  pfCost, PF_COST, craftsmanshipMod, STANDING, acquisitionTarget, attempt, describe
+  QUANTITY, quantityById, pfCost, PF_COST, craftsmanshipMod, STANDING,
+  acquisitionTarget, attempt, describe
 } from './acquisition.js';
 
 /* ---- the availability ladder ---- */
@@ -55,6 +56,36 @@ assert.equal(scaleFor(-5, 20).id, 'negligible');
 assert.equal(scaleFor(10000, 0).id, 'vast');
 assert.ok(Number.isFinite(scaleFor(10000, 0).ratio), 'a ratio must never be Infinity');
 assert.equal(scaleFor(10000, 'x').id, 'vast');
+
+/* ---- scale by quantity, for the equipment that has no printed price ---- */
+
+assert.equal(QUANTITY.length, SCALE.length, 'the two faces of Scale must stay in step');
+for (const q of QUANTITY) {
+  assert.equal(q.mod, scaleById(q.id).mod, q.id + ' modifier has drifted from SCALE');
+  assert.ok(q.name && q.detail, q.id + ' has no wording');
+}
+assert.equal(quantityById('vast').name, 'A crusade');
+assert.equal(quantityById('nonsense').id, 'negligible', 'one item is the safe default');
+
+// One lasgun is Negligible; arming a regiment with them is Vast. Same rating.
+{
+  const one = acquisitionTarget({ profitFactor: 40, availability: 'Common', scale: 'negligible' });
+  const many = acquisitionTarget({ profitFactor: 40, availability: 'Common', scale: 'vast' });
+  assert.equal(one.target, 80, '40 + 10 common + 30 negligible');
+  assert.equal(many.target, 20, '40 + 10 common − 30 vast');
+  assert.equal(one.pfCost, 0);
+  assert.equal(many.pfCost, 2, 'arming a crusade ties up the dynasty');
+}
+
+// A named scale overrides the price-derived one, and does not pretend to a ratio.
+{
+  const t = acquisitionTarget({ profitFactor: 20, price: 10000, scale: 'negligible' });
+  assert.equal(t.scale.id, 'negligible');
+  assert.equal(t.scale.ratio, null);
+  assert.equal(acquisitionTarget({ profitFactor: 20, price: 10000 }).scale.id, 'major',
+    'without a named scale the price still speaks');
+  assert.equal(acquisitionTarget({ profitFactor: 20, scale: 'nonsense' }).scale.id, 'negligible');
+}
 
 /* ---- what a significant purchase costs ---- */
 

@@ -73,6 +73,33 @@ export const SCALE = [
 
 export const scaleById = (id) => SCALE.find((s) => s.id === id) || null;
 
+/* ---------------------------- scale by quantity ----------------------------
+   Rogue Trader prints no Throne price for most equipment, and for one rifle
+   the price was never the question — the question is HOW MANY. So Scale has a
+   second face: buying one lasgun is Negligible, arming a regiment with them
+   is Vast, and the same availability rating sits behind both.
+
+   The modifiers come off SCALE rather than being restated, so there is one
+   ladder in this file and not two that can drift apart. */
+
+const QUANTITY_WORDS = {
+  negligible: ['One', 'a single personal item'],
+  trivial: ['A handful', 'two to five'],
+  minor: ['A squad', 'six to twenty'],
+  standard: ['A company', 'a hundred, or an away team fully kitted'],
+  major: ['A regiment', 'a thousand'],
+  vast: ['A crusade', 'ten thousand and upward']
+};
+
+export const QUANTITY = SCALE.map((s) => ({
+  id: s.id,
+  mod: s.mod,
+  name: QUANTITY_WORDS[s.id][0],
+  detail: QUANTITY_WORDS[s.id][1]
+}));
+
+export const quantityById = (id) => QUANTITY.find((q) => q.id === id) || QUANTITY[0];
+
 export function scaleFor(price, profitFactor) {
   const p = Math.max(0, Math.floor(Number(price) || 0));
   if (!p) return { ...SCALE[0], ratio: 0 };
@@ -108,11 +135,15 @@ export const STANDING = 30;
 /* ------------------------------- the test ------------------------------- */
 
 export function acquisitionTarget({
-  profitFactor = 0, availability = 'Average', price = 0,
+  profitFactor = 0, availability = 'Average', price = 0, scale: scaleId = null,
   craftsmanship = null, standing = false, modifier = 0
 } = {}) {
   const pf = Math.floor(Number(profitFactor) || 0);
-  const scale = scaleFor(price, pf);
+  // Named scale wins over a derived one: a price implies a scale, but a
+  // quantity states it outright, and most equipment has no printed price.
+  const scale = scaleId
+    ? { ...(scaleById(scaleId) || SCALE[0]), ratio: null }
+    : scaleFor(price, pf);
   const parts = [{ label: 'Profit Factor', value: pf }];
   const add = (label, value) => { if (value) parts.push({ label, value }); };
 

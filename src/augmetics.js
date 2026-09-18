@@ -477,5 +477,7 @@ export const conditionalsFor = (labels, charKey) =>
 
 export const AUGMETIC_GEAR = Object.fromEntries(AUGMETICS.map((a) => [
   a.name.toLowerCase(),
-  { kind: a.kind, stats: a.stats, desc: a.desc }
+  // avail travels with them so every catalogue entry, implant or lasgun, can
+  // be put through the same Acquisition test.
+  { kind: a.kind, stats: a.stats, desc: a.desc, avail: a.availability }
 ]));

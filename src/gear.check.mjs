@@ -1,7 +1,8 @@
 // Self-check for the gear parser and catalogue lookup.
 // Run: node src/gear.check.mjs
 import assert from 'node:assert/strict';
-import { parseGear, gearInfo, GEAR } from './gear.js';
+import { AVAILABILITY } from './acquisition.js';
+import { parseGear, gearInfo, GEAR, availabilityOf } from './gear.js';
 
 // the Explorator string exercises every rule the grammar has: " or " choices,
 // "; " groups, ", " items, and a trailing sentence
@@ -63,6 +64,47 @@ for (const str of strings) {
   }
 }
 assert.deepEqual(missing, [], 'gear with no catalogue entry: ' + missing.join(', '));
+
+/* ---- every entry can go through an Acquisition test ---- */
+
+// Profit Factor is the currency, and the test needs a rating for the thing
+// being bought. An unrated entry would quote a modifier of 0 and read as
+// Average, which is wrong for a power sword and wrong for a stub gun.
+{
+  const ladder = new Set(AVAILABILITY.map((a) => a.rating));
+  const unrated = Object.entries(GEAR).filter(([, v]) => !v.avail).map(([k]) => k);
+  assert.deepEqual(unrated, [], 'catalogue entries with no availability: ' + unrated.join(', '));
+  for (const [k, v] of Object.entries(GEAR)) {
+    assert.ok(ladder.has(v.avail), k + ' has an off-ladder rating: ' + v.avail);
+  }
+}
+
+// Reading it off a label, quality prefix and all. The prefix is reported
+// separately because craftsmanship is a modifier on the test, not a step up
+// the rarity ladder.
+assert.equal(availabilityOf('lasgun').rating, 'Common');
+assert.equal(availabilityOf('Best power sword').rating, 'Very Rare');
+assert.equal(availabilityOf('Best power sword').craftsmanship, 'Best');
+assert.equal(availabilityOf('lasgun').craftsmanship, null);
+assert.equal(availabilityOf('Good Bionic Arm').rating, 'Rare', 'implants ride the same rail');
+assert.equal(availabilityOf('a plasma pistol').rating, 'Very Rare', 'articles are stripped');
+assert.equal(availabilityOf('two stikkbombs').rating, 'Very Rare');
+assert.equal(availabilityOf('nonsense').rating, null, 'unrated, not silently Average');
+assert.equal(availabilityOf('nonsense').entry, null);
+
+// Everything a career is issued can be priced by the test, which is the set
+// that matters most: those labels reach the sheet without anyone typing them.
+{
+  const unrated = [];
+  for (const str of strings) {
+    for (const group of parseGear(str)) {
+      for (const label of group) {
+        if (!availabilityOf(label).rating) unrated.push(label);
+      }
+    }
+  }
+  assert.deepEqual(unrated, [], 'issued gear with no rating: ' + unrated.join(', '));
+}
 
 console.log('gear: all checks passed (%d careers, %d catalogue entries)',
   strings.length, Object.keys(GEAR).length);

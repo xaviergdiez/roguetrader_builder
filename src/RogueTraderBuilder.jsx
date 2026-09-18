@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
-import { parseGear, gearInfo, CRAFT, GEAR } from './gear.js';
+import { parseGear, gearInfo, CRAFT, GEAR, availabilityOf } from './gear.js';
 import { woundState, applyDamage, adjustMax } from './wounds.js';
 import { roll1d100, resolveTest, DIFFICULTIES } from './dice.js';
 import {
@@ -12,7 +12,10 @@ import {
   AUGMETICS, gradeOf, labelFor, costOf, freeUsedIn, STARTING_MAX, acquisitionFor,
   conditionalsFor as augConditionalsFor
 } from './augmetics.js';
-import { attempt as attemptAcquisition, describe as describeTarget } from './acquisition.js';
+import {
+  attempt as attemptAcquisition, describe as describeTarget,
+  acquisitionTarget, QUANTITY, CRAFTSMANSHIP
+} from './acquisition.js';
 import {
   EMPTY as EMPTY_PURSE, read as readPurse, balance as purseBalance,
   spent as purseSpent, grant as purseGrant, spend as purseSpend,
@@ -1797,6 +1800,8 @@ const CSS = `
   border-left:2px solid var(--brass-dim);background:rgba(0,0,0,.3);}
 .rt-spend-n{flex:1;min-width:0;font-size:12.5px;color:var(--text);}
 .rt-spend-c{font-family:var(--mono);font-size:10.5px;color:var(--gold-lit);}
+.rt-addi.on{color:var(--gold-lit);border-color:var(--gold);
+  background:rgba(224,185,85,.12);}
 .rt-aug-av{margin:0 0 6px;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;
   color:var(--brass-lit);}
 .rt-aug-req{padding:1px 6px;font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;
@@ -4101,9 +4106,16 @@ function PortraitPlate({ name, profitFactor, avatar, setAvatar, identity }) {
    Pick from the catalogue for this tab, or type an entry of your own. Tabs
    with no catalogue (traits, notes) are free text only. */
 
-function AddDialog({ title, options, existing, onAdd, onClose }) {
+function AddDialog({ title, options, existing, onAdd, onClose,
+  acquire = false, profitFactor = 0, onCharge }) {
   const dialogRef = useRef(null);
   const [q, setQ] = useState('');
+  // Acquisition mode: picking a row selects it and opens the test, rather
+  // than dropping it on the sheet for free.
+  const [sel, setSel] = useState(null);
+  const [qty, setQty] = useState('negligible');
+  const [craft, setCraft] = useState('Common');
+  const [rolled, setRolled] = useState(null);
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -4121,6 +4133,34 @@ function AddDialog({ title, options, existing, onAdd, onClose }) {
   const exact = options.some((o) => o.toLowerCase() === custom.toLowerCase());
 
   const add = (v) => { onAdd(v); close(); };
+
+  // Craftsmanship rides in front of the label, where gearInfo already strips
+  // it to find the catalogue entry — the same trick the augmetic grades use.
+  const labelled = (base) => (craft === 'Common' ? base : craft + ' ' + base);
+
+  const pick = (v) => {
+    setSel(v); setRolled(null); setQty('negligible');
+    setCraft(availabilityOf(v).craftsmanship || 'Common');
+  };
+
+  const rating = sel ? availabilityOf(sel).rating : null;
+  const target = sel ? acquisitionTarget({
+    profitFactor,
+    availability: rating || 'Average',
+    scale: qty,
+    craftsmanship: craft === 'Common' ? null : craft
+  }) : null;
+
+  const tryAcquire = () => {
+    const roll = roll1d100();
+    const res = attemptAcquisition(target, roll);
+    setRolled({ ...res, roll, target: target.target });
+    if (res.success) {
+      if (res.pfCost && onCharge) onCharge(-res.pfCost);
+      onAdd(labelled(sel));
+      close();
+    }
+  };
 
   return (
     <dialog ref={dialogRef} className="rt-framer" onClose={onClose} aria-label={title}>
@@ -4141,7 +4181,10 @@ function AddDialog({ title, options, existing, onAdd, onClose }) {
           </li>
         )}
         {matches.map((o) => (
-          <li key={o}><button className="rt-addi" onClick={() => add(o)}>{o}</button></li>
+          <li key={o}>
+            <button className={'rt-addi' + (sel === o ? ' on' : '')}
+              onClick={() => (acquire ? pick(o) : add(o))}>{o}</button>
+          </li>
         ))}
         {!matches.length && !custom && (
           <li className="rt-addnone">
@@ -4150,6 +4193,63 @@ function AddDialog({ title, options, existing, onAdd, onClose }) {
           </li>
         )}
       </ul>
+
+      {acquire && sel && (
+        <div className="rt-hit">
+          <div className="rt-hit-h">
+            Acquire <b>{sel}</b>
+            <span>{rating || 'unrated — the GM sets it'}</span>
+          </div>
+
+          <div className="rt-choice-l">HOW MANY</div>
+          <div className="rt-picks">
+            {QUANTITY.map((x) => (
+              <button key={x.id} className={'rt-pick' + (qty === x.id ? ' on' : '')}
+                onClick={() => { setQty(x.id); setRolled(null); }}
+                title={x.detail} aria-pressed={qty === x.id}>
+                {x.name} {x.mod > 0 ? '+' : ''}{x.mod}
+              </button>
+            ))}
+          </div>
+
+          <div className="rt-choice-l">CRAFTSMANSHIP</div>
+          <div className="rt-picks">
+            {Object.keys(CRAFTSMANSHIP).map((c) => (
+              <button key={c} className={'rt-pick' + (craft === c ? ' on' : '')}
+                onClick={() => { setCraft(c); setRolled(null); }} aria-pressed={craft === c}>
+                {c} {CRAFTSMANSHIP[c] > 0 ? '+' : ''}{CRAFTSMANSHIP[c] || ''}
+              </button>
+            ))}
+          </div>
+
+          <p className="rt-aug-av">
+            target <b>{target.target}</b> = {describeTarget(target)}
+            {target.pfCost > 0 && ' · costs ' + target.pfCost + ' Profit Factor'}
+          </p>
+
+          <div className="rt-aug-f">
+            <button className="rt-btn" disabled={rolled && !rolled.success}
+              title={rolled && !rolled.success
+                ? 'Not to be had here — reopen once circumstances change'
+                : undefined}
+              onClick={tryAcquire}>
+              Acquire · {target.target}
+            </button>
+            {/* The GM handing it over, or kit the character already owns and
+                is only recording. No test, no Profit Factor. */}
+            <button className="rt-btn ghost" onClick={() => add(labelled(sel))}>
+              Add without testing
+            </button>
+          </div>
+
+          {rolled && !rolled.success && (
+            <p className="rt-hitline">
+              Acquisition d100 {rolled.roll} vs {rolled.target} —{' '}
+              <i>not to be had here</i>{rolled.automatic && ' · automatic'}
+            </p>
+          )}
+        </div>
+      )}
     </dialog>
   );
 }
@@ -5619,6 +5719,12 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
           existing={listFor(adding)}
           onAdd={(v) => onAddExtra(adding, v)}
           onClose={() => setAdding(null)}
+          /* Equipment is acquired, not conjured: the gear tab tests for it
+             against Profit Factor. Skills and talents are not bought at all,
+             so they keep the plain list. */
+          acquire={adding === 'gear'}
+          profitFactor={profitFactor}
+          onCharge={onProfit}
         />
       )}
 

@@ -8,6 +8,10 @@ import { roll1d100, resolveTest, DIFFICULTIES } from './dice.js';
 import {
   LOCATIONS, DAMAGE_TYPES, hitLocation, locationById, resolveHit, furyTriggered
 } from './crits.js';
+import {
+  AUGMETICS, gradeOf, labelFor, costOf, freeUsedIn, STARTING_MAX,
+  conditionalsFor as augConditionalsFor
+} from './augmetics.js';
 import { conditionalsFor } from './effects.js';
 import {
   MODES as PSY_MODES, MAX_PUSH, effectivePsyRating, phenomenaModifier,
@@ -1745,6 +1749,33 @@ const CSS = `
   background:linear-gradient(180deg,#c4483a,var(--crimson));transition:filter .14s;}
 .rt-fury:hover{filter:brightness(1.12);}
 
+/* ---- augmetics and power armour ---- */
+/* Sets width, NOT max-width: .rt-framer sets width:min(430px,94vw) and a
+   max-width cannot widen anything. Compound selector so source order between
+   this rule and .rt-framer stops mattering. */
+.rt-framer.rt-augm{width:min(760px,94vw);}
+.rt-auglist{list-style:none;margin:0 0 4px;padding:0;}
+.rt-aug{padding:9px 10px;margin-bottom:6px;
+  border:1px solid var(--brass-dim);border-left:2px solid var(--green-dim);
+  background:rgba(6,14,9,.6);}
+.rt-aug.owned{border-left-color:var(--gold);opacity:.72;}
+.rt-aug-h{display:flex;align-items:baseline;gap:8px;margin-bottom:3px;}
+.rt-aug-h b{font-family:var(--display);font-size:13px;letter-spacing:.06em;
+  color:var(--brass-lit);font-weight:600;}
+.rt-aug-free{margin-left:auto;padding:1px 6px;font-family:var(--mono);font-size:8.5px;
+  letter-spacing:.12em;text-transform:uppercase;color:#0d1b12;
+  border:1px solid var(--green);background:var(--green);}
+.rt-aug-s{margin:0 0 3px;font-size:12.5px;line-height:1.4;color:var(--text);}
+.rt-aug-a{margin:0 0 6px;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;
+  color:var(--dim);}
+.rt-aug-g{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;}
+.rt-aug-g .rt-pick{flex:0 0 auto;min-width:92px;}
+.rt-aug-e{margin:0 0 7px;font-size:12px;line-height:1.4;color:var(--dim);}
+.rt-aug-f{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.rt-aug-p{flex:1;min-width:150px;font-family:var(--mono);font-size:10px;
+  letter-spacing:.04em;color:var(--brass-lit);}
+.rt-aug-f .rt-btn{flex:0 0 auto;min-width:118px;}
+
 /* the brass gauges — wounds, fate, profit factor */
 .rt-derived{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:14px 0;}
 /* Every gauge in the strip shares one skeleton so they line up across the row:
@@ -3069,7 +3100,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
             pointAlloc={pointAlloc} onStartPoints={startPointBuy} onSpendPoint={spendPoint}
             finalTotals={finalTotals}
             home={home} wounds={ws ? ws.max : null} fatePoints={fateShown}
-            profitFactor={profitShown} tBonus={tBonus}
+            profitFactor={profitShown} tBonus={tBonus} gear={extras.gear}
           />
         )}
 
@@ -3281,7 +3312,11 @@ function GearItem({ label, onRemove }) {
         <div className="rt-entry-d">
           {entry.stats && <p className="rt-gear-s">{entry.stats}</p>}
           <p>{entry.desc}</p>
-          {quality && <p className="rt-entry-s">{CRAFT[quality]}</p>}
+          {/* The craftsmanship blurb talks about weapons and armour, which is
+              wrong for an implant — and an augmetic's grade already spells out
+              what Good buys, in its own stats line. */}
+          {quality && entry.kind !== 'Bionic' && entry.kind !== 'Power Armour'
+            && <p className="rt-entry-s">{CRAFT[quality]}</p>}
         </div>
       )}
     </li>
@@ -4064,6 +4099,112 @@ function EliteAdvanceDialog({ onAdd, onClose }) {
   );
 }
 
+/* ------------------- AUGMETICS AND POWER ARMOUR -------------------
+   Three acquisition routes, and the sheet has to tell them apart. An
+   Explorator or a Forge World upbringing takes one or two implants as
+   initial gear for nothing; everything else is either bought in Throne Gelt
+   during downtime, which only the GM can adjudicate, or granted as an Elite
+   Advance for XP. That last route is why this dialog writes an elite advance
+   as well as a gear line: the XP has to land where every other off-table
+   purchase is counted. */
+
+function AugmeticDialog({ careerId, originId, talents = [], gear = [], onTake, onClose }) {
+  const dialogRef = useRef(null);
+  const [grades, setGrades] = useState({});
+  const [q, setQ] = useState('');
+
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  const close = () => dialogRef.current && dialogRef.current.close();
+
+  const held = new Set(gear.map((x) => String(x).toLowerCase()));
+  const who = { careerId, originId, talents };
+  const freeUsed = freeUsedIn(gear, who);
+  const needle = q.trim().toLowerCase();
+  const shown = AUGMETICS.filter((a) => !needle
+    || (a.name + ' ' + a.stats + ' ' + a.access).toLowerCase().includes(needle));
+
+  return (
+    <dialog ref={dialogRef} className="rt-framer rt-augm" onClose={onClose}
+      aria-label="Augmetics and power armour">
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">Augmetics &amp; Power Armour</span>
+        <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
+      </div>
+      <p className="rt-vox-hint">
+        An Explorator, or anyone raised on a Forge World, takes up to{' '}
+        {STARTING_MAX} implants as initial gear for nothing — {freeUsed} of{' '}
+        {STARTING_MAX} used. Anything else is bought in Throne Gelt during
+        downtime, subject to the region's Availability, or granted by the GM as
+        an Elite Advance. Taking one here adds the gear and, where it is not
+        free, the XP against your Elite Advances.
+      </p>
+
+      <input className="rt-field" value={q} onChange={(e) => setQ(e.target.value)}
+        placeholder="Search implants and suits" style={{ marginBottom: 10 }} />
+
+      {['Bionic', 'Power Armour'].map((kind) => {
+        const rows = shown.filter((a) => a.kind === kind);
+        if (!rows.length) return null;
+        return (
+          <React.Fragment key={kind}>
+            <div className="rt-choice-l">
+              {kind === 'Bionic' ? 'BIONICS & CYBERNETIC IMPLANTS' : 'POWER ARMOUR'}
+            </div>
+            <ul className="rt-auglist">
+              {rows.map((a) => {
+                const grade = grades[a.id] || a.grades[0].grade;
+                const g = gradeOf(a.id, grade);
+                const label = labelFor(a.id, grade);
+                const cost = costOf(a.id, grade, { ...who, freeUsed });
+                const owned = held.has(label.toLowerCase());
+                const price = cost.free ? 'Initial gear — no XP, no Thrones'
+                  : cost.gelt != null
+                    ? cost.gelt.toLocaleString() + ' Thrones · ' + cost.totalXp.toLocaleString() + ' XP'
+                    : cost.geltNote + ' · ' + cost.totalXp.toLocaleString() + ' XP';
+                return (
+                  <li key={a.id} className={'rt-aug' + (owned ? ' owned' : '')}>
+                    <div className="rt-aug-h">
+                      <b>{a.name}</b>
+                      {cost.free && <span className="rt-aug-free">initial gear</span>}
+                    </div>
+                    <p className="rt-aug-s">{a.stats}</p>
+                    <p className="rt-aug-a">{a.access}</p>
+                    {a.grades.length > 1 && (
+                      <div className="rt-aug-g">
+                        {a.grades.map((x) => (
+                          <button key={x.grade}
+                            className={'rt-pick' + (grade === x.grade ? ' on' : '')}
+                            onClick={() => setGrades((p) => ({ ...p, [a.id]: x.grade }))}
+                            aria-pressed={grade === x.grade}>{x.grade}</button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="rt-aug-e">{g.effect}</p>
+                    <div className="rt-aug-f">
+                      <span className="rt-aug-p">
+                        {price}
+                        {cost.training && ' — includes ' + cost.training.name}
+                      </span>
+                      <button className="rt-btn" disabled={owned}
+                        onClick={() => onTake({ id: a.id, grade, label, cost, kind: a.kind })}>
+                        {owned ? 'On the sheet' : cost.free ? 'Take it' : 'Buy it'}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </React.Fragment>
+        );
+      })}
+      {!shown.length && <p className="rt-empty">Nothing in the catalogue matches.</p>}
+    </dialog>
+  );
+}
+
 /* ------------------------------ TEST ROLLER ------------------------------
    Opens under the characteristic it belongs to. Difficulty sets the modifier,
    the target updates live, and the log keeps the last few rolls so a run of
@@ -4307,7 +4448,7 @@ function HitPanel({ roll, target, melee }) {
    modifier delta, bonus. onReroll is optional — the dossier renders the
    same sheet read-only rather than keeping a second copy of this markup. */
 
-function StatSheet({ totals, mods, rolls, onReroll, picked }) {
+function StatSheet({ totals, mods, rolls, onReroll, picked, gear = [] }) {
   const [rollFor, setRollFor] = useState(null);  // characteristic key, or null
   const [log, setLog] = useState({});            // key -> most recent results
 
@@ -4356,7 +4497,14 @@ function StatSheet({ totals, mods, rolls, onReroll, picked }) {
               base={totals[k]}
               history={log[k] || []}
               onRoll={(r) => record(k, r)}
-              conditionals={conditionalsFor(picked, k)}
+              /* Origin-path traits and worn augmetics both surface here as
+                 toggles rather than moving the total: +20 Strength from a
+                 powered suit applies while the suit is on, and a bionic arm's
+                 +10 applies to that arm. */
+              conditionals={[
+                ...conditionalsFor(picked, k),
+                ...augConditionalsFor(gear, k)
+              ]}
             />
           )}
           </React.Fragment>
@@ -4429,7 +4577,8 @@ function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name
 /* ----------------------- CHARACTERISTICS PANE ----------------------- */
 
 function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wounds, fatePoints,
-  profitFactor, tBonus, picked, pointAlloc, onStartPoints, onSpendPoint, finalTotals }) {
+  profitFactor, tBonus, picked, pointAlloc, onStartPoints, onSpendPoint, finalTotals,
+  gear = [] }) {
   const remaining = pointAlloc ? pointsRemaining(pointAlloc) : POINT_POOL;
   return (
     <div>
@@ -4481,7 +4630,8 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
 
       {rolls && totals && (
         <>
-          <StatSheet totals={totals} mods={mods} rolls={rolls} onReroll={rerollOne} picked={picked} />
+          <StatSheet totals={totals} mods={mods} rolls={rolls} onReroll={rerollOne}
+            picked={picked} gear={gear} />
 
           <div className="rt-derived">
             <div className="rt-der"><div className="rt-der-v">{wounds ?? '\u2014'}</div><div className="rt-der-k">WOUNDS</div></div>
@@ -4657,6 +4807,7 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
   const [tab, setTab] = useState('skills');
   const [adding, setAdding] = useState(null);
   const [addingElite, setAddingElite] = useState(false);
+  const [addingAug, setAddingAug] = useState(false);
   const career = build.picked.career;
   // Navigators buy Warp Eye Powers (Lidless Stare, Seek the Path, etc.) as
   // Power-type advances, but they are not sanctioned psykers and never touch
@@ -4698,6 +4849,18 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
   const spentXp = extras.advances.reduce((n, a) => n + (a.cost || 0), 0)
     + charAdvSpent + eliteSpent + spentAdj;
   const remaining = remainingXp(xp, spentXp);
+
+  // An augmetic is a gear line plus, unless it is initial gear, its XP filed
+  // against the Elite Advances — the one place off-table purchases are
+  // counted. Power armour brings its training talent along as a second entry
+  // so the talent shows up on the sheet as a talent, not as fine print.
+  const takeAugmetic = ({ label, cost }) => {
+    onAddExtra('gear', label);
+    if (!cost.free) onAddEliteAdvance({ name: label, type: 'Trait', cost: cost.xp });
+    if (cost.training) {
+      onAddEliteAdvance({ name: cost.training.name, type: 'Talent', cost: cost.training.xp });
+    }
+  };
 
   // origin-path entries first, then free additions, then purchased advances,
   // then GM-approved Elite Advances
@@ -4883,7 +5046,7 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
       </div>
 
       {totals && (
-        <StatSheet totals={totals} mods={build.mods} picked={build.picked} />
+        <StatSheet totals={totals} mods={build.mods} picked={build.picked} gear={allGear} />
       )}
 
       {/* Tabbed lower panel, after the CRPG sheet: one parchment panel with
@@ -5172,6 +5335,11 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
             + {ADD_SOURCES[tab].title}
           </button>
         )}
+        {tab === 'gear' && (
+          <button className="rt-addbtn" onClick={() => setAddingAug(true)}>
+            + Augmetics &amp; Power Armour
+          </button>
+        )}
       </div>
 
       {adding && (
@@ -5188,6 +5356,17 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
         <EliteAdvanceDialog
           onAdd={onAddEliteAdvance}
           onClose={() => setAddingElite(false)}
+        />
+      )}
+
+      {addingAug && (
+        <AugmeticDialog
+          careerId={career ? career.id : null}
+          originId={build.picked.home ? build.picked.home.id : null}
+          talents={allTalents}
+          gear={allGear}
+          onTake={takeAugmetic}
+          onClose={() => setAddingAug(false)}
         />
       )}
 

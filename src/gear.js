@@ -13,7 +13,14 @@ export const CRAFT = {
   best: 'Best craftsmanship — a masterwork. More accurate and harder hitting, or better protection at less weight.'
 };
 
+import { AUGMETIC_GEAR } from './augmetics.js';
+
 export const GEAR = {
+  // Bionics and power armour, so an implant on a sheet shows its specs like
+  // any other item. Their grade rides in the craftsmanship prefix that
+  // gearInfo already strips, so "Good Bionic Arm" resolves here unaided.
+  ...AUGMETIC_GEAR,
+
   /* ---- pistols ---- */
   'laspistol': { kind: 'Pistol', stats: '30m · S/–/– · 1d10+2 E · Pen 0 · Clip 30 · Reliable', desc: 'The Imperium’s workhorse sidearm. Weak, but it almost never jams and a charge pack lasts.' },
   'hand cannon': { kind: 'Pistol', stats: '35m · S/–/– · 1d10+4 I · Pen 2 · Clip 5', desc: 'A heavy solid-slug pistol. Hits hard, holds little, and is slow to reload.' },

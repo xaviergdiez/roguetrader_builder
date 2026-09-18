@@ -22,61 +22,57 @@
 // grants them while it is powered and worn, and folding +20 S into the sheet
 // would carry it into every unarmoured scene. Same reasoning as effects.js.
 
+import { rarer, acquisitionTarget } from './acquisition.js';
+
 const G = (grade, gelt, xp, effect) => ({ grade, gelt, xp, effect });
 
 /* ------------------------------ availability ------------------------------
-   Thrones are only half of a purchase: the other half is whether the item can
-   be found at all. Rogue Trader tests Profit Factor against the rating, so
-   the modifier is the useful part and the app can quote the target.
+   The ladder and the test itself live in acquisition.js — Profit Factor is
+   the currency in this system, and the Throne price is an input to that test
+   rather than a wallet. What is item knowledge, and so belongs here, is which
+   rating an entry carries and how a grade moves it.
 
    The two ratings the table states are Very Rare, for the Light Power Armour
    and the Good-grade Bionic Arm. The rest are graded to match: a Common
    bionic limb is stock at any decent void-station, a relic suit of Astartes
    plate is not for sale at any price. */
 
-export const AVAILABILITY = [
-  { rating: 'Ubiquitous', mod: 50 },
-  { rating: 'Abundant', mod: 30 },
-  { rating: 'Plentiful', mod: 20 },
-  { rating: 'Common', mod: 10 },
-  { rating: 'Average', mod: 0 },
-  { rating: 'Scarce', mod: -10 },
-  { rating: 'Rare', mod: -20 },
-  { rating: 'Very Rare', mod: -30 },
-  { rating: 'Extremely Rare', mod: -40 },
-  { rating: 'Near Unique', mod: -50 },
-  { rating: 'Unique', mod: -60 }
-];
+// A Good-grade article is a step rarer than the standard one, which is how
+// the table can price a Common arm at 500 Thrones and call the Good one Very
+// Rare. Because the rating already accounts for the grade, no separate
+// craftsmanship modifier is applied on top — that would charge twice.
+export function ratingFor(a, grade) {
+  const item = typeof a === 'string' ? augmeticById(a) : a;
+  // Nothing known about it, so nothing to step: an unknown id must not come
+  // back rarer than Average just because the caller asked for a Good one.
+  if (!item) return 'Average';
+  const base = item.availability || 'Average';
+  if (grade === 'Best') return rarer(base, 2);
+  if (grade === 'Good') return rarer(base, 1);
+  return base;
+}
 
-export const availabilityMod = (rating) => {
-  const hit = AVAILABILITY.find((a) => a.rating === rating);
-  return hit ? hit.mod : 0;
-};
-
-// The Acquisition test a purchase needs: Profit Factor, modified by how hard
-// the thing is to find. Quoted, never rolled here — whether the Expanse can
-// supply it is the GM's call, and scale and circumstance modify it further.
-export function acquisition(id, grade, { profitFactor = 0 } = {}) {
+// The Acquisition test for one entry at one grade: its rarity, its price
+// measured against the dynasty's means, and whether an institution will issue
+// what it will not sell.
+export function acquisitionFor(id, grade, { profitFactor = 0, careerId = null, modifier = 0 } = {}) {
   const a = augmeticById(id);
   if (!a) return null;
+  const g = gradeOf(id, grade);
   const rating = ratingFor(a, grade);
-  const mod = availabilityMod(rating);
-  return { rating, mod, target: Math.floor(Number(profitFactor) || 0) + mod };
+  return {
+    rating,
+    ...acquisitionTarget({
+      profitFactor,
+      availability: rating,
+      // Something with no price is not free — it is not for sale. Treated as
+      // the largest purchase there is, which is what a relic should be.
+      price: g.gelt == null ? Infinity : g.gelt,
+      standing: hasRequisition(id, { careerId }),
+      modifier
+    })
+  };
 }
-
-// A Good-grade article is harder to find than the standard one: one step up
-// the ladder, which is how the table can price a Common arm at 500 Thrones
-// and call the Good one Very Rare.
-function ratingFor(a, grade) {
-  const base = a.availability || 'Average';
-  if (grade !== 'Good' && grade !== 'Best') return base;
-  const i = AVAILABILITY.findIndex((x) => x.rating === base);
-  if (i === -1) return base;
-  const step = grade === 'Best' ? 2 : 1;
-  return AVAILABILITY[Math.min(AVAILABILITY.length - 1, i + step)].rating;
-}
-
-export { ratingFor };
 
 export const AUGMETICS = [
   /* ---- bionics and implants ---- */

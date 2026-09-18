@@ -9,9 +9,10 @@ import {
   LOCATIONS, DAMAGE_TYPES, hitLocation, locationById, resolveHit, furyTriggered
 } from './crits.js';
 import {
-  AUGMETICS, gradeOf, labelFor, costOf, freeUsedIn, STARTING_MAX, acquisition,
+  AUGMETICS, gradeOf, labelFor, costOf, freeUsedIn, STARTING_MAX, acquisitionFor,
   conditionalsFor as augConditionalsFor
 } from './augmetics.js';
+import { attempt as attemptAcquisition, describe as describeTarget } from './acquisition.js';
 import {
   EMPTY as EMPTY_PURSE, read as readPurse, balance as purseBalance,
   spent as purseSpent, grant as purseGrant, spend as purseSpend,
@@ -1782,6 +1783,8 @@ const CSS = `
 .rt-purse-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:8px;
   font-family:var(--mono);font-size:9px;letter-spacing:.16em;
   text-transform:uppercase;color:var(--dim);}
+.rt-purse-opt{padding:1px 5px;font-size:8px;letter-spacing:.14em;
+  color:var(--dim);border:1px solid var(--brass-dim);}
 .rt-purse-b{margin-left:auto;font-family:var(--display);font-size:18px;font-weight:600;
   letter-spacing:.04em;color:var(--gold-lit);}
 .rt-purse-b.over{color:var(--bad);}
@@ -4222,6 +4225,11 @@ function PursePanel({ purse, onGrant, onSpend, onRefund }) {
   const p = readPurse(purse);
   const left = purseBalance(p);
   const trimmed = label.trim();
+  // Thrones were the first pass at a currency and are kept as an opt-in
+  // ledger: Profit Factor is the system Rogue Trader actually uses, and the
+  // Throne prices now feed that test as Scale rather than draining a purse.
+  // Some tables still want the coin, and the prices are printed, so the
+  // ledger stays — silent until someone grants something.
 
   const record = () => {
     if (!trimmed) return;
@@ -4232,10 +4240,17 @@ function PursePanel({ purse, onGrant, onSpend, onRefund }) {
   return (
     <div className="rt-purse">
       <div className="rt-purse-h">
-        Throne Gelt
+        Throne ledger <span className="rt-purse-opt">optional</span>
         <span>{fmtThrones(p.thrones)} granted · {fmtThrones(purseSpent(p))} spent</span>
         <b className={'rt-purse-b' + (left < 0 ? ' over' : '')}>{fmtThrones(left)}</b>
       </div>
+      {!p.thrones && !p.spends.length && (
+        <p className="rt-aug-e">
+          Rogue Trader buys through Profit Factor, not coin — grant Thrones only
+          if your table wants a Dark Heresy-style purse alongside it. Leave it
+          at zero and the coin route stays out of the way.
+        </p>
+      )}
 
       <div className="rt-purse-r">
         <label className="rt-num">Granted
@@ -4279,6 +4294,7 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [],
   const dialogRef = useRef(null);
   const [grades, setGrades] = useState({});
   const [q, setQ] = useState('');
+  const [rolls, setRolls] = useState({});   // id -> the Acquisition attempt
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -4290,6 +4306,7 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [],
   const who = { careerId, originId, talents };
   const freeUsed = freeUsedIn(gear, who);
   const left = purseBalance(purse);
+  const purseGranted = readPurse(purse).thrones;
   const needle = q.trim().toLowerCase();
   const shown = AUGMETICS.filter((a) => !needle
     || (a.name + ' ' + a.stats + ' ' + a.access).toLowerCase().includes(needle));
@@ -4302,14 +4319,18 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [],
         <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
       </div>
       <p className="rt-vox-hint">
-        An Explorator, a Missionary, or anyone raised on a Forge World takes up
-        to {STARTING_MAX} implants as initial gear for nothing — {freeUsed} of{' '}
-        {STARTING_MAX} used. Anything else is either bought in Throne Gelt,
-        which draws on the purse and needs an Acquisition test at the quoted
-        target, or granted by the GM as an Elite Advance for XP. Training
-        talents are never bought with coin, so power armour charges its
-        training in XP whichever route the suit itself takes.
-        {' '}<b>{fmtThrones(left)} Thrones</b> in the purse.
+        Profit Factor is the currency: an Acquisition test against the
+        dynasty's means, where the Throne price sets the <b>Scale</b> of the
+        purchase rather than emptying a wallet — the same suit is a Major
+        purchase at Profit Factor 20 and a Standard one at 50. A significant
+        acquisition costs Profit Factor until the endeavour ends. Failing means
+        it is not to be had here, and when that changes is yours to say.
+        {' '}An Explorator, a Missionary, or anyone raised on a Forge World
+        takes up to {STARTING_MAX} implants as initial gear for nothing —{' '}
+        {freeUsed} of {STARTING_MAX} used. The XP route is the GM granting it
+        outright, no test. Training talents are always XP, whichever way the
+        suit itself arrives.
+        {left !== 0 && <> Coin ledger: <b>{fmtThrones(left)} Thrones</b>.</>}
       </p>
 
       <input className="rt-field" value={q} onChange={(e) => setQ(e.target.value)}
@@ -4330,8 +4351,17 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [],
                 const label = labelFor(a.id, grade);
                 const cost = costOf(a.id, grade, { ...who, freeUsed });
                 const owned = held.has(label.toLowerCase());
-                const acq = acquisition(a.id, grade, { profitFactor });
+                const acq = acquisitionFor(a.id, grade, { profitFactor, careerId });
                 const affordable = cost.gelt != null && canAfford(purse, cost.gelt);
+                const rolled = rolls[a.id];
+                const tryAcquire = () => {
+                  const roll = roll1d100();
+                  const res = attemptAcquisition(acq, roll);
+                  setRolls((p) => ({ ...p, [a.id]: { ...res, roll, target: acq.target } }));
+                  if (res.success) {
+                    onTake({ id: a.id, grade, label, cost, route: 'acquire', pfCost: res.pfCost });
+                  }
+                };
                 return (
                   <li key={a.id} className={'rt-aug' + (owned ? ' owned' : '')}>
                     <div className="rt-aug-h">
@@ -4342,8 +4372,9 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [],
                     </div>
                     <p className="rt-aug-s">{a.stats}</p>
                     <p className="rt-aug-av">
-                      {acq.rating} ({acq.mod}) · Acquisition target {acq.target}
-                      {' at Profit Factor '}{profitFactor}
+                      {acq.rating} · {acq.scale.name} scale · target{' '}
+                      <b>{acq.target}</b> = {describeTarget(acq)}
+                      {acq.pfCost > 0 && ' · costs ' + acq.pfCost + ' Profit Factor'}
                     </p>
                     <p className="rt-aug-a">{a.access}</p>
                     {a.grades.length > 1 && (
@@ -4370,26 +4401,50 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [],
                           onClick={() => onTake({ id: a.id, grade, label, cost, route: 'free' })}>
                           {owned ? 'On the sheet' : 'Take it'}
                         </button>
+                      ) : owned ? (
+                        <button className="rt-btn" disabled>On the sheet</button>
                       ) : (
                         <>
-                          {cost.gelt != null && (
-                            <button className="rt-btn" disabled={owned || !affordable}
-                              title={affordable ? undefined : 'Not enough Thrones in the purse'}
+                          {/* Rolling again after a refusal is what the rule
+                              forbids, so the button goes quiet until the
+                              dialog is reopened. */}
+                          <button className="rt-btn" disabled={rolled && !rolled.success}
+                            title={rolled && !rolled.success
+                              ? 'Not to be had here — reopen once circumstances change'
+                              : undefined}
+                            onClick={tryAcquire}>
+                            Acquire · {acq.target}
+                          </button>
+                          {/* The coin route only appears for tables that keep
+                              a Throne ledger — see PursePanel. */}
+                          {cost.gelt != null && purseGranted > 0 && (
+                            <button className="rt-btn ghost" disabled={!affordable}
+                              title={affordable ? undefined : 'Not enough Thrones in the ledger'}
                               onClick={() => onTake({ id: a.id, grade, label, cost, route: 'thrones' })}>
-                              {owned ? 'On the sheet' : 'Buy · ' + fmtThrones(cost.gelt)}
+                              Coin · {fmtThrones(cost.gelt)}
                             </button>
                           )}
-                          {/* Hidden rather than disabled once it is owned: a
-                              disabled button with no label is just a hole. */}
-                          {!owned && (
-                            <button className="rt-btn ghost"
-                              onClick={() => onTake({ id: a.id, grade, label, cost, route: 'xp' })}>
-                              Elite Advance · {cost.totalXp.toLocaleString()} XP
-                            </button>
-                          )}
+                          <button className="rt-btn ghost"
+                            onClick={() => onTake({ id: a.id, grade, label, cost, route: 'xp' })}>
+                            Elite Advance · {cost.totalXp.toLocaleString()} XP
+                          </button>
                         </>
                       )}
                     </div>
+
+                    {rolled && (
+                      <p className="rt-hitline">
+                        Acquisition d100 {rolled.roll} vs {rolled.target} —{' '}
+                        {rolled.success
+                          ? <b>acquired</b>
+                          : <i>not to be had here</i>}
+                        {rolled.automatic && ' · automatic'}
+                        {rolled.success && rolled.pfCost > 0
+                          && ' · −' + rolled.pfCost + ' Profit Factor until the endeavour ends'}
+                        {rolled.success && rolled.surplus > 0
+                          && ' · ' + rolled.surplus + ' surplus degrees to spend'}
+                      </p>
+                    )}
                   </li>
                 );
               })}
@@ -5052,11 +5107,17 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
   // against the Elite Advances — the one place off-table purchases are
   // counted. Power armour brings its training talent along as a second entry
   // so the talent shows up on the sheet as a talent, not as fine print.
-  const takeAugmetic = ({ id, grade, label, cost, route }) => {
+  const takeAugmetic = ({ id, grade, label, cost, route, pfCost = 0 }) => {
     onAddExtra('gear', label);
-    // Coin or XP, never both — but a training talent is always XP, because no
-    // amount of Thrones teaches anyone to walk in powered plate.
-    if (route === 'thrones') {
+    // One route pays for it, never two — but a training talent is always XP,
+    // because neither coin nor a dynasty's standing teaches anyone to walk in
+    // powered plate.
+    if (route === 'acquire') {
+      // Profit Factor is not spent like coin: a significant acquisition ties
+      // up the dynasty's credit until the endeavour ends, and the GM hands it
+      // back with the + control when it does.
+      if (pfCost) onProfit(-pfCost);
+    } else if (route === 'thrones') {
       onSpendThrones({ id: 'aug-' + id + '-' + grade, label, cost: cost.gelt });
     } else if (route === 'xp') {
       onAddEliteAdvance({ name: label, type: 'Trait', cost: cost.xp });

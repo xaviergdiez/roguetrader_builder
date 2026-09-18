@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import {
   AUGMETICS, augmeticById, gradeOf, labelFor, readLabel, conditionalsOf,
   conditionalsFor, isFreeFor, freeFor, freeUsedIn, costOf, STARTING_MAX,
-  AUGMETIC_GEAR, AVAILABILITY, availabilityMod, acquisition, hasRequisition
+  AUGMETIC_GEAR, acquisitionFor, ratingFor, hasRequisition
 } from './augmetics.js';
+import { AVAILABILITY, availabilityMod, STANDING } from './acquisition.js';
 import { gearInfo, GEAR } from './gear.js';
 
 /* ---- the catalogue ---- */
@@ -164,7 +165,7 @@ assert.equal(costOf('astartes-power-armour', 'Common', {}).gelt, null);
 assert.match(costOf('astartes-power-armour', 'Common', {}).geltNote, /relic/i);
 assert.equal(costOf('nonsense', 'Common', {}), null);
 
-/* ---- availability: Thrones are only half of a purchase ---- */
+/* ---- availability, and the Throne price as an Acquisition input ---- */
 
 // Every entry is findable somewhere on the ladder, or the dialog quotes a
 // modifier of 0 for something that should be all but unobtainable.
@@ -172,32 +173,46 @@ for (const a of AUGMETICS) {
   assert.ok(AVAILABILITY.some((x) => x.rating === a.availability),
     a.id + ' has no availability rating: ' + a.availability);
 }
-
-// The ladder itself: harder to find means a worse modifier, all the way down.
-for (let i = 1; i < AVAILABILITY.length; i++) {
-  assert.ok(AVAILABILITY[i].mod < AVAILABILITY[i - 1].mod, 'the ladder is out of order');
-}
 assert.equal(availabilityMod('Very Rare'), -30);
-assert.equal(availabilityMod('nonsense'), 0);
 
 // The two ratings the table states outright.
-assert.equal(acquisition('bionic-arm', 'Good', {}).rating, 'Very Rare');
-assert.equal(acquisition('light-power-armour', 'Common', {}).rating, 'Very Rare');
+assert.equal(ratingFor('bionic-arm', 'Good'), 'Very Rare');
+assert.equal(ratingFor('light-power-armour', 'Common'), 'Very Rare');
 
 // A Good article is a step rarer than the standard one, which is how the same
 // item is Rare at 500 Thrones and Very Rare at 1,500.
-assert.equal(acquisition('bionic-arm', 'Common', {}).rating, 'Rare');
-assert.equal(acquisition('bionic-arm', 'Common', {}).mod, -20);
+assert.equal(ratingFor('bionic-arm', 'Common'), 'Rare');
+assert.equal(ratingFor('astartes-power-armour', 'Best'), 'Unique', 'the bottom is the bottom');
+assert.equal(ratingFor('nonsense', 'Good'), 'Average');
 
-// The target is Profit Factor against that modifier.
-assert.equal(acquisition('bionic-arm', 'Good', { profitFactor: 40 }).target, 10);
-assert.equal(acquisition('bionic-arm', 'Good', { profitFactor: 0 }).target, -30);
-assert.equal(acquisition('astartes-power-armour', 'Common', { profitFactor: 40 }).target, -20,
-  'a relic stays out of reach however rich the dynasty is');
-assert.equal(acquisition('nonsense', 'Common', {}), null);
+// THE PRICE IS NOT A WALLET, it is the Scale of the test. The same suit is a
+// Major purchase for a modest dynasty and a Standard one for a rich one.
+{
+  const poor = acquisitionFor('light-power-armour', 'Common', { profitFactor: 20 });
+  assert.equal(poor.rating, 'Very Rare');
+  assert.equal(poor.scale.id, 'major');
+  assert.equal(poor.target, -20, '20 − 30 rarity − 10 scale: not on money alone');
+  assert.equal(poor.pfCost, 1);
 
-// The ladder cannot be stepped off the bottom.
-assert.equal(acquisition('astartes-power-armour', 'Best', {}).rating, 'Unique');
+  const rich = acquisitionFor('light-power-armour', 'Common', { profitFactor: 50 });
+  assert.equal(rich.scale.id, 'standard');
+  assert.equal(rich.target, 20, 'the campaign arc is the dynasty growing into it');
+  assert.equal(rich.pfCost, 0);
+}
+
+// A Common bionic arm is simply gettable; the Good one is a gamble.
+assert.equal(acquisitionFor('bionic-arm', 'Common', { profitFactor: 20 }).target, 20);
+assert.equal(acquisitionFor('bionic-arm', 'Good', { profitFactor: 20 }).target, 0);
+
+// Something with no price is not free — it is not for sale, and a relic stays
+// out of reach however rich the dynasty gets.
+{
+  const relic = acquisitionFor('astartes-power-armour', 'Common', { profitFactor: 80 });
+  assert.equal(relic.scale.id, 'vast');
+  assert.ok(relic.target < 0);
+  assert.equal(relic.pfCost, 2);
+}
+assert.equal(acquisitionFor('nonsense', 'Common', {}), null);
 
 /* ---- requisition: standing, not a discount ---- */
 
@@ -212,6 +227,16 @@ assert.equal(hasRequisition('light-power-armour', {}), false);
   assert.equal(c.free, false, 'a requisition route is not a free slot');
   assert.equal(c.gelt, 10000);
   assert.equal(c.totalXp, 500);
+}
+
+// And what the standing is actually worth: the door money could not open.
+{
+  const cold = acquisitionFor('light-power-armour', 'Common', { profitFactor: 20 });
+  const issued = acquisitionFor('light-power-armour', 'Common',
+    { profitFactor: 20, careerId: 'missionary' });
+  assert.equal(issued.target - cold.target, STANDING);
+  assert.equal(issued.target, 10, 'out of reach becomes a real roll');
+  assert.equal(issued.pfCost, 1, 'the Order issues it; the dynasty still carries the cost');
 }
 
 // The arm, however, is a starting option for a Missionary as the table has it.

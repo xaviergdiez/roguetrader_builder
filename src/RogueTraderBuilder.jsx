@@ -1224,6 +1224,27 @@ const CSS = `
   letter-spacing:.2em;margin-top:3px;}
 
 .rt-head-btns{margin-left:auto;flex:none;display:flex;gap:6px;align-items:center;}
+
+/* The burger only exists on phones — see the max-width:699px block. Four
+   header buttons are already 280px wide, and with the sigil and title the row
+   needs about 613px; a 390px phone has 362px. A psyker Explorator has six
+   buttons and needs 650. So below the tablet breakpoint the row becomes a
+   panel under the header instead of overflowing it. */
+.rt-burger{display:none;margin-left:auto;flex:none;width:40px;height:40px;
+  place-items:center;cursor:pointer;
+  border:1px solid var(--brass);color:var(--gold-lit);
+  background:linear-gradient(180deg,#2a2214,#14100a);
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);}
+.rt-burger:hover{filter:brightness(1.3);}
+.rt-burger span{display:block;width:17px;height:1.5px;margin:2.5px 0;
+  background:currentColor;transition:transform .16s,opacity .16s;}
+.rt-burger.open span:nth-child(1){transform:translateY(4px) rotate(45deg);}
+.rt-burger.open span:nth-child(2){opacity:0;}
+.rt-burger.open span:nth-child(3){transform:translateY(-4px) rotate(-45deg);}
+/* Marks which panels are live, so a closed BRIDGE code or an unread vox is
+   still visible with the row folded away. */
+.rt-burger.live{border-color:var(--gold-lit);
+  box-shadow:0 0 0 1px rgba(224,185,85,.35);}
 .rt-headbtn{flex:none;font-family:var(--mono);font-size:11px;letter-spacing:.16em;
   padding:9px 13px;cursor:pointer;
   border:1px solid var(--brass);color:var(--gold-lit);
@@ -2246,6 +2267,18 @@ const CSS = `
    whatever height the gauges came to — measured 112x307, a strip. An earlier
    pass asked for that full-height column; stacking replaces it. */
 @media (max-width:699px){
+  /* the header row folds into a panel under the header */
+  .rt-burger{display:grid;}
+  .rt-head-btns{display:none;position:absolute;left:0;right:0;top:100%;
+    flex-direction:column;align-items:stretch;gap:5px;margin:0;
+    padding:9px 14px calc(11px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg,#101a14,#0d1611);
+    border-bottom:1px solid var(--brass-dim);
+    box-shadow:0 14px 30px -14px #000;}
+  .rt-head-btns.open{display:flex;}
+  .rt-head-btns.open .rt-headbtn,
+  .rt-head-btns.open .rt-voxbtn{width:100%;padding:13px;font-size:12px;}
+
   .rt-idcard{flex-direction:column;align-items:center;gap:13px;}
   .rt-portrait-wrap{width:min(236px,64vw);}
   /* flex:none so the frame follows the image instead of the row height, and a
@@ -2541,6 +2574,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [charId, setCharId] = useState(null);  // null = unsaved sheet
   const [rosterOpen, setRosterOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);   // the phone header panel
   const [psyOpen, setPsyOpen] = useState(false);
   const [rosterErr, setRosterErr] = useState('');
   const [rosterNote, setRosterNote] = useState('');   // success, not a failure
@@ -2767,6 +2801,24 @@ export default function RogueTraderBuilder({ me, cloud }) {
     setAvatar(null); setExtras(EMPTY_EXTRAS);
     setStepIx(0);
   };
+
+  // The phone header panel overlays the page, so it has to be dismissable
+  // without picking something from it.
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const away = (e) => {
+      if (!e.target.closest('.rt-head-btns') && !e.target.closest('.rt-burger')) {
+        setMenuOpen(false);
+      }
+    };
+    const key = (e) => { if (e.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('pointerdown', away);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('pointerdown', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [menuOpen]);
 
   /* ---- homebrew library: per account when signed in, per browser otherwise ---- */
 
@@ -3064,7 +3116,19 @@ export default function RogueTraderBuilder({ me, cloud }) {
             <h1 className="rt-title">Origin Path Cogitator</h1>
             <div className="rt-sub">ROGUE TRADER / KORONUS EXPANSE</div>
           </div>
-          <div className="rt-head-btns">
+          <button className={'rt-burger' + (menuOpen ? ' open' : '')
+              + (bridgeCode || vox.speaking ? ' live' : '')}
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-expanded={menuOpen} aria-controls="rt-headnav"
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}>
+            <span /><span /><span />
+          </button>
+
+          {/* One handler for the whole row: any button in it bubbles up here
+              and closes the panel, so opening a dialog does not leave the menu
+              hanging over it. */}
+          <div id="rt-headnav" className={'rt-head-btns' + (menuOpen ? ' open' : '')}
+            onClick={() => setMenuOpen(false)}>
             <button className="rt-headbtn" onClick={() => setRosterOpen(true)}>ROSTER</button>
             <button className="rt-headbtn ship" onClick={() => setShipOpen(true)}
               title="Voidship blueprint: hull, components, and your station">SHIP</button>

@@ -130,7 +130,47 @@ export const GEAR = {
   'pulse carbine': { avail: 'Extremely Rare', kind: 'Basic', stats: '60m · S/2/4 · 2d10+4 E · Pen 4 · Clip 24 · Reliable', desc: 'A shorter pulse weapon for mobile troops. Sacrifices range for rate of fire and easier handling.' },
   'pulse pistol': { avail: 'Extremely Rare', kind: 'Pistol', stats: '30m · S/2/– · 2d10+2 E · Pen 4 · Clip 12 · Reliable', desc: 'A compact pulse weapon for officers and frontline specialists.' },
   'bonding knife': { avail: 'Extremely Rare', kind: 'Melee', stats: '1d5 R · Pen 0 · Primitive', desc: "A ritual blade carried by bonded Fire Caste warriors. Worn as a mark of honour and used only in extremis." },
-  'markerlight': { avail: 'Extremely Rare', desc: "A target designator that paints enemies with a tracking beam. Other T'au weapons guided by the beam gain significant accuracy bonuses." }
+  'markerlight': { avail: 'Extremely Rare', desc: "A target designator that paints enemies with a tracking beam. Other T'au weapons guided by the beam gain significant accuracy bonuses." },
+
+  /* ---- low-tech & Inquisitorial gear (Dark Heresy) ----
+     Priced in the same Throne-price source Rogue Trader's own catalogue is
+     summarised from, but no Throne figure is carried here: this app keeps no
+     wallet on the sheet, so only the Availability rating that feeds the
+     Acquisition test in acquisition.js survives the conversion — see its own
+     "PROFIT FACTOR IS THE CURRENCY" note for why. */
+  'flintlock pistol': { avail: 'Plentiful', kind: 'Pistol', stats: '15m · S/–/– · 1d10+2 I · Pen 0 · Clip 1 · Inaccurate, Primitive, Unreliable', desc: 'A muzzle-loading antique, one shot and a slow reload. Carried where a modern weapon would draw the wrong attention.' },
+  'stub revolver': { avail: 'Plentiful', kind: 'Pistol', stats: '30m · S/–/– · 1d10+3 I · Pen 0 · Clip 6 · Reliable', desc: 'A break-action solid-slug revolver. Unglamorous, and almost impossible to make jam.' },
+  'autopistol': { avail: 'Average', kind: 'Pistol', stats: '30m · S/–/6 · 1d10+2 I · Pen 0 · Clip 18', desc: 'A compact automatic sidearm, standard issue where a lasgun would be too conspicuous to carry.' },
+  'hand flamer': { avail: 'Rare', kind: 'Pistol', stats: '10m · S/–/– · 1d10+4 E · Pen 2 · Clip 2 · Flame', desc: 'A stub-nosed promethium sidearm. Close, brutal, and entirely indiscriminate about what catches fire.' },
+  'autogun': { avail: 'Average', kind: 'Basic', stats: '90m · S/3/10 · 1d10+3 I · Pen 0 · Clip 30', desc: 'A solid-slug automatic rifle. Cheaper and louder than a lasgun, and just as common in a hive militia armoury.' },
+  'shotgun': { avail: 'Common', kind: 'Basic', stats: '30m · S/–/– · 1d10+4 I · Pen 0 · Clip 8 · Scatter', desc: 'A pump-action close-range weapon. Forgiving of a bad shot, unforgiving of anything it actually hits.' },
+  'long las': { avail: 'Scarce', kind: 'Basic', stats: '150m · S/–/– · 1d10+4 E · Pen 1 · Clip 40 · Accurate, Reliable', desc: 'A lasgun rebuilt for range and a long optical sight. The Guard’s answer to a sniper’s rifle.' },
+  'plasma gun': { avail: 'Very Rare', kind: 'Basic', stats: '90m · S/2/– · 1d10+6 E · Pen 6 · Clip 40 · Overheats', desc: 'Bottled starfire scaled up to a two-handed weapon. Devastating, and always one bad roll from venting into the wielder’s hands.' },
+  'meltagun': { avail: 'Very Rare', kind: 'Basic', stats: '20m · S/–/– · 2d10+4 E · Pen 12', desc: 'A short-ranged thermal weapon that reduces its target to vapour and slag. Nothing survives being caught inside its cone.' },
+  'heavy stubber': { avail: 'Rare', kind: 'Heavy', stats: '120m · –/–/10 · 1d10+4 I · Pen 3 · Clip 75', desc: 'A belt-fed automatic weapon, crew-served or tripod-mounted. Volume of fire over precision, every time.' },
+  'heavy bolter': { avail: 'Very Rare', kind: 'Heavy', stats: '120m · –/–/6 · 1d10+8 X · Pen 5 · Clip 60 · Tearing', desc: 'A tripod-mounted bolter scaled up to squad-suppression fire. Each round is a small explosive shell in its own right.' },
+  'knife': { avail: 'Plentiful', kind: 'Melee', stats: '1d5 R · Pen 0 · Primitive', desc: 'A plain blade. Concealable, deniable, and always within reach.' },
+  'sword': { avail: 'Common', kind: 'Melee', stats: '1d8+1 R · Pen 0 · Primitive, Balanced', desc: 'An honest steel blade, no monomolecular edge or power field to speak of.' },
+  'great weapon': { avail: 'Average', kind: 'Melee', stats: '2d10 R · Pen 0 · Primitive, Unwieldy', desc: 'An oversized two-handed blade or axe. Slow to bring to bear, and devastating when it lands.' },
+  'chainaxe': { avail: 'Scarce', kind: 'Melee', stats: '1d10+4 R · Pen 2 · Tearing', desc: 'A motorised axe blade, heavier and crueller than its sword cousin.' },
+  'power fist': { avail: 'Extremely Rare', kind: 'Melee', stats: '2d10 E · Pen 8 · Power Field, Unwieldy', desc: 'A disruption field wrapped around a hydraulic gauntlet. Slow, and capable of crushing a bulkhead.' },
+  'thunder hammer': { avail: 'Extremely Rare', kind: 'Melee', stats: '2d10+4 E · Pen 10 · Power Field, Shocking, Unwieldy', desc: 'A war-hammer sheathed in disruptive energies, heavy enough to level a wall and leave the target convulsing.' },
+  'shock maul': { avail: 'Scarce', kind: 'Melee', stats: '1d10 I · Pen 0 · Shocking', desc: 'An Arbites baton wired for a stunning discharge. Meant to subdue, not to kill.' },
+  'heavy leathers': { avail: 'Plentiful', kind: 'Armour', stats: 'AP 1 · arms, body, legs', desc: 'Thick, cured hide. Barely armour at all, but better than the clothes underneath.' },
+  'grox-hide vest': { avail: 'Common', kind: 'Armour', stats: 'AP 2 · body', desc: 'A stiff hide vest, tanned from void-grazing grox. Cheap, durable, and smells like it.' },
+  'flak helmet': { avail: 'Average', kind: 'Armour', stats: 'AP 2 · head', desc: 'A basic ablative helmet, usually the first piece of a flak kit anyone actually wears.' },
+  'flak cloak': { avail: 'Rare', kind: 'Armour', stats: 'AP 3 · arms, body, legs', desc: 'A hooded flak cloak, worn loose enough to pass for civilian dress at a glance.' },
+  'flak vest': { avail: 'Average', kind: 'Armour', stats: 'AP 3 · body', desc: 'A sleeveless flak jacket over the torso alone — mobility over full coverage.' },
+  'mesh vest': { avail: 'Rare', kind: 'Armour', stats: 'AP 4 · body', desc: 'Fine metal mesh worn under clothing. Protective and, worn right, entirely invisible.' },
+  'carapace chestplate': { avail: 'Rare', kind: 'Armour', stats: 'AP 6 · body', desc: 'A single rigid carapace plate over the torso, without the rest of a full suit’s weight or expense.' },
+  'power armour': { avail: 'Extremely Rare', kind: 'Armour', stats: 'AP 8 · all', desc: 'Powered ceramite plate, sealed and servo-assisted. Rarely issued, and never without a reason.' },
+  'auspex': { avail: 'Scarce', desc: 'A hand-held scanner. Grants a bonus to Awareness Tests made to detect hidden threats, gas or radiation.' },
+  'clip harness': { avail: 'Common', desc: 'A grapnel line and drop harness. Grants a bonus to Climb Tests and arrests a fall before it becomes fatal.' },
+  'glow-globe': { avail: 'Plentiful', desc: 'A portable light source, throwing a wide, steady glow for hours on a single charge.' },
+  'las-cutter': { avail: 'Average', kind: 'Melee', stats: '1d10+5 E · Pen 4 · Unwieldy', desc: 'A heavy industrial cutting tool, slow but capable of parting armour plate — and, in a pinch, an improvised weapon.' },
+  'magnoculars': { avail: 'Average', desc: 'High-powered optics with range-finding readouts, good for scouting a target at distance.' },
+  'photo-visor': { avail: 'Scarce', desc: 'Advanced low-light opticals that erase the penalties of fighting in darkness.' },
+  'stimm': { avail: 'Rare', desc: 'A combat stimulant. Masks Fatigue, Stun and injury for a short, violent while — with a debt of Fatigue due when it wears off.' }
 };
 
 export const QUALITY_RE = /^(poor|common|good|best)\s+/i;

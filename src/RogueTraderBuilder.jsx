@@ -4,6 +4,7 @@ import { readRoster, writeRoster, upsert, remove as removeChar, newId,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
 import { parseGear, gearInfo, CRAFT, GEAR, availabilityOf } from './gear.js';
 import { woundState, applyDamage, adjustMax } from './wounds.js';
+import { movementFor } from './movement.js';
 import { roll1d100, resolveTest, DIFFICULTIES } from './dice.js';
 import {
   LOCATIONS, DAMAGE_TYPES, hitLocation, locationById, resolveHit, furyTriggered
@@ -1868,6 +1869,13 @@ const CSS = `
   color:var(--gold-lit);text-shadow:0 0 18px rgba(224,185,85,.35);}
 .rt-der-k{font-family:var(--mono);font-size:9px;color:var(--brass-lit);
   letter-spacing:.16em;margin-top:3px;opacity:.8;}
+
+/* Half/Full/Charge/Run/Leap/Jump, one row of six — too many for the default
+   single-stat .rt-der layout, so this overrides it to a flex row instead. */
+.rt-move{display:flex;justify-content:space-between;gap:4px;}
+.rt-move-i{flex:1 1 0;min-width:0;}
+.rt-move-i .rt-der-v{font-size:16px;}
+.rt-move-i .rt-der-k{font-size:8px;letter-spacing:.08em;}
 
 /* ------------------------------ BUTTONS ------------------------------ */
 
@@ -5189,6 +5197,8 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
   const eliteTraits = ofEliteType('Trait');
   const eliteSpent = extras.eliteAdvances.reduce((n, a) => n + (a.cost || 0), 0);
 
+  const move = totals ? movementFor(Math.floor(totals.ag / 10)) : null;
+
   const charRank = rankForXp(xp);
   const careerAdvances = allAdvances(career ? career.name : '');
   // Each characteristic's tier (and so cost) depends on the career, so a sold
@@ -5342,6 +5352,23 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
               <div className="rt-der-k top">TALENTS</div>
               <div className="rt-der-v">{allTalents.length}</div>
             </div>
+            {move && (
+              /* Derived from Agility Bonus alone — see movement.js. Its own
+                 full-width row, same as the Psy Rating one below, since six
+                 values do not fit a 3-column tile. */
+              <div className="rt-der wide rt-move">
+                {[
+                  ['HALF', move.halfMove], ['FULL', move.fullMove], ['CHARGE', move.charge],
+                  ['RUN', move.run], ['LEAP', move.leap], ['JUMP', move.jump]
+                ].map(([label, val]) => (
+                  <div className="rt-move-i" key={label}>
+                    <div className="rt-der-v">{val}</div>
+                    <div className="rt-der-k">{label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* XP is a running campaign total, so it gets steppers rather than
                 a field you have to select and retype. */}
             <div className="rt-xpgauge">

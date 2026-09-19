@@ -470,6 +470,32 @@ for (const a of EXTENDED_ACTIONS) {
   assert.equal(r.unknown, true);
 }
 
+/* ---- the Poisoned Chalice: corruption and faction standing are signed ---- */
+
+{
+  // starts at 0 and worsens
+  assert.deepEqual(applyEvent({}, { id: 'corruption_surge', amount: 15 }).patch, { corruption: 15 });
+  // negative is a purge, unlike every damage-style event above which clamps
+  // a negative amount to zero and does nothing
+  assert.deepEqual(applyEvent({ corruption: 40 }, { id: 'corruption_surge', amount: -25 }).patch,
+    { corruption: 15 });
+  // still cannot run past its ends
+  assert.deepEqual(applyEvent({ corruption: 95 }, { id: 'corruption_surge', amount: 50 }).patch,
+    { corruption: 100 });
+  assert.deepEqual(applyEvent({ corruption: 5 }, { id: 'corruption_surge', amount: -50 }).patch,
+    { corruption: 0 });
+
+  // faction standing starts at 50 (neutral), each faction its own field
+  assert.deepEqual(applyEvent({}, { id: 'rep_inquisition', amount: 10 }).patch, { repInquisition: 60 });
+  assert.deepEqual(applyEvent({ repMechanicus: 70 }, { id: 'rep_mechanicus', amount: -30 }).patch,
+    { repMechanicus: 40 });
+  assert.deepEqual(applyEvent({}, { id: 'rep_navy', amount: -5 }).patch, { repNavy: 45 });
+  assert.deepEqual(applyEvent({}, { id: 'rep_coldtrade', amount: 0 }).patch, { repColdTrade: 50 });
+  // the four factions do not share state
+  const shift = applyEvent({ repInquisition: 60, repNavy: 60 }, { id: 'rep_navy', amount: -10 }).patch;
+  assert.deepEqual(shift, { repNavy: 50 });
+}
+
 /* ---- damage control, and fires that were not put out ---- */
 
 {

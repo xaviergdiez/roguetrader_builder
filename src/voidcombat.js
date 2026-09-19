@@ -675,6 +675,31 @@ export function applyEvent(state, event) {
       if (Number.isFinite(Number(e.power))) patch.power = Number(e.power);
       break;
 
+    // Signed, unlike every event above: positive worsens/gains, negative
+    // purges/loses, so `e.amount` is read directly rather than through the
+    // clamped-non-negative `amount` this switch shares. A GM typing -12
+    // means "twelve points of ground given back", not "twelve points of
+    // ground given back, clamped to zero and silently doing nothing".
+    case 'corruption_surge':
+      patch.corruption = clamp100(vital(s.corruption, 0) + (Math.floor(Number(e.amount) || 0)));
+      break;
+
+    case 'rep_inquisition':
+      patch.repInquisition = clamp100(vital(s.repInquisition, 50) + Math.floor(Number(e.amount) || 0));
+      break;
+
+    case 'rep_mechanicus':
+      patch.repMechanicus = clamp100(vital(s.repMechanicus, 50) + Math.floor(Number(e.amount) || 0));
+      break;
+
+    case 'rep_navy':
+      patch.repNavy = clamp100(vital(s.repNavy, 50) + Math.floor(Number(e.amount) || 0));
+      break;
+
+    case 'rep_coldtrade':
+      patch.repColdTrade = clamp100(vital(s.repColdTrade, 50) + Math.floor(Number(e.amount) || 0));
+      break;
+
     case 'advance_phase':
       patch.phase = nextPhase(s.phase);
       break;

@@ -456,13 +456,18 @@ export function stats(bp, vitals) {
   };
 }
 
-// Starting vitals for a finished blueprint.
+// Starting vitals for a finished blueprint. corruption and the faction
+// standings are not hull-derived — they track the campaign, not the ship —
+// but are seeded here too, so a freshly-built ship shows 0/50 rather than a
+// blank dash before the GM has ever touched them.
 export function newVitals(bp) {
   const s = stats(bp);
   const hull = hullById(bp && bp.hullId, bp);
   return {
     population: 100,
     morale: s ? s.maxMorale : 100,
-    hullIntegrity: hull ? hull.hullIntegrity : 0
+    hullIntegrity: hull ? hull.hullIntegrity : 0,
+    corruption: 0,
+    repInquisition: 50, repMechanicus: 50, repNavy: 50, repColdTrade: 50
   };
 }

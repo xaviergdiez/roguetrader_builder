@@ -253,6 +253,13 @@ assert.deepEqual(validate({}).errors, ['No hull chosen.']);
   assert.equal(v.population, 100);
   assert.equal(v.morale, 100);
   assert.equal(v.hullIntegrity, 60, 'the Dauntless hull integrity');
+  // campaign-tracking vitals, not hull-derived, but still seeded so a fresh
+  // ship shows a real number rather than a blank dash
+  assert.equal(v.corruption, 0);
+  assert.equal(v.repInquisition, 50);
+  assert.equal(v.repMechanicus, 50);
+  assert.equal(v.repNavy, 50);
+  assert.equal(v.repColdTrade, 50);
 }
 
 /* ---- the sums ignore what is not installed ---- */

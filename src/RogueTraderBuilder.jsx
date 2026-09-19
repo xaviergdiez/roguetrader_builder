@@ -1502,6 +1502,9 @@ const CSS = `
   margin-top:5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;
   color:var(--dim);}
 .rt-gmvitals b{color:var(--green);font-size:12px;}
+/* Corruption reads as a warning past three-quarters, the same threshold
+   Population uses for its own manoeuvre penalty in ship.js. */
+.rt-corrhot b{color:var(--crimson) !important;}
 .rt-crewchars{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;
   color:var(--green);margin:3px 0;}
 /* The two the GM reaches for, marked so they are findable at a glance in a
@@ -6248,6 +6251,19 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                 <span>MORALE <b>{ship.vitals.morale ?? '—'}</b></span>
                 <span>POP <b>{ship.vitals.population ?? '—'}</b></span>
                 <span>PHASE <b>{PHASE_LABELS[ship.combat?.phase] || '—'}</b></span>
+                <span className={(ship.vitals.corruption ?? 0) >= 75 ? 'rt-corrhot' : ''}>
+                  CORRUPTION <b>{ship.vitals.corruption ?? 0}</b>
+                </span>
+              </div>
+
+              {/* Read-only here — only the GM's dashboard can move these, via
+                  the Inquisition/Mechanicus/Navy/Cold Trade standing events. */}
+              <div className="rt-conds-h">Dynasty standing</div>
+              <div className="rt-gmvitals rt-bridgevitals">
+                <span>INQUISITION <b>{ship.vitals.repInquisition ?? 50}</b></span>
+                <span>MECHANICUS <b>{ship.vitals.repMechanicus ?? 50}</b></span>
+                <span>NAVY <b>{ship.vitals.repNavy ?? 50}</b></span>
+                <span>COLD TRADE <b>{ship.vitals.repColdTrade ?? 50}</b></span>
               </div>
             </>
           )}
@@ -6746,6 +6762,9 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                 <span>TUR <b>{p.turretRating}</b></span>
                 <span>MOR <b>{v.morale ?? 100}</b></span>
                 <span>POP <b>{v.population ?? 100}</b></span>
+                <span className={(v.corruption ?? 0) >= 75 ? 'rt-corrhot' : ''}>
+                  CORR <b>{v.corruption ?? 0}</b>
+                </span>
                 {!s.player && (
                   <label className="rt-gmevade">
                     <input type="checkbox" checked={s.evadingDoS != null}
@@ -6854,7 +6873,12 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
             })}
           </select>
         </label>
-        <label><span className="rt-der-k">Amount</span>{num(eventAmount, setEventAmount)}</label>
+        <label><span className="rt-der-k">Amount</span>
+          {/* Negative is meaningless to the damage-style events (they clamp
+              it to zero internally) but is how a purge, an exorcism, or a
+              faction losing favour is expressed for the signed ones below. */}
+          {num(eventAmount, setEventAmount, { min: -100 })}
+        </label>
       </div>
       <div className="rt-btnrow">
         <button className="rt-btn" onClick={emit}>Emit</button>

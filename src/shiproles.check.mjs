@@ -138,7 +138,8 @@ assert.equal(can(null, 'selfDestruct', { isGm: true }), false);
 
 // No station owns the GM-only fields — not even the Lord-Captain's override.
 // The Captain commands the ship; they do not author the encounter.
-assert.deepEqual(GM_ONLY_FIELDS, ['phase', 'enemies']);
+assert.deepEqual(GM_ONLY_FIELDS,
+  ['phase', 'enemies', 'corruption', 'repInquisition', 'repMechanicus', 'repNavy', 'repColdTrade']);
 for (const f of GM_ONLY_FIELDS) {
   assert.equal(can('lordcaptain', f), false, 'captain must not write ' + f);
   assert.equal(can(null, f, { isGm: true }), true);
@@ -160,6 +161,13 @@ for (const e of GM_EVENTS) {
 }
 assert.equal(eventById('warp_storm').name, 'Warp storm');
 assert.equal(eventById('nope'), null);
+
+// the Poisoned Chalice additions: GM-only, like phase/enemies
+assert.deepEqual(eventById('corruption_surge').writes, ['corruption']);
+for (const id of ['rep_inquisition', 'rep_mechanicus', 'rep_navy', 'rep_coldtrade']) {
+  assert.ok(eventById(id), id);
+  assert.equal(can('lordcaptain', eventById(id).writes[0]), false, id + ' is GM-only');
+}
 
 assert.equal(canTriggerEvent('fire', true), true);
 // The Enginseer owns `fires` and still cannot start one: owning the field is

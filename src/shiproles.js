@@ -37,6 +37,14 @@ export const SHIP_FIELDS = [
   // Two buffs in the same second would see the last one win. Fine for five
   // people taking turns; if it ever matters, move to per-key writes.
   'diceModifiers',
+  // Warp Bleed: how deep the ship's own cogitators have been compromised by
+  // whatever corrupted or xenos system a character keeps drawing on. 0-100,
+  // rises rather than falls under normal play — see GM_EVENTS.
+  'corruption',
+  // Dynasty standing with the four factions The Poisoned Chalice entangles
+  // the crew with. 0-100, centred on 50 (neutral) rather than 0, since a
+  // dynasty starts known to these factions, not unknown.
+  'repInquisition', 'repMechanicus', 'repNavy', 'repColdTrade',
   // GM-only: no station owns these
   'phase', 'enemies'
 ];
@@ -174,6 +182,19 @@ export const GM_EVENTS = [
     'Attrition through the lower decks.'),
   E('component_damage', 'Component damaged', ['componentStatus', 'power'],
     'Takes a system offline until repaired.'),
+  // Signed, unlike the events above: positive worsens/gains, negative
+  // purges/loses. The Amount field's floor is unlocked to match — see
+  // the "min: -100" passed to num() where this event is triggered.
+  E('corruption_surge', 'Warp Bleed / Corruption', ['corruption'],
+    'Positive deepens the taint, negative is a purge or exorcism.'),
+  E('rep_inquisition', 'Inquisition standing', ['repInquisition'],
+    'Positive gains favour, negative draws scrutiny.'),
+  E('rep_mechanicus', 'Adeptus Mechanicus standing', ['repMechanicus'],
+    'Positive gains favour, negative draws a tech-heresy audit.'),
+  E('rep_navy', 'Imperial Navy standing', ['repNavy'],
+    'Positive gains favour, negative draws suspicion.'),
+  E('rep_coldtrade', 'Cold Trade standing', ['repColdTrade'],
+    'Positive gains favour, negative sours a deal.'),
   E('advance_phase', 'Advance the phase', ['phase'],
     'Command & Engineering, then Manoeuvre, then Shooting.'),
   E('enemy_update', 'Enemy ships', ['enemies'],
@@ -191,7 +212,12 @@ export const canTriggerEvent = (eventId, isGm) => Boolean(isGm) && Boolean(event
 // Declared above `can` rather than below it: a const read during module
 // evaluation from a position above its declaration is a TDZ error, and this
 // project has already had one of those blank every screen.
-export const GM_ONLY_FIELDS = ['phase', 'enemies'];
+// Corruption and faction standing join phase/enemies here rather than being
+// owned by a station: they are the GM's read on the campaign, not something
+// any one department's roll should be able to move.
+export const GM_ONLY_FIELDS = [
+  'phase', 'enemies', 'corruption', 'repInquisition', 'repMechanicus', 'repNavy', 'repColdTrade'
+];
 
 // May this actor write this field?
 //

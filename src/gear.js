@@ -42,6 +42,8 @@ export const GEAR = {
   'power sword': { avail: 'Very Rare', kind: 'Melee', stats: '1d10+5 E · Pen 5 · Balanced, Power Field', desc: 'A disruption field sheathes the blade, parting armour like cloth. A mark of real status.' },
   'power axe': { avail: 'Very Rare', kind: 'Melee', stats: '1d10+7 E · Pen 7 · Unbalanced, Power Field', desc: 'All of the power sword’s ferocity, none of its finesse. Heavy and hard to recover.' },
   'chainsword': { avail: 'Rare', kind: 'Melee', stats: '1d10+2 R · Pen 2 · Balanced, Tearing', desc: 'Motorised teeth on a sword blade. As much a terror weapon as a practical one.' },
+  'force sword': { avail: 'Very Rare', kind: 'Melee', stats: '1d10+3 E · Pen 3 · Balanced, Force', desc: 'A psycrystalline blade that a psyker can charge with their own Willpower, turning a hit into a blast of raw warp energy.' },
+  'force staff': { avail: 'Very Rare', kind: 'Melee', stats: '1d10+3 I · Pen 0 · Balanced, Force', desc: 'A psy-focus and a weapon in one shaft — the traditional arm of an Astropath or sanctioned psyker.' },
   'shock staff': { avail: 'Rare', kind: 'Melee', stats: '1d10+3 I · Pen 0 · Shocking', desc: 'A staff that delivers a stunning discharge — favoured where a corpse is the wrong outcome.' },
   'metal staff': { avail: 'Plentiful', kind: 'Melee', stats: '1d10+2 I · Pen 0 · Primitive', desc: 'A plain metal staff. A badge of office that also works as a club.' },
   'staff': { avail: 'Abundant', kind: 'Melee', stats: '1d10 I · Pen 0 · Primitive, Balanced', desc: 'A length of wood or metal. Ubiquitous, unremarkable, always to hand.' },

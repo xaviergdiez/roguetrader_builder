@@ -1503,8 +1503,10 @@ const CSS = `
   color:var(--dim);}
 .rt-gmvitals b{color:var(--green);font-size:12px;}
 /* Corruption reads as a warning past three-quarters, the same threshold
-   Population uses for its own manoeuvre penalty in ship.js. */
-.rt-corrhot b{color:var(--crimson) !important;}
+   Population uses for its own manoeuvre penalty in ship.js. Shared by the
+   ship vitals strip (a <b>) and the character Corruption/Insanity gauges
+   (a .rt-der-v div), so both selectors are listed. */
+.rt-corrhot b,.rt-corrhot .rt-der-v{color:var(--crimson) !important;}
 .rt-crewchars{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;
   color:var(--green);margin:3px 0;}
 /* The two the GM reaches for, marked so they are findable at a glance in a
@@ -2550,6 +2552,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // absolutes, so changing the origin path still flows through.
   const [fateAdj, setFateAdj] = useState(0);
   const [profitAdj, setProfitAdj] = useState(0);
+  // Corruption and Insanity Points accrue from warp exposure, horror and
+  // xenos influence over a campaign. The origin path only ever notes a
+  // one-off die roll ("1d5 Insanity Points") for the player to add in by
+  // hand — there is no other running total to derive these from.
+  const [corruption, setCorruption] = useState(0);
+  const [insanity, setInsanity] = useState(0);
   // XP spent before this sheet existed. The app only knows about advances
   // bought through its own Advances tab, so a character created elsewhere —
   // every premade, and any starting Explorer who used their 500 at creation —
@@ -2619,6 +2627,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         setRolls(s.rolls || null); setWoundRoll(s.woundRoll ?? null); setFateRoll(s.fateRoll ?? null);
         setDamage(s.damage || 0); setWoundBonus(s.woundBonus || 0);
         setFateAdj(s.fateAdj || 0); setProfitAdj(s.profitAdj || 0);
+        setCorruption(s.corruption || 0); setInsanity(s.insanity || 0);
         setSpentAdj(s.spentAdj || 0);
         setFinalTotals(s.finalTotals || null);
         setFinalWounds(s.finalWounds ?? null); setFinalFate(s.finalFate ?? null);
@@ -2647,14 +2656,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
       try {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-          fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
+          fateAdj, profitAdj, corruption, insanity, spentAdj, psyRating, xp, stepIx,
           finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
     return () => clearTimeout(t);
   }, [name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-      fateAdj, profitAdj, spentAdj, psyRating, xp, stepIx,
+      fateAdj, profitAdj, corruption, insanity, spentAdj, psyRating, xp, stepIx,
       finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode, loaded]);
 
   /* ---- aggregation ---- */
@@ -2794,7 +2803,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
     if (typeof s.xp === 'number') setXp(s.xp);
     setAvatar(s.avatar && s.avatar.src ? { src: s.avatar.src, framing: DEFAULT_FRAMING } : null);
     setExtras(readExtras(s.extras));
-    setFateAdj(0); setProfitAdj(0); setSpentAdj(0);
+    setFateAdj(0); setProfitAdj(0);
+    setCorruption(s.corruption || 0); setInsanity(s.insanity || 0);
+    setSpentAdj(0);
     setCharId(null);
     setStepIx(7);
   };
@@ -2814,7 +2825,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const clearAll = () => {
     setName(''); setGender(''); setBackground(''); setSel({}); setChoices({}); setRolls(null); setWoundRoll(null); setFateRoll(null);
     setDamage(0); setWoundBonus(0);
-    setFateAdj(0); setProfitAdj(0); setSpentAdj(0);
+    setFateAdj(0); setProfitAdj(0); setCorruption(0); setInsanity(0); setSpentAdj(0);
     setFinalTotals(null); setFinalWounds(null); setFinalFate(null); setPointAlloc(null);
     setPsyRating(0); setXp(STARTING_XP_DEFAULT);
     setAvatar(null); setExtras(EMPTY_EXTRAS);
@@ -2937,7 +2948,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         updatedAt: Date.now(),
         state: { name, gender, background, blueprint, shipRole,
                  sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
-                 fateAdj, profitAdj, spentAdj, psyRating, xp,
+                 fateAdj, profitAdj, corruption, insanity, spentAdj, psyRating, xp,
                  finalTotals, finalWounds, finalFate, pointAlloc }
       });
       setRoster((prev) => upsert(prev, meta));
@@ -2980,6 +2991,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
     setWoundBonus(s.woundBonus || 0);
     setFateAdj(s.fateAdj || 0);
     setProfitAdj(s.profitAdj || 0);
+    setCorruption(s.corruption || 0);
+    setInsanity(s.insanity || 0);
     setSpentAdj(s.spentAdj || 0);
     setFinalTotals(s.finalTotals || null);
     setFinalWounds(s.finalWounds ?? null);
@@ -3229,6 +3242,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
             build={build} totals={totals}
             ws={ws} onDamage={takeDamage} onAdjustMax={changeMax}
             fatePoints={fateShown} profitFactor={profitShown}
+            corruption={corruption} insanity={insanity}
             avatar={avatar} setAvatar={setAvatar}
             extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
@@ -3239,6 +3253,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
             onAddEliteAdvance={addEliteAdvance} onRemoveEliteAdvance={removeEliteAdvance}
             onFate={(n) => setFateAdj((a) => a + n)}
             onProfit={(n) => setProfitAdj((a) => a + n)}
+            onCorruption={(n) => setCorruption((c) => Math.max(0, c + n))}
+            onInsanity={(n) => setInsanity((v) => Math.max(0, v + n))}
             spentAdj={spentAdj} onSpentAdj={(n) => setSpentAdj((a) => Math.max(0, a + n))}
           />
         )}
@@ -5027,7 +5043,7 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
    Takes the lists the dossier has already derived, so the two cannot disagree. */
 
 function PrintSheet({ name, career, picked, totals, mods, ws, fate, profit, xp, rank,
-  psyRating, skills, talents, traits, gear, powers, notes, advances, avatar }) {
+  psyRating, corruption = 0, insanity = 0, skills, talents, traits, gear, powers, notes, advances, avatar }) {
   // A characteristic bonus is its tens digit, and every test at the table needs
   // it, so it is printed rather than left to be worked out.
   const bonus = (v) => (typeof v === 'number' ? Math.floor(v / 10) : '—');
@@ -5069,6 +5085,8 @@ function PrintSheet({ name, career, picked, totals, mods, ws, fate, profit, xp, 
             <div><dt>Profit</dt><dd>{profit}</dd></div>
             {totals && <div><dt>T Bonus</dt><dd>{bonus(totals.t)}</dd></div>}
             {psyRating > 0 && <div><dt>Psy Rating</dt><dd>{psyRating}</dd></div>}
+            {corruption > 0 && <div><dt>Corruption</dt><dd>{corruption}</dd></div>}
+            {insanity > 0 && <div><dt>Insanity</dt><dd>{insanity}</dd></div>}
           </dl>
           {ws && (
             <div className="rt-pr-boxes" aria-hidden="true">
@@ -5163,6 +5181,7 @@ const ADD_SOURCES = {
 };
 
 function DossierPane({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
+  corruption = 0, insanity = 0, onCorruption, onInsanity,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
   psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance,
   onBuyCharAdvance, onRefundCharAdvance, onAddEliteAdvance, onRemoveEliteAdvance,
@@ -5354,6 +5373,32 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
             <div className="rt-der">
               <div className="rt-der-k top">TALENTS</div>
               <div className="rt-der-v">{allTalents.length}</div>
+            </div>
+            {/* Corruption and Insanity Points accrue over a campaign — the
+                origin path only ever notes a one-off die roll for the player
+                to add in by hand (see the notes list), so these start at 0
+                and are otherwise adjusted the same way Fate is. Past 90 a
+                character is lost to the warp or the madhouse either way, so
+                that threshold gets the same hot styling as ship corruption. */}
+            <div className={'rt-der' + (corruption >= 90 ? ' rt-corrhot' : '')}>
+              <div className="rt-der-k top">CORRUPTION</div>
+              <div className="rt-der-v">{corruption}</div>
+              <div className="rt-adjrow">
+                <button className="rt-adjb" onClick={() => onCorruption(-1)}
+                  disabled={corruption <= 0} aria-label="Lower Corruption Points">{'−'}</button>
+                <button className="rt-adjb" onClick={() => onCorruption(1)}
+                  aria-label="Raise Corruption Points">+</button>
+              </div>
+            </div>
+            <div className={'rt-der' + (insanity >= 90 ? ' rt-corrhot' : '')}>
+              <div className="rt-der-k top">INSANITY</div>
+              <div className="rt-der-v">{insanity}</div>
+              <div className="rt-adjrow">
+                <button className="rt-adjb" onClick={() => onInsanity(-1)}
+                  disabled={insanity <= 0} aria-label="Lower Insanity Points">{'−'}</button>
+                <button className="rt-adjb" onClick={() => onInsanity(1)}
+                  aria-label="Raise Insanity Points">+</button>
+              </div>
             </div>
             {move && (
               /* Derived from Agility Bonus alone — see movement.js. Its own
@@ -5784,7 +5829,7 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
         name={name} career={career} picked={build.picked}
         totals={totals} mods={build.mods} ws={ws}
         fate={fatePoints} profit={profitFactor} xp={xp} rank={charRank}
-        psyRating={psyRating} avatar={avatar}
+        psyRating={psyRating} corruption={corruption} insanity={insanity} avatar={avatar}
         skills={allSkills} talents={allTalents} traits={allTraits}
         gear={allGear} powers={allPowers} notes={allNotes}
         advances={[...extras.advances, ...extras.eliteAdvances]}

@@ -67,9 +67,12 @@ const post = (body) => call('', {
 export const createDynasty = (name) => post({ action: 'create', name });
 
 // The card is published by the player, because the GM cannot read another
-// account's character sheet. It is GM-only once stored.
-export const joinBridge = ({ code, charId, name, role, card }) =>
-  post({ action: 'join', code, charId, name, role, card });
+// account's character sheet. It is GM-only once stored. `wounds` is the same
+// idea applied to combat: { max, damage, critSoFar } off the player's own
+// sheet, mirrored onto the shared ship so ground combat has something to
+// damage. Omit it and the ship's existing copy (if any) is left alone.
+export const joinBridge = ({ code, charId, name, role, card, wounds }) =>
+  post({ action: 'join', code, charId, name, role, card, wounds });
 
 // A private word from the GM to one character.
 export const sendMessage = ({ code, to, text }) =>
@@ -90,6 +93,12 @@ export const writeBridge = ({ code, vitals, doc, log }) =>
   post({ action: 'write', code, vitals, doc, log });
 
 export const emitEvent = ({ code, event }) => post({ action: 'event', code, event });
+
+// Ground combat's own event action — see the comment on it in api/bridge.js
+// for why it isn't a branch of emitEvent(). A player calling this for their
+// own character (event.charId) succeeds; for anyone else's it is refused
+// server-side, whatever this call sends.
+export const emitGroundEvent = ({ code, event }) => post({ action: 'ground_event', code, event });
 
 export const readBridge = ({ code, since }) =>
   call(`?code=${encodeURIComponent(code)}`

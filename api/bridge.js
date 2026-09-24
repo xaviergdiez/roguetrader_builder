@@ -9,6 +9,11 @@
 //   POST /api/bridge  {action:"write", code, vitals, doc, log}
 //   POST /api/bridge  {action:"event", code, event}
 //   POST /api/bridge  {action:"message", code, to, text}           (GM only)
+//   POST /api/bridge  {action:"ground_event", code, event}
+//     Ground combat's own event action, separate from "event" (which stays
+//     ship-vitals-only, GM-only, unchanged): a ground event may be fired by
+//     a player against their own character, so it needs its own
+//     authorization path — see authorizeGroundEvent in lib/bridge.js.
 //
 // WHY POLLING
 //
@@ -32,9 +37,11 @@ import {
   newDynasty, isGm, memberOf, joinDynasty, leaveDynasty,
   assignNpc, unassignNpc, addMessage, charIdsFor,
   authorizeWrite, authorizeEvent,
-  newShip, applyPatch, applyWrite, appendLog, redactShip, redactDynasty
+  newShip, applyPatch, applyWrite, appendLog, redactShip, redactDynasty,
+  mirrorPlayerWounds, authorizeGroundEvent
 } from "../lib/bridge.js";
 import { applyEvent } from "../src/voidcombat.js";
+import { applyGroundEvent } from "../src/groundcombat.js";
 
 export const POLL_SECONDS = 5;
 
@@ -168,10 +175,17 @@ export default async function handler(req, res) {
     if (error) return res.status(403).json({ error });
     await redis.set(dynastyKey(code), next);
     await remember(uid, code);
+
+    // Same reasoning as the card: Wounds live on the player's own sheet, so
+    // the current state has to be published by them, not read by the server.
+    // A join with no `wounds` payload leaves the ship's copy untouched.
+    const nextShip = mirrorPlayerWounds(ship, body.charId, body.wounds);
+    if (nextShip !== ship) await redis.set(shipKey(code), nextShip);
+
     const gm = isGm(next, uid);
     return res.status(200).json({
       dynasty: redactDynasty(next, { isGm: gm }),
-      ship: redactShip(ship, { isGm: gm, charIds: charIdsFor(next, uid) }),
+      ship: redactShip(nextShip, { isGm: gm, charIds: charIdsFor(next, uid) }),
       isGm: gm,
       pollSeconds: POLL_SECONDS
     });
@@ -289,6 +303,36 @@ export default async function handler(req, res) {
     await redis.set(shipKey(code), next);
 
     return res.status(200).json({ ship: next, rev: next.rev, patch });
+  }
+
+  /* ---------------------------- ground combat ----------------------------
+     Its own action rather than a branch of "event": that path's
+     authorizeEvent() is GM-only by design (see shiproles.js's own comment —
+     "whatever it owns"), and weakening it to let a player through for their
+     own character would loosen ship combat along with it. Ground combat gets
+     a parallel, narrower door instead. */
+
+  if (action === "ground_event") {
+    const event = body.event && typeof body.event === "object" ? body.event : null;
+    if (!event) return res.status(400).json({ error: "event_required" });
+
+    const auth = authorizeGroundEvent(dynasty, uid, event);
+    if (!auth.ok) return res.status(403).json({ error: auth.reason });
+
+    const { patch, unknown } = applyGroundEvent(ship.combat, event);
+    if (unknown) return res.status(400).json({ error: "unknown_event" });
+
+    let next = applyPatch(ship, { combat: { ...ship.combat, ...patch } });
+    next = appendLog(next, {
+      by: auth.isGm ? "gm" : "player", charId: event.charId || null,
+      event: event.id, text: String(event.text || event.id).slice(0, 300)
+    });
+    await redis.set(shipKey(code), next);
+
+    return res.status(200).json({
+      ship: redactShip(next, { isGm: auth.isGm, charIds: charIdsFor(dynasty, uid) }),
+      rev: next.rev, patch
+    });
   }
 
   return res.status(400).json({ error: "unknown_action" });

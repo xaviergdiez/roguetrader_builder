@@ -7,7 +7,7 @@ import { woundState, applyDamage, adjustMax } from './wounds.js';
 import { movementFor } from './movement.js';
 import { roll1d100, resolveTest, DIFFICULTIES } from './dice.js';
 import {
-  LOCATIONS, DAMAGE_TYPES, hitLocation, locationById, resolveHit, furyTriggered
+  LOCATIONS, DAMAGE_TYPES, hitLocation, locationById, damageTypeById, resolveHit, furyTriggered
 } from './crits.js';
 import {
   AUGMETICS, gradeOf, labelFor, costOf, freeUsedIn, STARTING_MAX, acquisitionFor,
@@ -48,7 +48,12 @@ import {
   EXTENDED_ACTIONS, mayTakeAction, actionOutcome
 } from './voidcombat.js';
 import {
-  createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, pollBridge,
+  ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES,
+  weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll
+} from './groundcombat.js';
+import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
+import {
+  createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, emitGroundEvent, pollBridge,
   assignNpc, unassignNpc, sendMessage
 } from './bridge.js';
 import {
@@ -3092,6 +3097,20 @@ export default function RogueTraderBuilder({ me, cloud }) {
     return hit ? hit.replace(/^[^:]*:\s*/, '') : '';
   };
 
+  // Same gear list DossierPane assembles for the GearList display — origin
+  // path entries (minus anything dropped) plus free-text additions. Split
+  // into weapons and armour here by the same gear.js `kind` field
+  // weaponProfile()/armourProfile() already read, so the card only ever
+  // lists what ground combat could actually resolve, not raw prose.
+  const cardGear = useMemo(() => [
+    ...(career ? parseGear(career.gear).flat().filter((l) => !extras.gearDropped.includes(l)) : []),
+    ...extras.gear
+  ], [career, extras.gear, extras.gearDropped]);
+  const cardWeapons = useMemo(() =>
+    cardGear.filter((label) => gcWeaponProfile(label)), [cardGear]);
+  const cardArmour = useMemo(() =>
+    cardGear.filter((label) => gcArmourProfile(label)), [cardGear]);
+
   const crewCard = useMemo(() => ({
     career: career ? career.name : '',
     homeWorld: home ? home.name : '',
@@ -3101,9 +3120,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
     skills: [...build.skills, ...extras.skills],
     talents: [...build.talents, ...extras.talents],
     traits: [...build.traits, ...extras.traits],
+    // Labels only, in gear.js's own spelling — the GM's terminal resolves
+    // them itself (weaponProfile()/armourProfile()) rather than this card
+    // carrying a second, driftable copy of the stats.
+    weapons: cardWeapons,
+    armour: cardArmour,
     secret: noteStartingWith(/^Secret/i),
     favour: noteStartingWith(/^Favour/i)
-  }), [career, home, totals, ws, fateShown, build, extras]);
+  }), [career, home, totals, ws, fateShown, build, extras, cardWeapons, cardArmour]);
 
   useEffect(() => { if (!onDossier) setNavOpen(false); }, [onDossier]);
 
@@ -3343,6 +3367,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
           characterName={name} charId={charId} shipRole={shipRole}
           blueprint={blueprint} fleet={fleet} combat={combat} roster={roster}
           card={crewCard}
+          // For ground combat: mirrored onto the shared ship on join (see
+          // mirrorPlayerWounds in lib/bridge.js), and read back afterward so
+          // this sheet is the one place Wounds actually lives.
+          characteristics={totals} charWounds={ws}
           onClose={() => setBridgeOpen(false)}
         />
       )}
@@ -5824,7 +5852,7 @@ const QUICK_LINES = [
    against the station's fields. */
 
 function BridgePanel({ code, setCode, characterName, charId, shipRole,
-  blueprint, fleet, combat, roster, card, onClose }) {
+  blueprint, fleet, combat, roster, card, characteristics, charWounds, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -5847,6 +5875,22 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const [tab, setTab] = useState('bridge');
   const [msgTo, setMsgTo] = useState('');
   const [msgText, setMsgText] = useState('');
+  // ---- ground combat ----
+  const [gRollTier, setGRollTier] = useState('');
+  const [gRollOrigin, setGRollOrigin] = useState('');
+  const [gBestiaryPick, setGBestiaryPick] = useState('');
+  const [gAtkNpc, setGAtkNpc] = useState('');
+  const [gAtkTarget, setGAtkTarget] = useState('');
+  const [gAtkDistance, setGAtkDistance] = useState(0);
+  const [gAtkSize, setGAtkSize] = useState('average');
+  const [gAtkAction, setGAtkAction] = useState('standard_attack');
+  const [gAtkArmour, setGAtkArmour] = useState(0);
+  const [gAtkTb, setGAtkTb] = useState(0);
+  const [gPreview, setGPreview] = useState(null);
+  const [gNpcTarget, setGNpcTarget] = useState('');
+  const [gNpcAmount, setGNpcAmount] = useState(0);
+  const [gSelfAmount, setGSelfAmount] = useState(0);
+  const [gResponse, setGResponse] = useState('');
   const revRef = useRef(0);
 
   // The poll reads the rev through a ref so changing it does not restart the
@@ -5880,6 +5924,12 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     }
   };
 
+  const num = (value, onChange, opts = {}) => (
+    <input className="rt-field rt-numin" type="number" value={value}
+      min={opts.min ?? 0} max={opts.max} step={opts.step ?? 1}
+      onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)} />
+  );
+
   const create = () => run(async () => {
     const r = await createDynasty(dynastyName || 'An unnamed dynasty');
     revRef.current = Number(r.ship?.rev) || 0;
@@ -5893,7 +5943,12 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
       code: entry.trim().toUpperCase(),
       charId, name: characterName, role: shipRole,
       // Published by its owner: the GM has no way to read the sheet.
-      card
+      card,
+      // Same reasoning, applied to ground combat: the GM cannot read this
+      // account's Wounds either, so the current state rides along on join.
+      wounds: charWounds
+        ? { max: charWounds.max, damage: charWounds.taken, critSoFar: 0 }
+        : null
     });
     revRef.current = Number(r.ship?.rev) || 0;
     setState(r);
@@ -5977,9 +6032,157 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     return r;
   }, 'Sent, to that character alone.');
 
+  /* ------------------------------ ground combat ------------------------------
+     Everything here fires emitGroundEvent, which the server checks against
+     authorizeGroundEvent (lib/bridge.js / groundcombat.js): the GM may always
+     act, a player only against their own charId. The client-side checks below
+     (isGmHere, charId === m.charId) only grey out a control — same disclaimer
+     as every other permission check in this app. */
+
   const isGmHere = Boolean(state && state.isGm);
   const ship = state && state.ship;
   const dynasty = state && state.dynasty;
+
+  const ground = (ship && ship.combat && ship.combat.ground) || { npcs: [] };
+  const playerVitals = (ship && ship.combat && ship.combat.playerVitals) || {};
+  const myVitals = playerVitals[charId] || null;
+
+  const groundEvent = (event, ok) => run(async () => {
+    const r = await emitGroundEvent({ code, event });
+    revRef.current = Number(r.rev) || revRef.current;
+    // Applying the returned ship is what makes the rev bump above safe.
+    // Bumping it alone tells the next poll "I already hold rev N" when this
+    // panel does not, so the server answers 204 and the panel never learns
+    // what just happened: the hostile sits on the server and the board shows
+    // nothing spawned. Same shape as seat()/unseat() applying r.dynasty.
+    if (r.ship) setState((prev) => (prev ? { ...prev, ship: r.ship } : prev));
+    return r;
+  }, ok);
+
+  // GM: roll a fresh hostile from the generator tables and add it straight
+  // to the roster, or pin a tier/origin and roll the rest.
+  const rollHostile = () => {
+    const npc = rollNpc({
+      tierId: gRollTier || undefined, originId: gRollOrigin || undefined
+    });
+    return groundEvent({
+      id: 'npc_add', name: npc.name, max: npc.max,
+      ws: npc.ws, bs: npc.bs, toughnessBonus: npc.toughnessBonus, armour: npc.armour,
+      weapon: npc.weapon,
+      text: `Rolled ${npc.name} (${npc.originName}, ${npc.tier}) — `
+        + `${npc.combatRoleName}, ${npc.weapon || 'unarmed'}.`
+    }, `Added ${npc.name} to the roster.`);
+  };
+
+  // GM: drop in one of the fixed Section 9 named antagonists as-is.
+  const addFromBestiary = () => {
+    if (!gBestiaryPick) return;
+    const npc = bestiaryToNpc(gBestiaryPick);
+    if (!npc) return;
+    return groundEvent({
+      id: 'npc_add', name: npc.name, max: npc.max,
+      ws: npc.ws, bs: npc.bs, toughnessBonus: npc.toughnessBonus, armour: npc.armour,
+      weapon: npc.weapon,
+      text: npc.custom
+        ? `Added ${npc.name} — no numeric stat block in the source; adjudicate by hand.`
+        : `Added ${npc.name} from the bestiary.`
+    }, `Added ${npc.name}.`);
+  };
+
+  const removeNpc = (npcId, name) => groundEvent(
+    { id: 'npc_remove', npcId, text: `${name || 'A hostile'} is removed from the board.` },
+    'Removed.'
+  );
+
+  // GM: one click rolls the attack roll AND, on a hit, every hit's damage —
+  // chained through crits.js's resolveHit so a burst's second and third hits
+  // pick up where the first left off (overflow, critSoFar) instead of each
+  // being scored against a fresh 0. Armour/TB for the target are typed in
+  // by the GM (auto-filled from the published card's Toughness where
+  // available) since the crew card carries no gear list to read armour off.
+  const gmAttack = () => {
+    const npc = ground.npcs.find((n) => n.id === gAtkNpc);
+    if (!npc) return;
+    const roll = roll1d100();
+    const atk = npcAttackRoll(npc, {
+      size: gAtkSize, distanceM: gAtkDistance, actionId: gAtkAction, roll
+    });
+    if (!atk) {
+      setErr('This NPC has no ws/bs and weapon set — roll or add it through the generator to attack with it.');
+      return;
+    }
+    setGPreview({ ...atk, npc, roll });
+  };
+
+  const applyAttack = () => {
+    if (!gPreview || !gAtkTarget) return;
+    const target = playerVitals[gAtkTarget] || { max: 0, damage: 0, critSoFar: 0 };
+    const weapon = gPreview.weapon;
+    let woundsLeft = Math.max(0, (target.max || 0) - (target.damage || 0));
+    let critSoFar = target.critSoFar || 0;
+    let totalTaken = 0;
+
+    if (gPreview.success && weapon && weapon.damage) {
+      for (let i = 0; i < gPreview.hits; i++) {
+        const dice = Array.from({ length: weapon.damage.dice }, () => 1 + Math.floor(Math.random() * weapon.damage.die));
+        const rolled = dice.reduce((s, d) => s + d, 0) + weapon.damage.bonus;
+        const hit = resolveHit({
+          damage: rolled, penetration: weapon.pen || 0, armour: Number(gAtkArmour) || 0,
+          toughnessBonus: Number(gAtkTb) || 0, wounds: woundsLeft, critSoFar,
+          type: damageTypeById(weapon.damage.type)?.id || 'impact',
+          location: hitLocation(gPreview.locationRoll)?.id || 'body',
+          fury: { confirmed: furyTriggered(dice), d5: 1 + Math.floor(Math.random() * 5) }
+        });
+        totalTaken += hit.woundsLost;
+        woundsLeft = hit.woundsLeft;
+        critSoFar = hit.critTotal;
+      }
+    }
+
+    const name = (dynasty.members.find((m) => m.charId === gAtkTarget) || {}).name || 'the target';
+    groundEvent({
+      id: 'npc_attack', charId: gAtkTarget, amount: totalTaken, crit: Math.max(0, critSoFar - (target.critSoFar || 0)),
+      text: gPreview.success
+        ? `${gPreview.npc.name} hits ${name} (${gPreview.hits} hit${gPreview.hits === 1 ? '' : 's'}, ${totalTaken} Wounds).`
+        : `${gPreview.npc.name} misses ${name} (rolled ${gPreview.roll} vs ${gPreview.total}).`
+    }, gPreview.success ? 'Damage applied.' : 'Miss logged.');
+    setGPreview(null);
+  };
+
+  // A player attacking an NPC rolls their own damage and types the total in
+  // — this app resolves the GM's NPCs against the party automatically
+  // (above) but does not yet reach into a player's own sheet to auto-roll
+  // their attack, so this stays a plain amount field for now.
+  const hitNpc = () => {
+    if (!gNpcTarget) return;
+    const npc = ground.npcs.find((n) => n.id === gNpcTarget);
+    return groundEvent({
+      id: 'npc_damage', npcId: gNpcTarget, amount: Number(gNpcAmount) || 0,
+      text: `${characterName || 'A player'} hits ${npc ? npc.name : 'a hostile'} for ${Number(gNpcAmount) || 0}.`
+    }, 'Hit logged.');
+  };
+
+  const selfDamage = () => groundEvent({
+    id: 'player_damage', charId, amount: Number(gSelfAmount) || 0,
+    text: `${characterName || 'A player'} takes ${Number(gSelfAmount) || 0} damage.`
+  }, 'Applied.');
+
+  const selfHeal = () => groundEvent({
+    id: 'player_heal', charId, amount: Number(gSelfAmount) || 0,
+    text: `${characterName || 'A player'} recovers ${Number(gSelfAmount) || 0} Wounds.`
+  }, 'Healed.');
+
+  const declareResponse = () => {
+    if (!gResponse.trim()) return;
+    return run(async () => {
+      const r = await groundEvent({
+        id: 'player_response', charId,
+        text: `${characterName || 'A player'} responds: ${gResponse.trim()}`
+      });
+      setGResponse('');
+      return r;
+    });
+  };
 
   return (
     <dialog ref={dialogRef} className="rt-framer rt-ship" onClose={onClose}
@@ -6135,6 +6338,15 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                             {c.traits && c.traits.length > 0 && (
                               <p><b>Traits</b> {'\u2014'} {c.traits.join(' ')}</p>
                             )}
+                            {c.weapons && c.weapons.length > 0 && (
+                              <p><b>Weapons</b> {'\u2014'} {c.weapons.join(', ')}</p>
+                            )}
+                            {c.armour && c.armour.length > 0 && (
+                              <p>
+                                <b>Armour</b> {'\u2014'} {c.armour.join(', ')}
+                                {' '}(AP {c.armour.reduce((sum, label) => sum + (gcArmourProfile(label)?.armour || 0), 0)})
+                              </p>
+                            )}
                             {c.secret && (
                               <p className="rt-crewsecret">
                                 <b>Secret</b> {'\u2014'} {c.secret}
@@ -6265,6 +6477,230 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                 <span>NAVY <b>{ship.vitals.repNavy ?? 50}</b></span>
                 <span>COLD TRADE <b>{ship.vitals.repColdTrade ?? 50}</b></span>
               </div>
+            </>
+          )}
+
+          {/* ---- ground combat ----
+              Visible to everyone, not tab-gated: a player needs to see their
+              own Wounds and the NPC roster exactly as much as the GM does.
+              GM-only controls are the ones authorizeGroundEvent would refuse
+              from anyone else — see the comment on that function. */}
+          {ship && (
+            <>
+              <div className="rt-conds-h">Ground combat</div>
+
+              {myVitals && (
+                <div className="rt-gmvitals rt-bridgevitals">
+                  <span>YOUR WOUNDS <b>{Math.max(0, myVitals.max - myVitals.damage)}</b>/{myVitals.max}</span>
+                  {myVitals.critSoFar > 0 && <span className="rt-corrhot">CRIT <b>{myVitals.critSoFar}</b></span>}
+                </div>
+              )}
+              {!myVitals && charWounds && (
+                <p className="rt-vox-hint">
+                  Your Wounds publish to the bridge next time you join {'\u2014'}
+                  leave and rejoin if you changed them since.
+                </p>
+              )}
+
+              {charId && (
+                <div className="rt-gmmods">
+                  <label><span className="rt-der-k">Amount</span>
+                    {num(gSelfAmount, setGSelfAmount)}
+                  </label>
+                  <button className="rt-opt" disabled={busy} onClick={selfDamage}>Take damage</button>
+                  <button className="rt-opt" disabled={busy} onClick={selfHeal}>Heal</button>
+                </div>
+              )}
+              {charId && (
+                <div className="rt-shiprow">
+                  <input className="rt-field" value={gResponse}
+                    onChange={(e) => setGResponse(e.target.value)}
+                    placeholder="Dodge — rolled 34 against 52." />
+                  <button className="rt-btn ghost" disabled={busy || !gResponse.trim()}
+                    onClick={declareResponse}>Declare response</button>
+                </div>
+              )}
+
+              <div className="rt-conds-h">Hostiles {'\u00B7'} {ground.npcs.length} on the board</div>
+              {ground.npcs.length === 0 ? (
+                <p className="rt-vox-hint">Nothing spawned yet.</p>
+              ) : (
+                <ul className="rt-list">
+                  {ground.npcs.map((n) => (
+                    <li key={n.id} className="rt-entry">
+                      <span className="rt-entry-t">{n.name}</span>
+                      <span className="rt-entry-c">
+                        {Math.max(0, n.max - n.damage)}/{n.max} Wounds
+                        {n.critSoFar > 0 ? ' \u00B7 Crit ' + n.critSoFar : ''}
+                      </span>
+                      {n.weapon && <div className="rt-entry-d"><p>{n.weapon}</p></div>}
+                      {isGmHere && (
+                        <button className="rt-rm" disabled={busy}
+                          onClick={() => removeNpc(n.id, n.name)}
+                          aria-label={'Remove ' + n.name}>&times;</button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* Any member may damage an NPC — see GROUND_EVENTS in
+                  groundcombat.js: npc_damage needs no character ownership. */}
+              {ground.npcs.length > 0 && (
+                <>
+                  <label className="rt-shipsel">
+                    <span className="rt-shipsel-k">Target</span>
+                    <select className="rt-sel" value={gNpcTarget}
+                      onChange={(e) => setGNpcTarget(e.target.value)}>
+                      <option value="">{'\u2014 pick a hostile \u2014'}</option>
+                      {ground.npcs.map((n) => (
+                        <option key={n.id} value={n.id}>{n.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="rt-gmmods">
+                    <label><span className="rt-der-k">Damage</span>
+                      {num(gNpcAmount, setGNpcAmount)}
+                    </label>
+                    <button className="rt-opt" disabled={busy || !gNpcTarget} onClick={hitNpc}>
+                      Hit it
+                    </button>
+                  </div>
+                </>
+              )}
+
+              {isGmHere && (
+                <>
+                  <div className="rt-conds-h">Spawn a hostile</div>
+                  <div className="rt-gmmods">
+                    <label><span className="rt-der-k">Tier</span>
+                      <select className="rt-sel" value={gRollTier}
+                        onChange={(e) => setGRollTier(e.target.value)}>
+                        <option value="">{'\u2014 roll \u2014'}</option>
+                        {THREAT_TIERS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      </select>
+                    </label>
+                    <label><span className="rt-der-k">Origin</span>
+                      <select className="rt-sel" value={gRollOrigin}
+                        onChange={(e) => setGRollOrigin(e.target.value)}>
+                        <option value="">{'\u2014 roll \u2014'}</option>
+                        {ORIGINS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+                      </select>
+                    </label>
+                  </div>
+                  <div className="rt-btnrow">
+                    <button className="rt-btn" disabled={busy} onClick={rollHostile}>
+                      Roll a hostile
+                    </button>
+                  </div>
+
+                  <label className="rt-shipsel">
+                    <span className="rt-shipsel-k">Or pull from the bestiary</span>
+                    <select className="rt-sel" value={gBestiaryPick}
+                      onChange={(e) => setGBestiaryPick(e.target.value)}>
+                      <option value="">{'\u2014 pick a named antagonist \u2014'}</option>
+                      {BESTIARY.map((b) => (
+                        <option key={b.name} value={b.name}>
+                          {b.name}{b.custom ? ' (no numbers — adjudicate by hand)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className="rt-btnrow">
+                    <button className="rt-btn ghost" disabled={busy || !gBestiaryPick}
+                      onClick={addFromBestiary}>
+                      Add to the board
+                    </button>
+                  </div>
+
+                  {ground.npcs.some((n) => n.ws != null || n.bs != null) && (
+                    <>
+                      <div className="rt-conds-h">Attack a player</div>
+                      <label className="rt-shipsel">
+                        <span className="rt-shipsel-k">Attacker</span>
+                        <select className="rt-sel" value={gAtkNpc}
+                          onChange={(e) => setGAtkNpc(e.target.value)}>
+                          <option value="">{'\u2014 pick a hostile \u2014'}</option>
+                          {ground.npcs.filter((n) => n.ws != null || n.bs != null).map((n) => (
+                            <option key={n.id} value={n.id}>{n.name} {'\u2014'} {n.weapon || 'unarmed'}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="rt-shipsel">
+                        <span className="rt-shipsel-k">Target</span>
+                        <select className="rt-sel" value={gAtkTarget}
+                          onChange={(e) => {
+                            setGAtkTarget(e.target.value);
+                            const m = (dynasty.members || []).find((x) => x.charId === e.target.value);
+                            const t = m && m.card && m.card.characteristics && m.card.characteristics.t;
+                            if (Number.isFinite(t)) setGAtkTb(Math.floor(t / 10));
+                            // Armour layers stack in RT's own rules, so a
+                            // published list of pieces sums rather than
+                            // picking the single highest one.
+                            const armourList = (m && m.card && m.card.armour) || [];
+                            if (armourList.length) {
+                              setGAtkArmour(armourList.reduce(
+                                (sum, label) => sum + (gcArmourProfile(label)?.armour || 0), 0
+                              ));
+                            }
+                          }}>
+                          <option value="">{'\u2014 pick a character \u2014'}</option>
+                          {(dynasty.members || []).filter((m) => m.charId && !m.npc).map((m) => (
+                            <option key={m.charId} value={m.charId}>{m.name}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="rt-gmmods">
+                        <label><span className="rt-der-k">Distance (m)</span>{num(gAtkDistance, setGAtkDistance)}</label>
+                        <label><span className="rt-der-k">Size</span>
+                          <select className="rt-sel" value={gAtkSize} onChange={(e) => setGAtkSize(e.target.value)}>
+                            {GROUND_SIZES.map((sz) => <option key={sz.id} value={sz.id}>{sz.name}</option>)}
+                          </select>
+                        </label>
+                        <label><span className="rt-der-k">Action</span>
+                          <select className="rt-sel" value={gAtkAction} onChange={(e) => setGAtkAction(e.target.value)}>
+                            {GROUND_ACTIONS.filter((a) => a.type !== 'variable').map((a) => (
+                              <option key={a.id} value={a.id}>{a.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="rt-gmmods">
+                        <label><span className="rt-der-k">Target Armour</span>{num(gAtkArmour, setGAtkArmour)}</label>
+                        <label><span className="rt-der-k">Target TB</span>{num(gAtkTb, setGAtkTb)}</label>
+                      </div>
+                      <p className="rt-vox-hint">
+                        Armour and TB auto-fill from the published crew card
+                        when the character has one on file {'\u2014'} override
+                        either if their loadout changed since.
+                      </p>
+
+                      <div className="rt-btnrow">
+                        <button className="rt-btn" disabled={busy || !gAtkNpc} onClick={gmAttack}>
+                          Roll attack
+                        </button>
+                      </div>
+
+                      {gPreview && (
+                        <div className="rt-note">
+                          <b>Target {gPreview.total}</b>{' \u2014 rolled '}{gPreview.roll}
+                          {gPreview.band ? ' \u00B7 ' + gPreview.band + ' range' : ''}
+                          {' \u2014 '}
+                          {gPreview.success
+                            ? 'hit, ' + gPreview.hits + ' hit' + (gPreview.hits === 1 ? '' : 's') + ' scored'
+                            : 'missed'}
+                          <div className="rt-btnrow">
+                            <button className="rt-btn" disabled={busy || !gAtkTarget} onClick={applyAttack}>
+                              Apply to target
+                            </button>
+                            <button className="rt-btn ghost" onClick={() => setGPreview(null)}>Discard</button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
             </>
           )}
 

@@ -5,11 +5,11 @@ import {
   parsePrereq, unmetCharPrereqs, MAX_TABLED_RANK
 } from './advances.js';
 
-// eight core careers plus five xenos paths
+// eight core careers, five xenos paths, and the Bladedancer archetype
 assert.deepEqual(CAREERS_WITH_TABLES.slice().sort(),
-  ['Arch-Militant', 'Astropath Transcendent', 'Drukhari Kabalite Warrior', 'Eldar Corsair',
-   'Explorator', 'Kroot Mercenary', 'Missionary', 'Navigator', 'Ork Freebooter',
-   'Rogue Trader', 'Seneschal', "T'au Fire Warrior", 'Void-Master']);
+  ['Arch-Militant', 'Astropath Transcendent', 'Bladedancer', 'Drukhari Kabalite Warrior',
+   'Eldar Corsair', 'Explorator', 'Kroot Mercenary', 'Missionary', 'Navigator',
+   'Ork Freebooter', 'Rogue Trader', 'Seneschal', "T'au Fire Warrior", 'Void-Master']);
 
 // Core careers cover ranks 1-4; xenos careers may extend to rank 8.
 // Every career must start at rank 1 and cover at least ranks 1-4.

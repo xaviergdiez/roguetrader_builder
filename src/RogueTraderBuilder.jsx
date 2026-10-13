@@ -33,6 +33,7 @@ import {
   tierFor, ADVANCE_LEVELS, ADVANCE_STEP, advanceCost, cumulativeAdvanceCost
 } from './xp.js';
 import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
+import { elitePresets } from './elite.js';
 import {
   HULLS, COMPONENTS, ESSENTIAL_CATEGORIES, ESSENTIAL_LABELS, CREW_RATINGS,
   SLOT_NAMES, WEAPON_CLASSES, allHulls, allComponents, isHomebrew, damageText,
@@ -872,6 +873,30 @@ const CAREERS = [
       'Pilot (Spacecraft, Flyers) (Ag)', 'Scholastic Lore (Astromancy) (Int)', 'Speak Language (Low Gothic) (Int)'],
     talents: ['Pistol Weapon Training (Universal)', 'Melee Weapon Training (Universal)', 'Nerves of Steel'],
     gear: 'Best mono-sword or common power sword; best hand cannon or common bolt pistol; guard flak, micro-bead, void suit, blessed ship token, re-breather, Navy uniform, pict-recorder, vox-caster.'
+  },
+  {
+    id: 'bladedancer',
+    name: 'Bladedancer',
+    blurb: 'A swift master of the sword who answers a blow by not being where it lands. '
+      + 'Every exchange is a step in a figure only you can see the shape of.',
+    skills: ['Acrobatics (Ag)', 'Awareness (Per)', 'Carouse (T)', 'Demolition (Int)',
+      'Dodge (Ag)', 'Medicae (Int)'],
+    talents: ['Melee Weapon Training (Universal)', 'Pistol Weapon Training (Universal)',
+      'Ambidextrous', 'Catfall'],
+    traits: [
+      'Blade Dance: as a Full Action, make one Standard Attack against every enemy within '
+        + 'reach, each at \u221210 Weapon Skill. A sword in each hand grants one extra attack.',
+      'Death From Above: as a Full Action, leap up to Agility Bonus metres and strike every '
+        + 'enemy adjacent on landing for 1d10 + Strength Bonus Impact. Once per encounter, '
+        + 'and again each time you fell an enemy.'
+    ],
+    gear: 'Best mono-sword or good power sword; two mono-swords; enforcer light carapace '
+      + 'or synskin, micro-bead, void suit, medikit.',
+    notes: [
+      'Bladedancer is an archetype from the Rogue Trader CRPG, not a career in the 2009 '
+        + 'tabletop rules. Blade Dance and Death From Above are a conversion of its two '
+        + 'keystone abilities and are worth agreeing with your GM before play.'
+    ]
   },
   {
     id: 'eldarcorsair',
@@ -1816,6 +1841,20 @@ const CSS = `
 .rt-aug-req{padding:1px 6px;font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;
   text-transform:uppercase;color:#161004;border:1px solid var(--gold-lit);
   background:var(--gold);}
+
+/* ---- named Elite Advances offered in the dialog ---- */
+.rt-elite{padding:9px 10px;margin-bottom:6px;
+  border:1px solid var(--brass-dim);border-left:2px solid var(--brass);
+  background:rgba(6,14,9,.6);}
+.rt-elite.met{border-left-color:var(--green);}
+.rt-elite-h{display:flex;align-items:baseline;gap:8px;margin-bottom:3px;}
+.rt-elite-h b{font-family:var(--display);font-size:13px;letter-spacing:.06em;
+  color:var(--brass-lit);font-weight:600;}
+.rt-elite-c{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--gold-lit);}
+.rt-elite-r{margin:0 0 5px;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;
+  color:var(--dim);}
+.rt-elite.met .rt-elite-r{color:var(--green);}
+.rt-elite-e{margin:0 0 7px;font-size:12.5px;line-height:1.4;color:var(--text);}
 
 /* ---- augmetics and power armour ---- */
 /* Sets width, NOT max-width: .rt-framer sets width:min(430px,94vw) and a
@@ -4296,11 +4335,12 @@ function AddDialog({ title, options, existing, onAdd, onClose,
 /* A Skill/Talent/Trait off the career's own table, priced by the GM rather
    than looked up — see addEliteAdvance. Distinct from AddDialog because it
    needs a type and a cost, not just a name. */
-function EliteAdvanceDialog({ onAdd, onClose }) {
+function EliteAdvanceDialog({ onAdd, onClose, careerName = '', rank = 0 }) {
   const dialogRef = useRef(null);
   const [name, setName] = useState('');
   const [type, setType] = useState('Talent');
   const [cost, setCost] = useState(200);
+  const presets = elitePresets({ careerName, rank });
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -4329,6 +4369,36 @@ function EliteAdvanceDialog({ onAdd, onClose }) {
         one, or a defining quirk like being Untouchable. Rank-gating does not
         apply: it was never on the table to begin with.
       </p>
+      {presets.length > 0 && (
+        <>
+          <div className="rt-choice-l">OFF THE SHELF</div>
+          {presets.map((e) => (
+            <div key={e.id} className={'rt-elite' + (e.met ? ' met' : '')}>
+              <div className="rt-elite-h">
+                <b>{e.name}</b>
+                <span className="rt-entry-c">{e.type}</span>
+                <span className="rt-elite-c">{e.cost.toLocaleString()} XP</span>
+              </div>
+              {e.requires && (
+                <p className="rt-elite-r">
+                  {e.met ? '\u2713 ' : ''}Requires {e.requires}
+                  {!e.met && ' \u2014 yours to waive'}
+                </p>
+              )}
+              <p className="rt-elite-e">{e.effect}</p>
+              {e.note && <p className="rt-elite-r">{e.note}</p>}
+              {/* Fills the form rather than adding outright: the cost is the
+                  GM's to set, and they may well want a different number. */}
+              <button className="rt-btn ghost"
+                onClick={() => { setName(e.name); setType(e.type); setCost(e.cost); }}>
+                Use this
+              </button>
+            </div>
+          ))}
+          <div className="rt-choice-l">OR WRITE YOUR OWN</div>
+        </>
+      )}
+
       <input className="rt-field" autoFocus value={name} onChange={(e) => setName(e.target.value)}
         placeholder="Name, e.g. Untouchable (1)" />
       <div className="rt-choice-l">TYPE</div>
@@ -5789,6 +5859,8 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
       {addingElite && (
         <EliteAdvanceDialog
           onAdd={onAddEliteAdvance}
+          careerName={career ? career.name : ''}
+          rank={charRank}
           onClose={() => setAddingElite(false)}
         />
       )}

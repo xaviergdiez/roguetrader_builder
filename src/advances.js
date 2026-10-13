@@ -547,6 +547,70 @@ export const CAREER_ADVANCES = {
     ]
   },
 
+  // The CRPG archetype's own talent list, translated: where it names a real
+  // tabletop talent (Swift Attack, Step Aside) that is what it buys, and
+  // where it names something only the CRPG has (Veil of Blades, Guillotine)
+  // the name is kept and the effect converted. See the note on the career.
+  'Bladedancer': {
+    1: [
+      A('Acrobatics', 'Skill', null, 100),
+      A('Awareness', 'Skill', null, 100),
+      A('Carouse', 'Skill', null, 100),
+      A('Demolition', 'Skill', null, 100),
+      A('Dodge', 'Skill', null, 100),
+      A('Medicae', 'Skill', null, 100),
+      A('Melee Weapon Training (Universal)', 'Talent', null, 500),
+      A('Pistol Weapon Training (Universal)', 'Talent', null, 500),
+      A('Quick Draw', 'Talent', null, 200),
+      A('Sure Strike', 'Talent', 'WS 30', 200)
+    ],
+    2: [
+      A('Acrobatics +10', 'Skill', 'Acrobatics', 200),
+      A('Awareness +10', 'Skill', 'Awareness', 200),
+      A('Dodge +10', 'Skill', 'Dodge', 200),
+      A('Ambidextrous', 'Talent', 'Ag 30', 200),
+      A('Catfall', 'Talent', 'Ag 30', 200),
+      A('Blade in His Hand', 'Talent', 'WS 35', 300),
+      A('Sound Constitution (x3)', 'Talent', null, 200)
+    ],
+    3: [
+      A('Carouse +10', 'Skill', 'Carouse', 200),
+      A('Medicae +10', 'Skill', 'Medicae', 200),
+      A('Swift Attack', 'Talent', 'WS 35', 500),
+      A('Two-Weapon Wielder (Melee)', 'Talent', 'Ag 35, WS 35', 500),
+      A('Step Aside', 'Talent', 'Ag 35, Dodge', 500),
+      A('Dance Partners', 'Talent', 'Two-Weapon Wielder (Melee)', 300)
+    ],
+    4: [
+      A('Acrobatics +20', 'Skill', 'Acrobatics +10', 200),
+      A('Dodge +20', 'Skill', 'Dodge +10', 200),
+      A('Acrobatic Artistry', 'Talent', 'Acrobatics +10', 300),
+      A('Duellist', 'Talent', 'WS 40', 300),
+      A('Lightning Reflexes', 'Talent', 'Ag 40', 500),
+      A('Sound Constitution (x3)', 'Talent', null, 200)
+    ],
+    5: [
+      A('Demolition +10', 'Skill', 'Demolition', 200),
+      A('Lightning Attack', 'Talent', 'Swift Attack', 500),
+      A('Veil of Blades', 'Talent', 'Step Aside', 500),
+      A('Oath of Vengeance', 'Talent', 'WP 40', 300)
+    ],
+    6: [
+      A('Wall of Steel', 'Talent', 'Ag 35', 500),
+      A('Rising Tempo', 'Talent', 'WS 45', 500),
+      A('Spinning Blades', 'Talent', 'Veil of Blades', 500),
+      A('Guillotine', 'Talent', 'WS 45', 500)
+    ],
+    7: [
+      A('Counter Attack', 'Talent', 'WS 50, Swift Attack', 500),
+      A('Captive Audience', 'Talent', 'Duellist', 500),
+      A('Blood Oath', 'Talent', 'WP 45', 500)
+    ],
+    8: [
+      A('Death Waltz', 'Trait', 'WS 50, Ag 50, Lightning Attack', 1000)
+    ]
+  },
+
   'Eldar Corsair': {
     1: [
       A('Acrobatics +10', 'Skill', 'Acrobatics', 200),

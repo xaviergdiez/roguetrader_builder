@@ -112,6 +112,54 @@ for (const career of CAREERS_WITH_TABLES) {
   assert.ok(any, career + ': nothing in the catalogue is ever available to it');
 }
 
+/* ---- the Inquisition ladder stands on itself ---- */
+
+// Dark Heresy models the Inquisition as an Alternate Career Rank — a detour
+// taken mid-career, not a career you start in — which is why it is here at
+// all. The three rungs must gate on each other, or "become an Interrogator"
+// is three unrelated purchases rather than a path.
+{
+  const seneschal = (rank, owned = []) => ({ careerName: 'Seneschal', rank, owned });
+  const legate = eliteById('legate-investigator');
+  const interrogator = eliteById('interrogator');
+  const rosette = eliteById('inquisitorial-rosette');
+
+  assert.equal(legate.minRank, 4, "the Handbook's own Rank 4+");
+  assert.equal(meetsRequirement(legate, seneschal(3)), false);
+  assert.equal(meetsRequirement(legate, seneschal(4)), true);
+
+  // The Tech-Priest is the one career the book bars from this path.
+  assert.equal(legate.careers.includes('Explorator'), false,
+    'the Explorator has the Magos road instead');
+
+  // Rank alone is not enough: each rung needs the one below it.
+  assert.equal(meetsRequirement(interrogator, seneschal(8)), false, 'no Legature yet');
+  assert.equal(meetsRequirement(interrogator, seneschal(8, ['Legate Investigator'])), true);
+  assert.equal(meetsRequirement(interrogator, seneschal(5, ['Legate Investigator'])), false,
+    'and the rank still applies');
+
+  assert.equal(meetsRequirement(rosette, seneschal(8, ['Legate Investigator'])), false);
+  assert.equal(meetsRequirement(rosette, seneschal(8, ['Legate Investigator', 'Interrogator'])), true);
+
+  // The names a rung stands on must be names that actually exist, or the
+  // ladder has a missing step nobody can ever climb.
+  for (const e of ELITE_ADVANCES) {
+    if (!e.prereqElite) continue;
+    assert.ok(ELITE_ADVANCES.some((x) => x.name === e.prereqElite),
+      e.id + ': stands on "' + e.prereqElite + '", which is not in the catalogue');
+    assert.match(e.requires, /before it/, e.id + ': the ladder step must be readable');
+  }
+
+  // The rosette is granted for what a character did, not where they began.
+  assert.deepEqual(rosette.careers, []);
+  assert.equal(meetsRequirement(rosette,
+    { careerName: 'Void-Master', rank: 8, owned: ['Legate Investigator', 'Interrogator'] }), true);
+}
+
+// An entry with no ladder step is unaffected by what is already owned.
+assert.equal(meetsRequirement(eliteById('executioner'),
+  { careerName: 'Bladedancer', rank: 4, owned: [] }), true);
+
 /* ---- nothing here belongs to one character ---- */
 
 // These are offered to whoever takes the career, so a talent naming a

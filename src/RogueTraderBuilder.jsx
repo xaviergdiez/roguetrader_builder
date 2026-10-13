@@ -4335,12 +4335,14 @@ function AddDialog({ title, options, existing, onAdd, onClose,
 /* A Skill/Talent/Trait off the career's own table, priced by the GM rather
    than looked up — see addEliteAdvance. Distinct from AddDialog because it
    needs a type and a cost, not just a name. */
-function EliteAdvanceDialog({ onAdd, onClose, careerName = '', rank = 0 }) {
+function EliteAdvanceDialog({ onAdd, onClose, careerName = '', rank = 0, owned = [] }) {
   const dialogRef = useRef(null);
   const [name, setName] = useState('');
   const [type, setType] = useState('Talent');
   const [cost, setCost] = useState(200);
-  const presets = elitePresets({ careerName, rank });
+  // owned carries the names already bought, so a rung can stand on the one
+  // below it — see prereqElite in elite.js.
+  const presets = elitePresets({ careerName, rank, owned });
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -5861,6 +5863,7 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
           onAdd={onAddEliteAdvance}
           careerName={career ? career.name : ''}
           rank={charRank}
+          owned={extras.eliteAdvances.map((a) => a.name)}
           onClose={() => setAddingElite(false)}
         />
       )}

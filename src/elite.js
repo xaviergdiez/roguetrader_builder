@@ -176,6 +176,103 @@ export const ELITE_ADVANCES = [
       + 'Represents pinnacle mastery of both tactical combat and Dynasty leadership across the Koronus Expanse.'
   },
 
+  /* ---- the Inquisition, after Dark Heresy ----
+     The Inquisitor's Handbook models this as an ALTERNATE CAREER RANK: not a
+     career you start in, but a detour taken mid-career with the GM's leave —
+     "you won't swap Career Paths, but rather your character's fate simply
+     takes an unusual detour along the way" (p. 53). That is this app's Elite
+     Advance almost word for word, which is why the Inquisition arrives here
+     rather than as a fourteenth career.
+
+     Legate Investigator is the book's own entry, Rank 4+, open to the Adept,
+     Arbitrator, Cleric, Guardsman and Psyker — rendered here as the
+     Seneschal, Arch-Militant, Missionary and Astropath. The Explorator is
+     left off deliberately: the Tech-Priest is the one career the book bars
+     from this path, having the Magos road instead.
+
+     The two rungs above it are Ascension's, where a Legate who does well is
+     "popularly viewed as a sign that the recipient may be headed for an
+     Inquisitorial rosette themselves one day" — so they stand on each other
+     rather than being three unrelated purchases. */
+
+  {
+    id: 'ciphers-of-the-ordos',
+    name: 'Ciphers (Inquisition)',
+    type: 'Skill',
+    cost: 200,
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
+    minRank: 2,
+    requires: 'Seneschal, Missionary, Arch-Militant or Astropath, Rank II',
+    effect: 'You read and write the coded tongues the Ordos use among themselves — '
+      + 'Augustinian\u2019s phrases and pictograms, Cryptos Cognos and the rest. A sentence '
+      + 'in one of them means nothing to anyone outside the Inquisition and its agents.',
+    note: 'An advance on the Legate Investigator\u2019s own list (Inquisitor\u2019s Handbook). '
+      + 'The cheapest way to start looking like somebody\u2019s Acolyte.'
+  },
+  {
+    id: 'talented-interrogation',
+    name: 'Talented (Interrogation)',
+    type: 'Talent',
+    cost: 200,
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
+    minRank: 3,
+    requires: 'Rank III, and the Interrogation skill',
+    effect: '+10 to all Interrogation Tests. Where the subject is already broken, frightened '
+      + 'or in your custody, the GM may rule that no test is needed at all.',
+    note: 'An advance on the Legate Investigator\u2019s own list (Inquisitor\u2019s Handbook).'
+  },
+  {
+    id: 'legate-investigator',
+    name: 'Legate Investigator',
+    type: 'Trait',
+    cost: 300,
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
+    minRank: 4,
+    requires: 'Seneschal, Missionary, Arch-Militant or Astropath, Rank IV',
+    effect: 'Bearing the Sigil of Question: you carry a carta of inquiry naming one locale and '
+      + 'one focus of concern, and a silver chalice sigil bearing the mark of the Inquisition, '
+      + 'code-keyed for verification. Within that remit you hold the absolute right to question '
+      + 'and examine whoever you wish, and command authority over local law enforcement, '
+      + 'detention and requisition. The authority ends formally when the enquiry does.',
+    note: 'An Alternate Career Rank from the Inquisitor\u2019s Handbook, Rank 4+. The Ordos '
+      + 'Calixis call them cult breakers, hounds, and brothers of question. Misuse of the office '
+      + 'carries censure and harsh punishment \u2014 the GM should hold you to the remit.'
+  },
+  {
+    id: 'interrogator',
+    name: 'Interrogator',
+    type: 'Trait',
+    cost: 500,
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
+    minRank: 6,
+    prereqElite: 'Legate Investigator',
+    requires: 'Rank VI, and Legate Investigator before it',
+    effect: 'An apprentice Inquisitor, no longer merely seconded authority: you speak with your '
+      + 'master\u2019s voice outside any single enquiry, may field a cell of Acolytes of your own, '
+      + 'and may requisition from Inquisitorial stores without petitioning a higher power. '
+      + 'Your master remains answerable for what you do with it.',
+    note: 'Ascension\u2019s stepping stone. A Legate who does well is held to be headed for a '
+      + 'rosette; some reach it quickly, and some never do.'
+  },
+  {
+    id: 'inquisitorial-rosette',
+    name: 'Inquisitorial Rosette',
+    type: 'Trait',
+    cost: 1000,
+    // Open to any career by the time anyone gets here: the rosette is granted
+    // for what a character has done, not for the path they began on.
+    careers: [],
+    minRank: 8,
+    prereqElite: 'Interrogator',
+    requires: 'Rank VIII, and Interrogator before it',
+    effect: 'The rosette is yours. You answer to no authority in the Imperium save the Ordos '
+      + 'themselves, may commandeer any Imperial asset including a voidship and its crew, and '
+      + 'your word alone is sufficient warrant to detain, question or execute. Few live long '
+      + 'enough to use it well.',
+    note: 'The end of the road the Legature starts. Granting this changes a campaign\u2019s '
+      + 'shape \u2014 an Inquisitor outranks the dynasty they sail with.'
+  },
+
   /* ---- campaign conversions, generalised ----
      These arrived written around named characters, a named ship and its
      named bridge officers. Folded in as career advances instead: a talent
@@ -275,12 +372,15 @@ export const eliteById = (id) => ELITE_ADVANCES.find((e) => e.id === id) || null
 
 // Does this character match what the entry asks for? Reported so the dialog
 // can mark it, never used to disable the button.
-export function meetsRequirement(entry, { careerName = '', rank = 0 } = {}) {
+export function meetsRequirement(entry, { careerName = '', rank = 0, owned = [] } = {}) {
   if (!entry) return false;
   const careerOk = !entry.careers || entry.careers.length === 0
     || entry.careers.includes(careerName);
   const rankOk = !entry.minRank || (Number(rank) || 0) >= entry.minRank;
-  return Boolean(careerOk && rankOk);
+  // A ladder: an entry may stand on another. Matched by NAME because that is
+  // what a bought advance stores — {name, type, cost} and nothing else.
+  const belowOk = !entry.prereqElite || (owned || []).includes(entry.prereqElite);
+  return Boolean(careerOk && rankOk && belowOk);
 }
 
 // Everything, each tagged with whether this character matches it, with the

@@ -160,6 +160,26 @@ for (const career of CAREERS_WITH_TABLES) {
 assert.equal(meetsRequirement(eliteById('executioner'),
   { careerName: 'Bladedancer', rank: 4, owned: [] }), true);
 
+/* ---- distance is measured in metres, never in tiles ---- */
+
+// Rogue Trader measures range in metres throughout, and movement.js already
+// turns an Agility Bonus of 3 into a 3-metre Half Move. An entry quoting
+// tiles would be the only thing on the sheet on a different scale, and the
+// reader would have no conversion to apply.
+for (const e of ELITE_ADVANCES) {
+  const text = [e.name, e.requires, e.effect, e.note].filter(Boolean).join(' ');
+  assert.equal(/\btiles?\b/i.test(text), false, e.id + ' still measures in tiles');
+}
+
+// The eight that carry a distance say so in metres.
+{
+  const withDistance = ELITE_ADVANCES.filter((e) => /\bmetres?\b/i.test(e.effect));
+  assert.ok(withDistance.length >= 8, 'the converted entries kept their distances');
+  assert.match(eliteById('officer-bring-it-down').effect, /within 6 metres/);
+  assert.match(eliteById('vanguard-unyielding-beacon').effect, /radius of 3 metres/);
+  assert.match(eliteById('soldier-run-and-gun').effect, /\+3 metres of tactical movement/);
+}
+
 /* ---- nothing here belongs to one character ---- */
 
 // These are offered to whoever takes the career, so a talent naming a

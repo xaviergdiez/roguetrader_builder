@@ -18,39 +18,60 @@ assert.equal(pointsRemaining(empty), 100);
 assert.deepEqual(allocationTotals(empty),
   { ws: 25, bs: 25, s: 25, t: 25, ag: 25, int: 25, per: 25, wp: 25, fel: 25 });
 
-/* ---- the tiered cost matrix: 26-35 = 1pt, 36-40 = 2pt, 41-45 = 3pt ---- */
+/* ---- a point is a point: one spent is one added ---- */
 
-// entirely within the 1-point tier: cost equals the raise
+// "may allocate a total of 100 additional points to his Characteristics,
+// adding no more than 20 to any one Characteristic" — flat, not tiered. An
+// earlier pass priced the steps 1/2/3 by tier, which bought only ~45 points
+// of characteristics from the full pool.
 let a = allocate(empty, 'int', 10);
 assert.equal(allocationTotals(a).int, 35);
-assert.equal(pointsSpent(a), 10, '10 points to go from 25 to 35, 1 per point');
+assert.equal(pointsSpent(a), 10);
 
-// crossing into the 2-point tier costs more per point from there on
 a = allocate(empty, 'int', 15);
-assert.equal(allocationTotals(a).int, 40, 'raising by 15 reaches 40');
-assert.equal(pointsSpent(a), 20, '10 (26-35) + 2x5 (36-40) = 20, not 15');
+assert.equal(allocationTotals(a).int, 40);
+assert.equal(pointsSpent(a), 15, 'fifteen points, fifteen added — no tier surcharge');
 assert.equal(allocationTotals(a).ws, 25, 'only the named characteristic moves');
-assert.equal(pointsRemaining(a), 80);
+assert.equal(pointsRemaining(a), 85);
 
-// the full climb to the 45 cap: 10 + 10 + 15 = 35
+// the full raise any one characteristic is allowed
 a = allocate(empty, 'int', 20);
 assert.equal(allocationTotals(a).int, 45);
-assert.equal(pointsSpent(a), 35, '10 (tier 1) + 10 (tier 2) + 15 (tier 3)');
+assert.equal(pointsSpent(a), 20);
 
 // allocate does not mutate what it was given
 assert.equal(pointsSpent(empty), 0, 'the original allocation must be untouched');
 
-/* ---- 45 IS A HARD CEILING: a single stat cannot consume the whole pool ---- */
+/* ---- NO MORE THAN 20 TO ANY ONE, which the 45 ceiling follows from ---- */
+
+assert.equal(POINT_CAP, POINT_BASE + MAX_RAISE, 'the cap is the rule’s consequence');
 
 a = allocate(empty, 'ws', 250);
-assert.equal(allocationTotals(a).ws, 45, 'point-buy cannot exceed the 45 cap, unlike a roll');
-assert.equal(pointsSpent(a), 35, 'the cost of reaching the cap, not however many points were asked for');
-assert.equal(pointsRemaining(a), 65, 'maxing one stat leaves most of the pool unspent');
-// with 65 points still free, another characteristic can still be raised
-assert.ok(grantable(a, 'bs', 1) > 0, 'the pool is not drained just because one stat is capped');
+assert.equal(allocationTotals(a).ws, 45, 'twenty is the most one characteristic may take');
+assert.equal(pointsSpent(a), 20, 'and it costs exactly twenty of the hundred');
+assert.equal(pointsRemaining(a), 80, 'leaving the rest of the pool to spend elsewhere');
+assert.ok(grantable(a, 'bs', 1) > 0, 'the pool is not drained by one capped stat');
 assert.equal(allocate(a, 'ws', 1), a, 'already at the cap: a further raise is a no-op');
+assert.equal(grantable(a, 'ws', 5), 0);
 
-/* ---- 25 IS THE FLOOR: points can be taken back, but not past zero allocation ---- */
+/* ---- the pool spends out exactly, which tiers made impossible ---- */
+
+// Five characteristics at the +20 ceiling is the whole hundred.
+{
+  const five = ['ws', 'bs', 's', 't', 'ag'].reduce((acc, k) => allocate(acc, k, 20), empty);
+  assert.equal(pointsSpent(five), 100);
+  assert.equal(isComplete(five), true);
+  assert.equal(grantable(five, 'int', 1), 0, 'nothing left for a sixth');
+
+  // And the book's own claim about the method holds: nine characteristics
+  // totalling 325 average 36.1, against the 36 a 2d10+25 roll averages.
+  const totals = allocationTotals(five);
+  const sum = CHAR_ORDER.reduce((n, k) => n + totals[k], 0);
+  assert.equal(sum, 9 * POINT_BASE + POINT_POOL);
+  assert.equal(sum, 325, 'slightly higher than average, as the rule says');
+}
+
+/* ---- 25 IS THE FLOOR: points can be taken back, but not past zero ---- */
 
 let b = allocate(empty, 'fel', 10);
 b = allocate(b, 'fel', -4);
@@ -60,34 +81,29 @@ b = allocate(b, 'fel', -99);
 assert.equal(allocationTotals(b).fel, 25, 'cannot drop below the base');
 assert.equal(pointsRemaining(b), 100);
 
-// refunding out of a higher tier gives back what that tier actually cost
-b = allocate(empty, 'fel', 15);        // cost 20, value 40
-b = allocate(b, 'fel', -5);            // back to raise 10, value 35
+// a refund gives back exactly what it took
+b = allocate(empty, 'fel', 15);
+b = allocate(b, 'fel', -5);
 assert.equal(allocationTotals(b).fel, 35);
-assert.equal(pointsSpent(b), 10, 'refunding the 2-point steps leaves only the 1-point tier spent');
+assert.equal(pointsSpent(b), 10);
 
-/* ---- grantable reports the partial amounts rather than refusing outright ---- */
+/* ---- grantable reports the partial amount rather than refusing outright ---- */
 
-assert.equal(grantable(empty, 'int', 500), 20, 'capped at MAX_RAISE, not the pool size');
+assert.equal(grantable(empty, 'int', 500), 20, 'capped at MAX_RAISE');
 assert.equal(grantable(empty, 'int', -5), 0, 'nothing allocated, nothing to take back');
 assert.equal(grantable(allocate(empty, 'int', 7), 'int', -20), -7);
 
-// a pool too small for the next tiered step grants nothing, even though
-// points remain — this is the case the "+" button's disabled state relies on
-let tight = allocate(empty, 'int', 10);         // spends 10, value 35
-for (const k of ['ws', 'bs', 's', 't', 'ag', 'per', 'wp']) {
-  tight = allocate(tight, k, 10);                // 7 more x 10 = 70 spent, 80 total
+// A pool with less left than was asked for grants what remains, and nothing
+// once it is empty — the case the "+" button's disabled state relies on.
+{
+  let tight = ['ws', 'bs', 's', 't'].reduce((acc, k) => allocate(acc, k, 20), empty);
+  assert.equal(pointsRemaining(tight), 20);
+  assert.equal(grantable(tight, 'ag', 50), 20, 'only what the pool still holds');
+  tight = allocate(tight, 'ag', 20);
+  assert.equal(pointsRemaining(tight), 0);
+  assert.equal(grantable(tight, 'int', 1), 0, 'no pool left for even one point');
+  assert.equal(allocate(tight, 'int', 1), tight);
 }
-assert.equal(pointsRemaining(tight), 20);
-// fel is still untouched; raising it into the 1-point tier costs 1,
-// well within the remaining 20
-assert.equal(grantable(tight, 'fel', 1), 1);
-let almostEmpty = allocate(empty, 'ws', 15);    // spends 20, value 40, 80 left
-almostEmpty = allocate(almostEmpty, 'bs', 20);  // spends 35, value 45, 45 left
-almostEmpty = allocate(almostEmpty, 's', 20);   // spends 35, value 45, 10 left
-almostEmpty = allocate(almostEmpty, 't', 10);   // spends 10, value 35, 0 left
-assert.equal(pointsRemaining(almostEmpty), 0);
-assert.equal(grantable(almostEmpty, 'ag', 1), 0, 'no pool left for even the cheapest step');
 
 // unknown characteristics and no-ops are refused
 assert.equal(grantable(empty, 'luck', 5), 0);
@@ -97,17 +113,15 @@ assert.equal(allocate(empty, 'luck', 5), empty);
 /* ---- completeness is exactly a fully spent pool ---- */
 
 assert.equal(isComplete(empty), false);
-// 8 characteristics raised to 35 (10 each = 80) plus one raised to 40 (20)
-// spends exactly the 100-point pool.
-let full = CHAR_ORDER.slice(0, 8).reduce((acc, k) => allocate(acc, k, 10), empty);
-full = allocate(full, CHAR_ORDER[8], 15);
-assert.equal(pointsSpent(full), 100);
-assert.equal(isComplete(full), true);
 assert.equal(isComplete(allocate(empty, CHAR_ORDER[0], 10)), false);
-
-const totals = allocationTotals(full);
-assert.ok(CHAR_ORDER.every((k) => totals[k] >= POINT_BASE));
-assert.ok(CHAR_ORDER.every((k) => totals[k] <= POINT_CAP));
+{
+  const spread = CHAR_ORDER.reduce((acc, k, i) => allocate(acc, k, i < 1 ? 12 : 11), empty);
+  assert.equal(pointsSpent(spread), 100, '12 + eight 11s');
+  assert.equal(isComplete(spread), true);
+  const totals = allocationTotals(spread);
+  assert.ok(CHAR_ORDER.every((k) => totals[k] >= POINT_BASE));
+  assert.ok(CHAR_ORDER.every((k) => totals[k] <= POINT_CAP));
+}
 
 /* ---- junk input degrades to the base rather than throwing ---- */
 

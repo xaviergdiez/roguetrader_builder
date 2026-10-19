@@ -36,12 +36,15 @@ export const ELITE_ADVANCES = [
   },
 
   /* ---- Tier I and II archetype conversions ----
-     Written against Action Dice, tiles and a touch table rather than this
-     app's d100, metres and Fate Points. Kept as supplied: they are the
-     table's own homebrew and the effect text is theirs to word. Only the
-     career lists were changed, because a career this app does not have can
-     never be matched and the entry would read as permanently out of reach —
-     see the check. */
+     Written against Action Dice and a touch table rather than this app's
+     d100 and Fate Points. Kept as supplied — the effect text is the table's
+     own to word — with two exceptions. Career lists were corrected, because
+     a career this app does not have can never be matched and the entry would
+     read as permanently out of reach. And distances are in METRES: Rogue
+     Trader measures range in metres throughout, one grid square being one
+     metre, which is the scale movement.js already assumes when it turns an
+     Agility Bonus of 3 into a 3-metre Half Move. Both are enforced by the
+     check. */
 
   {
     id: 'grand-strategist-combat-zones',
@@ -51,7 +54,7 @@ export const ELITE_ADVANCES = [
     careers: ['Seneschal', 'Explorator', 'Rogue Trader'],
     minRank: 3,
     requires: 'Seneschal, Explorator, or Rogue Trader, Rank III, Scholastic Lore (Tactica Imperialis)',
-    effect: 'At the start of combat, define up to three 3x3 tile sectors on the digital tabletop '
+    effect: 'At the start of combat, define up to three 3-metre-square sectors on the digital tabletop '
       + 'as designated Combat Zones: Frontline (+2 Damage to allies inside), Backline (+10 Dodge and Cover bonus), '
       + 'or Rear (+10 Ballistic Skill and +2 Range to shots originating here). Zones remain active for the encounter.',
     note: 'Converted from the Grand Strategist archetype (Rogue Trader CRPG). '
@@ -80,7 +83,7 @@ export const ELITE_ADVANCES = [
     careers: ['Arch-Militant', 'Missionary'],
     minRank: 3,
     requires: 'Arch-Militant or Missionary, Rank III, Toughness 40+',
-    effect: 'You project a 3-tile threat aura on the board. Hostile AI prioritizing targets must engage you if in range. '
+    effect: 'You project a threat aura to a radius of 3 metres. Hostile AI prioritizing targets must engage you if in range. '
       + 'Whenever an enemy hits you, gain temporary Wounds equal to your Toughness Bonus (these absorb damage first and '
       + 'expire at the end of the combat round).',
     note: 'Converted from the Vanguard archetype (Rogue Trader CRPG). '
@@ -110,7 +113,7 @@ export const ELITE_ADVANCES = [
     requires: 'Eldar Corsair, Seneschal, or Arch-Militant, Rank III, Agility 45+',
     effect: 'Whenever you attack a target from its flank or rear relative to its facing vector arrow, '
       + 'your attack gains +20 Critical Hit chance and inflicts bonus damage equal to your (Agility Bonus + Perception Bonus). '
-      + 'You may move through hostile-occupied squares without provoking free attacks.',
+      + 'You may move through a hostile\u2019s own space without provoking free attacks.',
     note: 'Converted from the Assassin archetype (Rogue Trader CRPG). '
       + 'Flanking openings appear as illuminated arcs projected onto the digital tabletop behind enemy miniatures.'
   },
@@ -138,7 +141,7 @@ export const ELITE_ADVANCES = [
     careers: ['Rogue Trader', 'Missionary'],
     minRank: 2,
     requires: 'Rogue Trader or Missionary, Rank II, Fellowship 40+',
-    effect: 'Spend a 3+ Action Die to command an ally within 6 tiles to act immediately out of turn order. '
+    effect: 'Spend a 3+ Action Die to command an ally within 6 metres to act immediately out of turn order. '
       + 'The ally receives an immediate bonus turn with 2 Action Dice and 0 movement points. '
       + 'This ability can only be used on an ally once per combat round.',
     note: 'Converted from the Officer archetype (Rogue Trader CRPG). '
@@ -152,7 +155,7 @@ export const ELITE_ADVANCES = [
     careers: ['Arch-Militant', 'Void-Master'],
     minRank: 2,
     requires: 'Arch-Militant or Void-Master, Rank II, Ballistic Skill 40+',
-    effect: 'Spend a 2+ Action Die to enter a sprint state: gain +3 tiles of tactical movement and '
+    effect: 'Spend a 2+ Action Die to enter a sprint state: gain +3 metres of tactical movement and '
       + 'make an extra ranged attack this turn, ignoring standard single-attack limitations. '
       + 'You cannot use basic interactions or terminals in the same turn this ability is activated.',
     note: 'Converted from the Soldier archetype (Rogue Trader CRPG). '
@@ -288,7 +291,7 @@ export const ELITE_ADVANCES = [
     careers: ['Arch-Militant'],
     minRank: 2,
     requires: 'Arch-Militant, Rank II, Ballistic Skill 40+',
-    effect: 'When firing in Semi-Auto or Full-Auto burst mode at targets within 6 tiles, '
+    effect: 'When firing in Semi-Auto or Full-Auto burst mode at targets within 6 metres, '
       + 'every Degree of Success scores an extra hit (up to weapon maximum), and your shots '
       + 'ignore the penalty for firing into melee combat without risking friendly fire.',
     note: 'Drilled into storm troopers of the Kasrkin pattern. Armsmen led in person by a '
@@ -304,7 +307,7 @@ export const ELITE_ADVANCES = [
     requires: 'Missionary, Rank II, Pure Faith',
     effect: 'Spend a 3+ Action Die as a Free Action to sing the holy hymns of your fallen sisters. '
       + 'For 2 rounds, all allies within hearing range ignore the effects of Fatigue, Pinning, and Fear. '
-      + 'Daemons and warp-entities within 4 tiles suffer a -10 penalty to all tests and treat the area as difficult terrain.',
+      + 'Daemons and warp-entities within 4 metres suffer a -10 penalty to all tests and treat the area as difficult terrain.',
     note: 'Sung by those who carry the ashes of an order that did not survive them. While the hymn '
       + 'is active, the companion app plays ambient liturgical chants through connected player devices.'
   },
@@ -317,7 +320,7 @@ export const ELITE_ADVANCES = [
     minRank: 2,
     requires: 'Explorator, Rank II, Tech-Use',
     effect: 'Your unique Servo-Skull gains an independent digital base marker on the tabletop display. '
-      + 'It can move up to 4 tiles per round through air vents and over cover. It can perform Tech-Use, '
+      + 'It can move up to 4 metres per round through air vents and over cover. It can perform Tech-Use, '
       + 'Security, and Search checks using your characteristics without exposing your miniature to line of sight.',
     note: 'An enigmatic construct of unknown provenance. Interfacing with foreign xenos technology '
       + 'through the Servo-Skull eliminates the risk of feedback shock to the Magos.'
@@ -330,8 +333,8 @@ export const ELITE_ADVANCES = [
     careers: ['Void-Master'],
     minRank: 2,
     requires: 'Void-Master, Rank II, Agility 40+',
-    effect: 'Whenever an enemy is killed or a container is breached on your tile, you can spend a 1+ Action Die '
-      + 'to immediately loot the target as a Free Action and gain +2 tiles of free tactical movement. '
+    effect: 'Whenever an enemy is killed or a container is breached within your reach, you can spend a 1+ Action Die '
+      + 'to immediately loot the target as a Free Action and gain +2 metres of free tactical movement. '
       + 'You suffer no penalty when dual-wielding pistols or compact boarding weapons.',
     note: 'Driven by the pursuit of glorious booty. Crates looted through this talent quietly credit '
       + 'bonus Cold Trade currency to the character\u2019s companion app ledger.'

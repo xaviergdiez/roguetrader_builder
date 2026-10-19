@@ -50,7 +50,7 @@ import {
 } from './voidcombat.js';
 import {
   ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES, GROUND_CONDITIONS,
-  weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll
+  weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll, resolveHits
 } from './groundcombat.js';
 import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
 import {
@@ -4749,6 +4749,32 @@ function TurnStrip({ label, clock, order = [], current = null, onAdvance,
   );
 }
 
+/* What a weapon actually does, wherever one is named. Damage, Penetration and
+   range decide every figure in an attack, and until this existed the panel
+   printed the bare label — "big choppa" — on the hostile's row and in the
+   player's own picker, so both sides had to look the profile up off the sheet
+   before they could work a hit out. The stats come from gear.js through
+   groundcombat's parser, so there is no second copy to drift. */
+
+function WeaponLine({ label, className = 'rt-entry-s' }) {
+  const w = gcWeaponProfile(label);
+  if (!w) return <p className={className}>{label} {'—'} no stats on file, adjudicate by hand.</p>;
+  const bits = [
+    w.damage ? `${w.damage.dice}d${w.damage.die}${w.damage.bonus ? (w.damage.bonus > 0 ? '+' : '−') + Math.abs(w.damage.bonus) : ''} ${w.damage.type}` : null,
+    w.pen != null ? `Pen ${w.pen}` : null,
+    w.range != null ? `${w.range}m` : (w.skillType === 'ws' ? 'melee' : null),
+    w.modes && w.modes.semiAuto ? `semi ${w.modes.semiAuto}` : null,
+    w.modes && w.modes.fullAuto ? `auto ${w.modes.fullAuto}` : null,
+    w.clip != null ? `clip ${w.clip}` : null,
+    ...(w.qualities || [])
+  ].filter(Boolean);
+  return (
+    <p className={className}>
+      <b>{label}</b>{' · '}{bits.join(' · ')}
+    </p>
+  );
+}
+
 /* A combatant's standing conditions. crits.js has been handing these out all
    along and the panel only printed them in the log; here they stay on the row
    until someone clears them. A countdown is shown because the engine expires
@@ -6070,6 +6096,10 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const [gNpcAmount, setGNpcAmount] = useState(0);
   const [gSelfAmount, setGSelfAmount] = useState(0);
   const [gResponse, setGResponse] = useState('');
+  const [gMyWeapon, setGMyWeapon] = useState('');
+  const [gMyDistance, setGMyDistance] = useState(0);
+  const [gMyAction, setGMyAction] = useState('standard_attack');
+  const [gMyPreview, setGMyPreview] = useState(null);
   const [gCondWho, setGCondWho] = useState('');      // "pc:<charId>" or "npc:<id>"
   const [gCondId, setGCondId] = useState('blood_loss');
   const [gCondRounds, setGCondRounds] = useState(0); // 0 = until cleared
@@ -6299,31 +6329,19 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const applyAttack = () => {
     if (!gPreview || !gAtkTarget) return;
     const target = playerVitals[gAtkTarget] || { max: 0, damage: 0, critSoFar: 0 };
-    const weapon = gPreview.weapon;
-    let woundsLeft = Math.max(0, (target.max || 0) - (target.damage || 0));
-    let critSoFar = target.critSoFar || 0;
-    let totalTaken = 0;
-
-    if (gPreview.success && weapon && weapon.damage) {
-      for (let i = 0; i < gPreview.hits; i++) {
-        const dice = Array.from({ length: weapon.damage.dice }, () => 1 + Math.floor(Math.random() * weapon.damage.die));
-        const rolled = dice.reduce((s, d) => s + d, 0) + weapon.damage.bonus;
-        const hit = resolveHit({
-          damage: rolled, penetration: weapon.pen || 0, armour: Number(gAtkArmour) || 0,
-          toughnessBonus: Number(gAtkTb) || 0, wounds: woundsLeft, critSoFar,
-          type: damageTypeById(weapon.damage.type)?.id || 'impact',
-          location: hitLocation(gPreview.locationRoll)?.id || 'body',
-          fury: { confirmed: furyTriggered(dice), d5: 1 + Math.floor(Math.random() * 5) }
-        });
-        totalTaken += hit.woundsLost;
-        woundsLeft = hit.woundsLeft;
-        critSoFar = hit.critTotal;
-      }
-    }
+    const { totalTaken, critGained } = gPreview.success
+      ? resolveHits({
+          weapon: gPreview.weapon, hits: gPreview.hits, locationRoll: gPreview.locationRoll,
+          armour: Number(gAtkArmour) || 0, toughnessBonus: Number(gAtkTb) || 0,
+          wounds: Math.max(0, (target.max || 0) - (target.damage || 0)),
+          critSoFar: target.critSoFar || 0,
+          resolveHit, hitLocation, damageTypeById, furyTriggered, d
+        })
+      : { totalTaken: 0, critGained: 0 };
 
     const name = (dynasty.members.find((m) => m.charId === gAtkTarget) || {}).name || 'the target';
     groundEvent({
-      id: 'npc_attack', charId: gAtkTarget, amount: totalTaken, crit: Math.max(0, critSoFar - (target.critSoFar || 0)),
+      id: 'npc_attack', charId: gAtkTarget, amount: totalTaken, crit: critGained,
       text: gPreview.success
         ? `${gPreview.npc.name} hits ${name} (${gPreview.hits} hit${gPreview.hits === 1 ? '' : 's'}, ${totalTaken} Wounds).`
         : `${gPreview.npc.name} misses ${name} (rolled ${gPreview.roll} vs ${gPreview.total}).`
@@ -6331,10 +6349,64 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     setGPreview(null);
   };
 
-  // A player attacking an NPC rolls their own damage and types the total in
-  // — this app resolves the GM's NPCs against the party automatically
-  // (above) but does not yet reach into a player's own sheet to auto-roll
-  // their attack, so this stays a plain amount field for now.
+  /* ---- a character's own attack on a hostile ----
+     The same two calls the GM's side makes, pointed the other way: the
+     character's WS or BS off their own sheet, their weapon out of the crew
+     card's gear, and the hostile's own armour and Toughness Bonus off the
+     roster. npcAttackRoll takes {ws, bs, weapon}, which is the shape a
+     character is in here too, so nothing new resolves the roll. */
+
+  const myWeapons = (card && card.weapons) || [];
+  const myAttackChar = { ws: Number(characteristics?.ws), bs: Number(characteristics?.bs),
+    weapon: gMyWeapon };
+
+  const rollMyAttack = () => {
+    const npc = ground.npcs.find((n) => n.id === gNpcTarget);
+    if (!npc || !gMyWeapon) return;
+    const roll = d(100);
+    const atk = npcAttackRoll(myAttackChar, {
+      size: npc.size || 'average', distanceM: gMyDistance, actionId: gMyAction, roll
+    });
+    if (!atk) {
+      setErr('No Weapon Skill or Ballistic Skill on this sheet for that weapon.');
+      return;
+    }
+    setGMyPreview({ ...atk, roll, npcId: npc.id, npcName: npc.name });
+  };
+
+  const applyMyAttack = () => {
+    if (!gMyPreview) return;
+    const npc = ground.npcs.find((n) => n.id === gMyPreview.npcId);
+    if (!npc) { setErr('That hostile is no longer on the board.'); return; }
+    // Strength Bonus is added to melee damage; a ranged weapon carries its own.
+    const strBonus = gMyPreview.weapon.skillType === 'ws'
+      ? Math.floor((Number(characteristics?.s) || 0) / 10) : 0;
+    const weapon = strBonus
+      ? { ...gMyPreview.weapon,
+          damage: { ...gMyPreview.weapon.damage, bonus: gMyPreview.weapon.damage.bonus + strBonus } }
+      : gMyPreview.weapon;
+    const { totalTaken, critGained } = gMyPreview.success
+      ? resolveHits({
+          weapon, hits: gMyPreview.hits, locationRoll: gMyPreview.locationRoll,
+          armour: npc.armour || 0, toughnessBonus: npc.toughnessBonus || 0,
+          wounds: Math.max(0, (npc.max || 0) - (npc.damage || 0)),
+          critSoFar: npc.critSoFar || 0,
+          resolveHit, hitLocation, damageTypeById, furyTriggered, d
+        })
+      : { totalTaken: 0, critGained: 0 };
+
+    const who = characterName || 'A player';
+    groundEvent({
+      id: 'npc_damage', npcId: npc.id, amount: totalTaken, crit: critGained,
+      text: gMyPreview.success
+        ? `${who} hits ${npc.name} with ${gMyPreview.weapon.label} (${gMyPreview.hits} hit${gMyPreview.hits === 1 ? '' : 's'}, ${totalTaken} Wounds).`
+        : `${who} misses ${npc.name} (rolled ${gMyPreview.roll} vs ${gMyPreview.total}).`
+    }, gMyPreview.success ? 'Damage applied.' : 'Miss logged.');
+    setGMyPreview(null);
+  };
+
+  // Kept beside the resolver: a weapon with no stats line on file, a called
+  // shot the GM has ruled on, or anything else worked out away from the app.
   const hitNpc = () => {
     if (!gNpcTarget) return;
     const npc = ground.npcs.find((n) => n.id === gNpcTarget);
@@ -6789,7 +6861,16 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                       <ConditionChips list={n.conditions}
                         onClear={(cid) => groundEvent({ id: 'npc_condition', npcId: n.id, clear: cid,
                           text: `${n.name} is no longer ${cid.replace(/_/g, ' ')}.` })} />
-                      {n.weapon && <div className="rt-entry-d"><p>{n.weapon}</p></div>}
+                      {n.weapon && (
+                        <div className="rt-entry-d">
+                          <WeaponLine label={n.weapon} />
+                          <p className="rt-entry-s">
+                            Armour {n.armour ?? 0} {'\u00B7'} TB {n.toughnessBonus ?? 0}
+                            {n.ws != null ? ' \u00B7 WS ' + n.ws : ''}
+                            {n.bs != null ? ' \u00B7 BS ' + n.bs : ''}
+                          </p>
+                        </div>
+                      )}
                       {isGmHere && (
                         <button className="rt-rm" disabled={busy}
                           onClick={() => removeNpc(n.id, n.name)}
@@ -6814,8 +6895,56 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                       ))}
                     </select>
                   </label>
+                  {myWeapons.length > 0 && (
+                    <>
+                      <label className="rt-shipsel">
+                        <span className="rt-shipsel-k">Your weapon</span>
+                        <select className="rt-sel" value={gMyWeapon}
+                          onChange={(e) => { setGMyWeapon(e.target.value); setGMyPreview(null); }}>
+                          <option value="">{'\u2014 pick a weapon \u2014'}</option>
+                          {myWeapons.map((w) => <option key={w} value={w}>{w}</option>)}
+                        </select>
+                      </label>
+                      {gMyWeapon && <WeaponLine label={gMyWeapon} className="rt-vox-hint" />}
+                      <div className="rt-gmmods">
+                        <label><span className="rt-der-k">Distance (m)</span>
+                          {num(gMyDistance, setGMyDistance)}
+                        </label>
+                        <label><span className="rt-der-k">Action</span>
+                          <select className="rt-sel" value={gMyAction}
+                            onChange={(e) => setGMyAction(e.target.value)}>
+                            {GROUND_ACTIONS.filter((a) => a.id !== 'reload').map((a) => (
+                              <option key={a.id} value={a.id}>{a.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+                      <div className="rt-btnrow">
+                        <button className="rt-btn" disabled={busy || !gNpcTarget || !gMyWeapon}
+                          onClick={rollMyAttack}>Roll attack</button>
+                      </div>
+                      {gMyPreview && (
+                        <div>
+                          <TargetNumber total={gMyPreview.total} base={gMyPreview.base}
+                            parts={gMyPreview.parts} band={gMyPreview.band} roll={gMyPreview.roll}
+                            outcome={gMyPreview.success
+                              ? `hit, ${gMyPreview.hits} hit${gMyPreview.hits === 1 ? '' : 's'} scored`
+                              : 'missed'} />
+                          <div className="rt-btnrow">
+                            <button className="rt-btn" disabled={busy} onClick={applyMyAttack}>
+                              {gMyPreview.success ? 'Roll damage and apply' : 'Log the miss'}
+                            </button>
+                            <button className="rt-btn ghost" onClick={() => setGMyPreview(null)}>
+                              Discard
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+
                   <div className="rt-gmmods">
-                    <label><span className="rt-der-k">Damage</span>
+                    <label><span className="rt-der-k">Damage by hand</span>
                       {num(gNpcAmount, setGNpcAmount)}
                     </label>
                     <button className="rt-opt" disabled={busy || !gNpcTarget} onClick={hitNpc}>
@@ -6976,6 +7105,10 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                         </button>
                       </div>
 
+                      {(ground.npcs.find((n) => n.id === gAtkNpc) || {}).weapon && (
+                        <WeaponLine className="rt-vox-hint"
+                          label={ground.npcs.find((n) => n.id === gAtkNpc).weapon} />
+                      )}
                       {gPreview && (
                         <div>
                           <TargetNumber total={gPreview.total} base={gPreview.base}

@@ -255,6 +255,49 @@ export function npcAttackRoll(npc, {
   return { ...t, weapon, ...resolveAttack({ target: t.total, roll, actionId, weapon }) };
 }
 
+// Damage for every hit an attack scored, chained so a burst's later hits land
+// on the Wounds and crit total the earlier ones left behind. Used in both
+// directions: the GM resolving a hostile against a character, and a character
+// resolving their own weapon against a hostile. Before this existed only the
+// first direction rolled — a player read their weapon's line off the sheet,
+// did the arithmetic and typed a total in, which is the one place at the table
+// where armour, Penetration and Righteous Fury were applied by hand.
+//
+// Dice are injected for the same reason the rest of this module injects them.
+export function resolveHits({
+  weapon = null, hits = 0, locationRoll = 0,
+  armour = 0, toughnessBonus = 0, wounds = 0, critSoFar = 0,
+  resolveHit, hitLocation, damageTypeById, furyTriggered,
+  d = (n) => 1 + Math.floor(Math.random() * n)
+} = {}) {
+  const before = Math.max(0, Math.floor(Number(critSoFar) || 0));
+  let woundsLeft = Math.max(0, Math.floor(Number(wounds) || 0));
+  let critTotal = before;
+  let totalTaken = 0;
+  const rows = [];
+
+  if (weapon && weapon.damage) {
+    for (let i = 0; i < hits; i++) {
+      const dice = Array.from({ length: weapon.damage.dice }, () => d(weapon.damage.die));
+      const rolled = dice.reduce((s, x) => s + x, 0) + weapon.damage.bonus;
+      const hit = resolveHit({
+        damage: rolled, penetration: weapon.pen || 0,
+        armour: Number(armour) || 0, toughnessBonus: Number(toughnessBonus) || 0,
+        wounds: woundsLeft, critSoFar: critTotal,
+        type: (damageTypeById(weapon.damage.type) || {}).id || 'impact',
+        location: (hitLocation(locationRoll) || {}).id || 'body',
+        fury: { confirmed: furyTriggered(dice), d5: d(5) }
+      });
+      totalTaken += hit.woundsLost;
+      woundsLeft = hit.woundsLeft;
+      critTotal = hit.critTotal;
+      if (hit.rows) rows.push(...hit.rows);
+    }
+  }
+
+  return { totalTaken, critGained: Math.max(0, critTotal - before), critTotal, woundsLeft, rows };
+}
+
 /* ==============================================================================
    THE SHARED BRIDGE'S GROUND COMBAT: events, and who may fire them.
 

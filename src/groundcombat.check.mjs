@@ -421,3 +421,97 @@ assert.equal(authorizeGroundEvent({ id: 'npc_condition', npcId: 'n1' },
   { isMember: true, ownCharIds: ['pc1'] }).ok, true, 'a hostile is anyone\u2019s to mark');
 
 console.log('groundcombat.check.mjs: ground combat events all passed');
+
+/* ---- damage, in both directions, off one resolver ---- */
+
+// The GM's side has always rolled a hostile's damage against a character.
+// A character's own attack on a hostile used to be a number typed in by
+// hand, which is the one place at the table where armour, Penetration and
+// Righteous Fury were applied by a person. Both call it now, so the
+// arithmetic has to hold whichever way it is pointed.
+{
+  const { resolveHits, weaponProfile } = await import('./groundcombat.js');
+  const { resolveHit, hitLocation, damageTypeById, furyTriggered } = await import('./crits.js');
+  const kit = { resolveHit, hitLocation, damageTypeById, furyTriggered };
+
+  // Every die shows its maximum, so the figures below are exact.
+  const maxed = (n) => n;
+  const weapon = weaponProfile('chainsword');       // 1d10+2 R, Pen 2
+  assert.ok(weapon && weapon.damage, 'the roster weapon resolves to a damage line');
+
+  // A label with no gear.js entry resolves to nothing at all, which is why
+  // WeaponLine prints "adjudicate by hand" rather than an empty stat line.
+  assert.equal(weaponProfile('big choppa'), null);
+
+  // One hit, soak subtracted once: damage - max(0, armour - pen) - TB.
+  {
+    const dmg = weapon.damage.dice * weapon.damage.die + weapon.damage.bonus;
+    const soak = Math.max(0, 4 - (weapon.pen || 0)) + 3;
+    const r = resolveHits({ weapon, hits: 1, locationRoll: 50, armour: 4, toughnessBonus: 3,
+      wounds: 99, critSoFar: 0, ...kit, d: maxed });
+    assert.equal(r.totalTaken, Math.max(0, dmg - soak), 'armour and TB both come off, once');
+    assert.equal(r.critGained, 0, 'nothing overflows while Wounds remain');
+  }
+
+  // Armour that outclasses the weapon stops it dead rather than healing.
+  {
+    const r = resolveHits({ weapon, hits: 3, locationRoll: 50, armour: 200, toughnessBonus: 0,
+      wounds: 10, critSoFar: 0, ...kit, d: maxed });
+    assert.equal(r.totalTaken, 0);
+    assert.equal(r.woundsLeft, 10, 'and the target is untouched');
+  }
+
+  // A miss resolves to nothing: the caller passes hits 0 rather than branching.
+  assert.deepEqual(
+    (({ totalTaken, critGained }) => ({ totalTaken, critGained }))(
+      resolveHits({ weapon, hits: 0, armour: 0, toughnessBonus: 0, wounds: 10, ...kit, d: maxed })),
+    { totalTaken: 0, critGained: 0 });
+
+  // A weapon with no parseable stats line costs nothing automatically — that
+  // is what the by-hand field beside the resolver is for.
+  assert.equal(resolveHits({ weapon: { label: 'relic', damage: null }, hits: 2,
+    armour: 0, toughnessBonus: 0, wounds: 10, ...kit, d: maxed }).totalTaken, 0);
+
+  // Past zero Wounds the excess becomes Critical damage, and a burst's later
+  // hits land on what the earlier ones left: the whole point of chaining.
+  {
+    const r = resolveHits({ weapon, hits: 2, locationRoll: 50, armour: 0, toughnessBonus: 0,
+      wounds: 1, critSoFar: 0, ...kit, d: maxed });
+    assert.equal(r.woundsLeft, 0);
+    assert.ok(r.critGained > 0, 'the overflow is Critical damage');
+    assert.equal(r.critTotal, r.critGained, 'counted from a clean start');
+    assert.ok(r.rows.length > 0, 'and it names the crit rows it caused');
+  }
+
+  // critSoFar carries in: a target already on 5 does not re-suffer rows 1-5.
+  {
+    const fresh = resolveHits({ weapon, hits: 1, locationRoll: 50, armour: 0, toughnessBonus: 0,
+      wounds: 0, critSoFar: 0, ...kit, d: maxed });
+    const hurt = resolveHits({ weapon, hits: 1, locationRoll: 50, armour: 0, toughnessBonus: 0,
+      wounds: 0, critSoFar: 5, ...kit, d: maxed });
+    assert.equal(hurt.critTotal, hurt.critGained + 5, 'the total counts from where it was');
+    assert.notDeepEqual(fresh.rows.map((x) => x.level), hurt.rows.map((x) => x.level));
+  }
+
+  // The dice are injected: the same call with the same dice gives the same
+  // answer, which is what makes any of the above reproducible at all.
+  {
+    const once = () => resolveHits({ weapon, hits: 2, locationRoll: 50, armour: 2,
+      toughnessBonus: 2, wounds: 50, critSoFar: 0, ...kit, d: () => 4 });
+    assert.deepEqual(once(), once());
+  }
+
+  // A character's attack resolves through npcAttackRoll with their own sheet
+  // in the NPC's shape — the reason no second roller exists for the player.
+  {
+    const { npcAttackRoll } = await import('./groundcombat.js');
+    const atk = npcAttackRoll({ ws: 45, bs: 30, weapon: 'chainsword' },
+      { size: 'average', distanceM: 0, roll: 5 });
+    assert.ok(atk && atk.success, 'a 5 against a WS of 45 or better hits');
+    assert.equal(atk.weapon.skillType, 'ws', 'a chainsword reads Weapon Skill');
+    assert.equal(npcAttackRoll({ bs: 30, weapon: 'chainsword' }, { roll: 5 }), null,
+      'no Weapon Skill on the sheet, no melee attack');
+  }
+}
+
+console.log('groundcombat.check.mjs: damage resolver passed');

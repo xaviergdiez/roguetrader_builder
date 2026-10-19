@@ -319,7 +319,12 @@ export default async function handler(req, res) {
     const auth = authorizeGroundEvent(dynasty, uid, event);
     if (!auth.ok) return res.status(403).json({ error: auth.reason });
 
-    const { patch, unknown } = applyGroundEvent(ship.combat, event);
+    // The per-round toll of Blood Loss and On Fire is rolled here: the
+    // module stays pure and takes its dice, and a client cannot pick its own
+    // burn damage by sending a number.
+    const { patch, unknown } = applyGroundEvent(ship.combat, event, {
+      d10: () => 1 + Math.floor(Math.random() * 10)
+    });
     if (unknown) return res.status(400).json({ error: "unknown_event" });
 
     let next = applyPatch(ship, { combat: { ...ship.combat, ...patch } });

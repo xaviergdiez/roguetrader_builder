@@ -269,4 +269,155 @@ assert.equal(groundEventById('player_response').logOnly, true);
   assert.equal(unknown, true);
 }
 
+/* ---- the encounter clock: order, round, and conditions that tick ---- */
+
+import {
+  GROUND_CONDITIONS, conditionById, cleanCondition, conditionToll,
+  tickConditions, groundInitiative, groundOrder
+} from './groundcombat.js';
+
+// 1d10 + Agility Bonus, highest first, ties stable.
+assert.equal(groundInitiative(4, 8), 12);
+assert.equal(groundInitiative(undefined, 8), 8, 'no bonus is a bonus of nothing');
+{
+  const order = groundOrder([
+    { id: 'a', name: 'Kell', kind: 'pc', agilityBonus: 4, d10: 6 },
+    { id: 'b', name: 'Ork', agilityBonus: 3, d10: 7 },
+    { id: 'c', name: 'Sniper', agilityBonus: 5, d10: 9 }
+  ]);
+  assert.deepEqual(order.map((o) => o.name), ['Sniper', 'Kell', 'Ork']);
+  assert.equal(order[0].score, 14);
+  assert.equal(order[1].kind, 'pc', 'the kind rides along so the strip can mark the party');
+  assert.equal(order[2].kind, 'npc', 'and defaults to a hostile');
+  // ties keep input order, so the same rolls always produce the same strip
+  const tied = groundOrder([
+    { id: 'x', name: 'First', agilityBonus: 3, d10: 5 },
+    { id: 'y', name: 'Second', agilityBonus: 3, d10: 5 }
+  ]);
+  assert.deepEqual(tied.map((o) => o.name), ['First', 'Second']);
+  assert.deepEqual(groundOrder([]), []);
+}
+
+/* ---- conditions ---- */
+
+for (const c of GROUND_CONDITIONS) {
+  assert.ok(c.id && c.name && c.note, c.id + ' is incomplete');
+}
+assert.equal(conditionById('on_fire').perRoundDice, 10);
+assert.equal(conditionById('nonsense'), null);
+
+// A condition is clamped the same way everything else off a client is.
+assert.deepEqual(cleanCondition({ id: 'prone' }), { id: 'prone', name: 'Prone', rounds: null });
+assert.equal(cleanCondition({ id: 'stunned', rounds: '3' }).rounds, 3);
+assert.equal(cleanCondition({ id: 'stunned', rounds: -2 }).rounds, null, 'a bad duration lasts until cleared');
+assert.equal(cleanCondition({ id: 'not-a-condition' }), null);
+assert.equal(cleanCondition(null), null);
+
+// The two that cost Wounds every round, and the rest that do not.
+assert.equal(conditionToll([{ id: 'blood_loss' }], () => 7), 1);
+assert.equal(conditionToll([{ id: 'on_fire' }], () => 7), 7, 'burning rolls its die');
+assert.equal(conditionToll([{ id: 'blood_loss' }, { id: 'on_fire' }], () => 7), 8);
+assert.equal(conditionToll([{ id: 'prone' }, { id: 'stunned' }], () => 7), 0);
+assert.equal(conditionToll(null), 0);
+
+// Durations come down; open-ended ones do not.
+{
+  const after = tickConditions([
+    { id: 'stunned', rounds: 1 }, { id: 'blinded', rounds: 3 }, { id: 'prone', rounds: null }
+  ]);
+  assert.deepEqual(after.map((c) => c.id), ['blinded', 'prone'], 'the expired one is gone');
+  assert.equal(after[0].rounds, 2);
+  assert.deepEqual(tickConditions(null), []);
+}
+
+/* ---- running a round end to end ---- */
+
+{
+  let combat = {
+    playerVitals: { pc1: { max: 12, damage: 0, critSoFar: 0, conditions: [] } },
+    ground: { npcs: [], order: [], round: 0, turn: 0 }
+  };
+  const fixed = { d10: () => 4 };
+  const apply = (e) => {
+    const r = applyGroundEvent(combat, e, fixed);
+    assert.equal(r.unknown, false, e.id + ' was refused');
+    combat = { ...combat, ...r.patch };
+    return r;
+  };
+
+  // Nothing to advance before initiative is rolled.
+  assert.equal(applyGroundEvent(combat, { id: 'ground_advance' }, fixed).unknown, true);
+  assert.equal(applyGroundEvent(combat, { id: 'ground_initiative', combatants: [] }, fixed).unknown, true);
+
+  apply({ id: 'npc_add', name: 'Ork', max: 15, agilityBonus: 3 });
+  const npcId = combat.ground.npcs[0].id;
+  assert.deepEqual(combat.ground.npcs[0].conditions, [], 'a hostile arrives clean');
+  assert.equal(combat.ground.npcs[0].agilityBonus, 3);
+
+  apply({ id: 'ground_initiative', combatants: [
+    { id: 'pc1', name: 'Kell', kind: 'pc', agilityBonus: 4, d10: 8 },
+    { id: npcId, name: 'Ork', kind: 'npc', agilityBonus: 3, d10: 2 }
+  ] });
+  assert.equal(combat.ground.round, 1, 'initiative starts the clock');
+  assert.equal(combat.ground.turn, 0);
+  assert.deepEqual(combat.ground.order.map((o) => o.name), ['Kell', 'Ork']);
+
+  apply({ id: 'player_condition', charId: 'pc1', condition: { id: 'blood_loss' } });
+  apply({ id: 'player_condition', charId: 'pc1', condition: { id: 'stunned', rounds: 1 } });
+  apply({ id: 'npc_condition', npcId, condition: { id: 'on_fire' } });
+
+  // Inside the round, nothing ticks.
+  apply({ id: 'ground_advance' });
+  assert.equal(combat.ground.turn, 1);
+  assert.equal(combat.ground.round, 1);
+  assert.equal(combat.playerVitals.pc1.damage, 0, 'the toll is charged at the wrap, not per turn');
+
+  // The wrap charges the toll and ages the durations.
+  apply({ id: 'ground_advance' });
+  assert.equal(combat.ground.round, 2);
+  assert.equal(combat.ground.turn, 0);
+  assert.equal(combat.playerVitals.pc1.damage, 1, 'Blood Loss costs its Wound');
+  assert.deepEqual(combat.playerVitals.pc1.conditions.map((c) => c.id), ['blood_loss'],
+    'and Stunned has run out');
+  assert.equal(combat.ground.npcs[0].damage, 4, 'the hostile burns for its 1d10');
+
+  // Clearing one leaves the rest.
+  apply({ id: 'player_condition', charId: 'pc1', clear: 'blood_loss' });
+  assert.deepEqual(combat.playerVitals.pc1.conditions, []);
+
+  // The same condition twice replaces rather than stacking.
+  apply({ id: 'npc_condition', npcId, condition: { id: 'on_fire' } });
+  assert.equal(combat.ground.npcs[0].conditions.length, 1);
+
+  // A hostile who is not on the board is refused: the id came from the
+  // roster, so a miss means the roster moved under the GM.
+  assert.equal(applyGroundEvent(combat, { id: 'npc_condition', npcId: 'ghost',
+    condition: { id: 'prone' } }, fixed).unknown, true);
+
+  // A character who has not published a Wounds card yet is not refused.
+  // The GM's picker offers every member of the dynasty, and refusing here
+  // surfaced as "unknown_event" against a name the panel had just listed.
+  {
+    const r = applyGroundEvent(combat, { id: 'player_condition', charId: 'unwritten',
+      condition: { id: 'prone' } }, fixed);
+    assert.equal(r.unknown, false);
+    assert.deepEqual(r.patch.playerVitals.unwritten.conditions.map((c) => c.id), ['prone']);
+    assert.equal(r.patch.playerVitals.unwritten.max, 0, 'no card means no Wounds yet');
+  }
+}
+
+/* ---- the new events are gated like the rest ---- */
+
+assert.equal(authorizeGroundEvent({ id: 'ground_advance' }, { isGm: true }).ok, true);
+assert.equal(authorizeGroundEvent({ id: 'ground_advance' },
+  { isMember: true, ownCharIds: ['pc1'] }).reason, 'gm_only', 'the clock is the GM\u2019s');
+assert.equal(authorizeGroundEvent({ id: 'ground_initiative' },
+  { isMember: true, ownCharIds: ['pc1'] }).reason, 'gm_only');
+assert.equal(authorizeGroundEvent({ id: 'player_condition', charId: 'pc1' },
+  { isMember: true, ownCharIds: ['pc1'] }).ok, true, 'your own character is yours to mark');
+assert.equal(authorizeGroundEvent({ id: 'player_condition', charId: 'pc2' },
+  { isMember: true, ownCharIds: ['pc1'] }).reason, 'not_your_character');
+assert.equal(authorizeGroundEvent({ id: 'npc_condition', npcId: 'n1' },
+  { isMember: true, ownCharIds: ['pc1'] }).ok, true, 'a hostile is anyone\u2019s to mark');
+
 console.log('groundcombat.check.mjs: ground combat events all passed');

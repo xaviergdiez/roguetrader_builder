@@ -49,7 +49,7 @@ import {
   EXTENDED_ACTIONS, mayTakeAction, actionOutcome
 } from './voidcombat.js';
 import {
-  ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES,
+  ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES, GROUND_CONDITIONS,
   weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll
 } from './groundcombat.js';
 import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
@@ -1841,6 +1841,31 @@ const CSS = `
 .rt-aug-req{padding:1px 6px;font-family:var(--mono);font-size:8.5px;letter-spacing:.12em;
   text-transform:uppercase;color:#161004;border:1px solid var(--gold-lit);
   background:var(--gold);}
+
+/* ---- the initiative strip, shared by naval and ground combat ----
+   Same widget either side of the airlock: a clock, an Advance, and the order
+   with whoever is up marked. The ship's clock is its phase and the ground's
+   is its round, which is the only difference. */
+.rt-order{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px;list-style:none;
+  margin:6px 0 0;padding:0;counter-reset:rtinit;}
+.rt-order-i{display:flex;align-items:baseline;gap:5px;padding:3px 7px;
+  font-family:var(--mono);font-size:10px;letter-spacing:.04em;color:var(--dim);
+  border:1px solid var(--brass-dim);background:rgba(6,12,8,.55);}
+.rt-order-i > span{font-size:11px;color:var(--brass-lit);}
+.rt-order-i.pc{border-color:var(--green-dim);color:var(--text);}
+.rt-order-i.now{border-color:var(--gold-lit);color:#161004;
+  background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
+.rt-order-i.now > span{color:#3d2c06;}
+.rt-order-i.out{opacity:.4;text-decoration:line-through;}
+.rt-tn-parts{display:block;margin-top:3px;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.04em;color:var(--dim);}
+.rt-cond-chips{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.rt-condchip{display:flex;align-items:baseline;gap:4px;padding:1px 6px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.06em;
+  color:var(--bad);border:1px solid var(--crimson);background:rgba(40,10,10,.5);}
+.rt-condchip > b{color:var(--bone);font-size:10px;}
+.rt-condchip button{cursor:pointer;background:none;border:0;padding:0 0 0 2px;
+  color:inherit;font-size:11px;line-height:1;}
 
 /* ---- named Elite Advances offered in the dialog ---- */
 .rt-elite{padding:9px 10px;margin-bottom:6px;
@@ -4668,6 +4693,85 @@ function AugmeticDialog({ careerId, originId, talents = [], gear = [],
   );
 }
 
+/* ------------------- SHARED COMBAT DISPLAY -------------------
+   The two combats in this app are mechanically unrelated — a macrobattery
+   against void shields has nothing to do with a chainsword against Toughness
+   — but they are READ the same way, and these two pieces are what they share.
+
+   TargetNumber works for both because voidcombat.toHit() and
+   groundcombat.toHit() already return the same shape: a base and a list of
+   {label, value} parts. That was accidental, and it is the cheapest shared
+   display in the app. Zero-value parts are dropped: the ground to-hit always
+   returns six of them and a reader does not need "+0 aim".
+
+   TurnStrip is the same: an order, a clock and an Advance. The ship's clock
+   is its phase, the ground's is its round. */
+
+function TargetNumber({ total, base, parts = [], band, roll, outcome, warn }) {
+  const shown = parts.filter((p) => p.value);
+  return (
+    <div className={warn ? 'rt-warn' : 'rt-note'}>
+      <b>Target {total}</b>
+      {roll != null && <>{' \u2014 rolled '}{roll}</>}
+      {outcome && <>{' \u2014 '}{outcome}</>}
+      <span className="rt-tn-parts">
+        {base} base
+        {shown.map((p) => ` ${p.value > 0 ? '+' : '\u2212'}${Math.abs(p.value)} ${p.label.toLowerCase()}`).join('')}
+        {band ? ` \u00B7 ${band} range` : ''}
+      </span>
+    </div>
+  );
+}
+
+function TurnStrip({ label, clock, order = [], current = null, onAdvance,
+  advanceLabel = 'Advance', extra, busy, children }) {
+  return (
+    <div className="rt-gmturn">
+      <span className="rt-der-k">{label}</span>
+      <b className="rt-gmphase">{clock}</b>
+      {onAdvance && (
+        <button className="rt-opt" disabled={busy} onClick={onAdvance}>{advanceLabel}</button>
+      )}
+      {children}
+      {extra}
+      {order.length > 0 && (
+        <ul className="rt-order">
+          {order.map((o, i) => (
+            <li key={o.id || i}
+              className={'rt-order-i' + (o.kind === 'pc' ? ' pc' : '')
+                + (i === current ? ' now' : '') + (o.out ? ' out' : '')}>
+              {o.name}<span>{o.score}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* A combatant's standing conditions. crits.js has been handing these out all
+   along and the panel only printed them in the log; here they stay on the row
+   until someone clears them. A countdown is shown because the engine expires
+   them on its own at the top of the round. */
+
+function ConditionChips({ list = [], onClear }) {
+  if (!list.length) return null;
+  return (
+    <div className="rt-cond-chips">
+      {list.map((c) => {
+        const def = GROUND_CONDITIONS.find((g) => g.id === c.id);
+        return (
+          <span className="rt-condchip" key={c.id} title={(def && def.note) || ''}>
+            <b>{(def && def.name) || c.id}</b>
+            {c.rounds != null && <>{c.rounds}r</>}
+            {onClear && <button onClick={() => onClear(c.id)} title="Clear">{'×'}</button>}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ------------------------------ TEST ROLLER ------------------------------
    Opens under the characteristic it belongs to. Difficulty sets the modifier,
    the target updates live, and the log keeps the last few rolls so a run of
@@ -5966,6 +6070,9 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const [gNpcAmount, setGNpcAmount] = useState(0);
   const [gSelfAmount, setGSelfAmount] = useState(0);
   const [gResponse, setGResponse] = useState('');
+  const [gCondWho, setGCondWho] = useState('');      // "pc:<charId>" or "npc:<id>"
+  const [gCondId, setGCondId] = useState('blood_loss');
+  const [gCondRounds, setGCondRounds] = useState(0); // 0 = until cleared
   const revRef = useRef(0);
 
   // The poll reads the rev through a ref so changing it does not restart the
@@ -6246,6 +6353,55 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     id: 'player_heal', charId, amount: Number(gSelfAmount) || 0,
     text: `${characterName || 'A player'} recovers ${Number(gSelfAmount) || 0} Wounds.`
   }, 'Healed.');
+
+  // The encounter's clock. Dice are rolled here and sent, the same way the
+  // GM's ship attacks roll here rather than on the server.
+  const rollGroundInitiative = () => {
+    const pcs = ((dynasty && dynasty.members) || [])
+      .filter((m) => m.charId && !m.npc)
+      .map((m) => ({
+        id: m.charId, name: m.name, kind: 'pc',
+        // Agility Bonus off the published card where there is one.
+        agilityBonus: Math.floor(((m.card && m.card.characteristics
+          && m.card.characteristics.ag) || 30) / 10),
+        d10: d(10)
+      }));
+    const hostiles = ground.npcs.map((n) => ({
+      id: n.id, name: n.name, kind: 'npc',
+      agilityBonus: n.agilityBonus ?? 3, d10: d(10)
+    }));
+    const combatants = [...pcs, ...hostiles];
+    if (!combatants.length) { setErr('Nobody to roll for yet.'); return undefined; }
+    return groundEvent({ id: 'ground_initiative', combatants,
+      text: 'Initiative: ' + combatants.length + ' in the order.' }, 'Initiative rolled.');
+  };
+
+  const advanceGround = () => {
+    const order = ground.order || [];
+    const wraps = (Number(ground.turn) || 0) + 1 >= order.length;
+    return groundEvent({ id: 'ground_advance',
+      text: wraps
+        ? `Round ${(Number(ground.round) || 1) + 1} begins.`
+        : `${(order[(Number(ground.turn) || 0) + 1] || {}).name || 'Next'} is up.` });
+  };
+
+  const setCondition = (clear) => {
+    if (!gCondWho) return undefined;
+    const [kind, id] = gCondWho.split(':');
+    const def = GROUND_CONDITIONS.find((c) => c.id === gCondId);
+    const who = kind === 'pc'
+      ? (((dynasty && dynasty.members) || []).find((m) => m.charId === id) || {}).name
+      : (ground.npcs.find((n) => n.id === id) || {}).name;
+    const base = kind === 'pc'
+      ? { id: 'player_condition', charId: id }
+      : { id: 'npc_condition', npcId: id };
+    return groundEvent(clear
+      ? { ...base, clear: gCondId, text: `${who} is no longer ${def.name}.` }
+      : { ...base,
+          condition: { id: gCondId, rounds: Number(gCondRounds) || null },
+          text: `${who} is ${def.name}`
+            + (Number(gCondRounds) ? ` for ${Number(gCondRounds)} rounds.` : '.') });
+  };
 
   const declareResponse = () => {
     if (!gResponse.trim()) return;
@@ -6564,10 +6720,32 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
             <>
               <div className="rt-conds-h">Ground combat</div>
 
+              {/* The same strip the GM dashboard uses for the ship's phase —
+                  see TurnStrip. The clock is the round rather than the phase,
+                  and whoever is up is marked in the order. */}
+              <TurnStrip
+                label="Round"
+                clock={ground.round ? String(ground.round) : 'not started'}
+                order={ground.order || []}
+                current={ground.order && ground.order.length ? (Number(ground.turn) || 0) : null}
+                onAdvance={isGmHere && (ground.order || []).length ? advanceGround : null}
+                advanceLabel="Next turn"
+                busy={busy}
+              >
+                {isGmHere && (
+                  <button className="rt-opt" disabled={busy} onClick={rollGroundInitiative}>
+                    Roll initiative
+                  </button>
+                )}
+              </TurnStrip>
+
               {myVitals && (
                 <div className="rt-gmvitals rt-bridgevitals">
                   <span>YOUR WOUNDS <b>{Math.max(0, myVitals.max - myVitals.damage)}</b>/{myVitals.max}</span>
                   {myVitals.critSoFar > 0 && <span className="rt-corrhot">CRIT <b>{myVitals.critSoFar}</b></span>}
+                  <ConditionChips list={myVitals.conditions}
+                    onClear={(cid) => groundEvent({ id: 'player_condition', charId, clear: cid,
+                      text: `${characterName || 'A player'} is no longer ${cid.replace(/_/g, ' ')}.` })} />
                 </div>
               )}
               {!myVitals && charWounds && (
@@ -6608,6 +6786,9 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                         {Math.max(0, n.max - n.damage)}/{n.max} Wounds
                         {n.critSoFar > 0 ? ' \u00B7 Crit ' + n.critSoFar : ''}
                       </span>
+                      <ConditionChips list={n.conditions}
+                        onClear={(cid) => groundEvent({ id: 'npc_condition', npcId: n.id, clear: cid,
+                          text: `${n.name} is no longer ${cid.replace(/_/g, ' ')}.` })} />
                       {n.weapon && <div className="rt-entry-d"><p>{n.weapon}</p></div>}
                       {isGmHere && (
                         <button className="rt-rm" disabled={busy}
@@ -6646,6 +6827,45 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
 
               {isGmHere && (
                 <>
+                  <div className="rt-conds-h">Conditions</div>
+                  <div className="rt-gmmods">
+                    <label><span className="rt-der-k">On</span>
+                      <select className="rt-sel" value={gCondWho}
+                        onChange={(e) => setGCondWho(e.target.value)}>
+                        <option value="">{'— who —'}</option>
+                        {((dynasty && dynasty.members) || [])
+                          .filter((m) => m.charId && !m.npc)
+                          .map((m) => (
+                            <option key={m.charId} value={'pc:' + m.charId}>{m.name}</option>
+                          ))}
+                        {ground.npcs.map((n) => (
+                          <option key={n.id} value={'npc:' + n.id}>{n.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label><span className="rt-der-k">Condition</span>
+                      <select className="rt-sel" value={gCondId}
+                        onChange={(e) => setGCondId(e.target.value)}>
+                        {GROUND_CONDITIONS.map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label><span className="rt-der-k">Rounds</span>
+                      {num(gCondRounds, setGCondRounds)}
+                    </label>
+                  </div>
+                  <p className="rt-vox-hint">
+                    {(GROUND_CONDITIONS.find((c) => c.id === gCondId) || {}).note}
+                    {' '}0 rounds lasts until someone clears it.
+                  </p>
+                  <div className="rt-btnrow">
+                    <button className="rt-btn" disabled={busy || !gCondWho}
+                      onClick={() => setCondition(false)}>Apply</button>
+                    <button className="rt-btn ghost" disabled={busy || !gCondWho}
+                      onClick={() => setCondition(true)}>Clear</button>
+                  </div>
+
                   <div className="rt-conds-h">Spawn a hostile</div>
                   <div className="rt-gmmods">
                     <label><span className="rt-der-k">Tier</span>
@@ -6757,13 +6977,12 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                       </div>
 
                       {gPreview && (
-                        <div className="rt-note">
-                          <b>Target {gPreview.total}</b>{' \u2014 rolled '}{gPreview.roll}
-                          {gPreview.band ? ' \u00B7 ' + gPreview.band + ' range' : ''}
-                          {' \u2014 '}
-                          {gPreview.success
-                            ? 'hit, ' + gPreview.hits + ' hit' + (gPreview.hits === 1 ? '' : 's') + ' scored'
-                            : 'missed'}
+                        <div>
+                          <TargetNumber total={gPreview.total} base={gPreview.base}
+                            parts={gPreview.parts} band={gPreview.band} roll={gPreview.roll}
+                            outcome={gPreview.success
+                              ? `hit, ${gPreview.hits} hit${gPreview.hits === 1 ? '' : 's'} scored`
+                              : 'missed'} />
                           <div className="rt-btnrow">
                             <button className="rt-btn" disabled={busy || !gAtkTarget} onClick={applyAttack}>
                               Apply to target
@@ -7226,23 +7445,24 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
       </div>
 
-      {/* ---- turn ---- */}
-      <div className="rt-gmturn">
-        <span className="rt-der-k">Phase</span>
-        <b className="rt-gmphase">{PHASE_LABELS[combat.phase] || PHASE_LABELS.extended}</b>
-        <button className="rt-opt" onClick={advance}>Advance</button>
+      {/* ---- turn ----
+          The same strip the bridge's ground combat uses; only the clock
+          differs. See TurnStrip. */}
+      <TurnStrip
+        label="Phase"
+        clock={PHASE_LABELS[combat.phase] || PHASE_LABELS.extended}
+        order={combat.order || []}
+        onAdvance={advance}
+        extra={
+          <span className={'rt-gmsync' + (bridgeCode ? ' on' : '')}>
+            {bridgeCode
+              ? `live to ${bridgeCode}${pushed ? ` \u00B7 rev ${pushed.rev}` : '\u2026'}`
+              : 'local only'}
+          </span>
+        }
+      >
         <button className="rt-opt" onClick={rollInitiative}>Roll initiative</button>
-        <span className={'rt-gmsync' + (bridgeCode ? ' on' : '')}>
-          {bridgeCode
-            ? `live to ${bridgeCode}${pushed ? ` \u00B7 rev ${pushed.rev}` : '\u2026'}`
-            : 'local only'}
-        </span>
-      </div>
-      {combat.order && combat.order.length > 0 && (
-        <p className="rt-vox-hint">
-          Order: {combat.order.map((o) => `${o.name} (${o.score})`).join(' › ')}
-        </p>
-      )}
+      </TurnStrip>
 
       {/* ---- fleet ---- */}
       <div className="rt-conds-h">Fleet</div>
@@ -7344,16 +7564,9 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       </div>
 
       {hit && (
-        hit.canFire ? (
-          <div className="rt-note">
-            <b>Target {hit.target}</b>{' — '}
-            {hit.base} base
-            {hit.parts.map((p) => ` ${p.value > 0 ? '+' : '−'}${Math.abs(p.value)} ${p.label.toLowerCase()}`).join('')}
-            {' · '}{hit.band} range
-          </div>
-        ) : (
-          <div className="rt-warn"><p>Out of range: {weapon.name} reaches {weapon.range} VU.</p></div>
-        )
+        hit.canFire
+          ? <TargetNumber total={hit.target} base={hit.base} parts={hit.parts} band={hit.band} />
+          : <div className="rt-warn"><p>Out of range: {weapon.name} reaches {weapon.range} VU.</p></div>
       )}
 
       <div className="rt-btnrow">

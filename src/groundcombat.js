@@ -280,6 +280,87 @@ export function npcAttackRoll(npc, {
    thing it mutates (combat.playerVitals / combat.ground.npcs) are both
    ground-combat concepts with nothing ship-shaped about them. */
 
+/* ------------------------------ conditions ------------------------------
+   crits.js already decides what a critical inflicts — it has been returning
+   "Stunned 1d10 rounds", "Blood Loss", "On Fire" since the tables went in —
+   but nothing carried those onto the combatant, so the GM read them once in
+   the log and then kept them in their head. This is the catalogue they land
+   in, with the two that cost Wounds every round marked as such.
+
+   `rounds` lives on the combatant rather than here: the same condition can
+   be two rounds on one target and open-ended on another. null means "until
+   something clears it". */
+
+const C = (id, name, extra) => ({ id, name, perRound: 0, perRoundDice: 0, note: '', ...extra });
+
+export const GROUND_CONDITIONS = [
+  C('blood_loss', 'Blood Loss', { perRound: 1,
+    note: '1 Wound at the start of each round until the bleeding is stopped.' }),
+  C('on_fire', 'On Fire', { perRoundDice: 10,
+    note: '1d10 Wounds each round, ignoring armour. An Agility Test puts it out.' }),
+  C('stunned', 'Stunned', { note: 'No actions, and others attack at +20.' }),
+  C('prone', 'Prone', { note: '-10 to melee attacks; melee attackers gain +10.' }),
+  C('pinned', 'Pinned', { note: 'No advancing, -20 Ballistic Skill from cover.' }),
+  C('fatigued', 'Fatigued', { note: '-10 to all tests per level of Fatigue.' }),
+  C('helpless', 'Helpless', { note: 'No actions, and open to a Coup de Grace.' }),
+  C('blinded', 'Blinded', { note: 'Cannot see: -30 to anything that needs sight.' }),
+  C('deafened', 'Deafened', { note: 'Cannot hear.' }),
+  C('unconscious', 'Unconscious', { note: 'Helpless and unaware.' })
+];
+
+export const conditionById = (id) => GROUND_CONDITIONS.find((c) => c.id === id) || null;
+
+// One condition as it sits on a combatant. `rounds` of null lasts until
+// cleared; a number counts down when the round wraps.
+export function cleanCondition(input) {
+  const c = conditionById(input && input.id);
+  if (!c) return null;
+  const n = Number(input.rounds);
+  return { id: c.id, name: c.name, rounds: Number.isFinite(n) && n > 0 ? Math.floor(n) : null };
+}
+
+const withCondition = (list, input) => {
+  const next = cleanCondition(input);
+  if (!next) return list || [];
+  const had = (list || []).filter((x) => x.id !== next.id);
+  return [...had, next];
+};
+
+// What a combatant loses at the start of a round, before anyone acts.
+export function conditionToll(conditions, d10 = () => 5) {
+  let damage = 0;
+  for (const c of conditions || []) {
+    const def = conditionById(c.id);
+    if (!def) continue;
+    damage += def.perRound;
+    if (def.perRoundDice) damage += d10();
+  }
+  return damage;
+}
+
+// A round has passed: durations come down and anything that expired is gone.
+export const tickConditions = (conditions) => (conditions || [])
+  .map((c) => (c.rounds == null ? c : { ...c, rounds: c.rounds - 1 }))
+  .filter((c) => c.rounds == null || c.rounds > 0);
+
+/* ------------------------------ initiative ------------------------------
+   1d10 + Agility Bonus, highest first — the ship's own initiativeOrder is
+   detection-based and belongs to voidcombat, so ground combat gets its own.
+   Ties keep their input order, which makes the result reproducible. */
+
+export const groundInitiative = (agilityBonus, d10) =>
+  (Number(d10) || 0) + (Number(agilityBonus) || 0);
+
+export function groundOrder(combatants) {
+  return (combatants || [])
+    .map((c, i) => ({
+      id: c.id, name: c.name, kind: c.kind || 'npc', ix: i,
+      score: groundInitiative(c.agilityBonus, c.d10)
+    }))
+    .sort((a, b) => (b.score - a.score) || (a.ix - b.ix))
+    .map(({ ix, ...rest }) => rest);
+}
+
 const GE = (id, name, { gmOnly, target, logOnly }) => ({ id, name, gmOnly, target, logOnly: Boolean(logOnly) });
 
 export const GROUND_EVENTS = [
@@ -292,7 +373,15 @@ export const GROUND_EVENTS = [
   GE('player_response', 'Player declares a response', { gmOnly: false, target: 'player', logOnly: true }),
   GE('npc_damage', 'A player damages an NPC', { gmOnly: false, target: 'npc' }),
   GE('npc_add', 'GM adds an NPC combatant', { gmOnly: true, target: 'npc' }),
-  GE('npc_remove', 'GM removes an NPC combatant', { gmOnly: true, target: 'npc' })
+  GE('npc_remove', 'GM removes an NPC combatant', { gmOnly: true, target: 'npc' }),
+  // Running the fight rather than resolving one attack: the GM owns the
+  // order and the clock.
+  GE('ground_initiative', 'GM rolls initiative for the encounter', { gmOnly: true, target: 'npc' }),
+  GE('ground_advance', 'GM advances the turn', { gmOnly: true, target: 'npc' }),
+  // A condition on your own character is yours to set, the same way your own
+  // Wounds are; one on a hostile is anyone's, the same way its damage is.
+  GE('player_condition', 'Condition on a character', { gmOnly: false, target: 'player' }),
+  GE('npc_condition', 'Condition on a hostile', { gmOnly: false, target: 'npc' })
 ];
 
 export const groundEventById = (id) => GROUND_EVENTS.find((e) => e.id === id) || null;
@@ -327,13 +416,93 @@ function patchWounds(entry, { delta = 0, crit = 0 } = {}) {
 // written here; phase/order pass through untouched, same as voidcombat's
 // applyEvent leaves fields it doesn't know about alone by only patching what
 // it names.
-export function applyGroundEvent(combat, event) {
+export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
   const c = combat || {};
   const playerVitals = c.playerVitals || {};
-  const npcs = (c.ground && c.ground.npcs) || [];
+  const ground = c.ground || { npcs: [] };
+  const npcs = ground.npcs || [];
   const e = event || {};
 
   switch (e.id) {
+    /* ---- running the fight: the order, and the clock ---- */
+
+    case 'ground_initiative': {
+      const order = groundOrder(e.combatants);
+      if (!order.length) return { patch: {}, fields: [], unknown: true };
+      return {
+        patch: { ground: { ...ground, npcs, order, round: 1, turn: 0 } },
+        fields: ['ground'], unknown: false
+      };
+    }
+
+    case 'ground_advance': {
+      const order = ground.order || [];
+      if (!order.length) return { patch: {}, fields: [], unknown: true };
+      const next = (Number(ground.turn) || 0) + 1;
+      // Still inside the round: just move the marker.
+      if (next < order.length) {
+        return {
+          patch: { ground: { ...ground, npcs, turn: next } },
+          fields: ['ground'], unknown: false
+        };
+      }
+      // The round wrapped. Durations come down and the two conditions that
+      // cost Wounds every round take them now, before anyone acts.
+      const round = (Number(ground.round) || 1) + 1;
+      const nextVitals = {};
+      for (const [id, v] of Object.entries(playerVitals)) {
+        const toll = conditionToll(v.conditions, d10);
+        nextVitals[id] = {
+          ...v,
+          damage: applyDamage(v.damage, toll, v.max || 0),
+          conditions: tickConditions(v.conditions)
+        };
+      }
+      const nextNpcs = npcs.map((n) => ({
+        ...n,
+        damage: applyDamage(n.damage, conditionToll(n.conditions, d10), n.max || 0),
+        conditions: tickConditions(n.conditions)
+      }));
+      return {
+        patch: {
+          playerVitals: nextVitals,
+          ground: { ...ground, npcs: nextNpcs, turn: 0, round }
+        },
+        fields: ['playerVitals', 'ground'], unknown: false
+      };
+    }
+
+    /* ---- conditions ---- */
+
+    case 'player_condition': {
+      // A character who has not published a Wounds card yet can still be
+      // Stunned or set on fire — the GM's picker offers every member of the
+      // dynasty, not only the ones who have written vitals. patchWounds
+      // defaults the same way for player_damage, and mirrorPlayerWounds
+      // fills the real max in the moment they do publish.
+      const v = playerVitals[e.charId] || { max: 0, damage: 0, critSoFar: 0 };
+      const conditions = e.clear
+        ? (v.conditions || []).filter((x) => x.id !== e.clear)
+        : withCondition(v.conditions, e.condition);
+      return {
+        patch: { playerVitals: { ...playerVitals, [e.charId]: { ...v, conditions } } },
+        fields: ['playerVitals'], unknown: false
+      };
+    }
+
+    case 'npc_condition': {
+      const i = npcs.findIndex((n) => n.id === e.npcId);
+      if (i < 0) return { patch: {}, fields: [], unknown: true };
+      const conditions = e.clear
+        ? (npcs[i].conditions || []).filter((x) => x.id !== e.clear)
+        : withCondition(npcs[i].conditions, e.condition);
+      const nextNpcs = npcs.slice();
+      nextNpcs[i] = { ...npcs[i], conditions };
+      return {
+        patch: { ground: { ...ground, npcs: nextNpcs } },
+        fields: ['ground'], unknown: false
+      };
+    }
     case 'npc_attack':
     case 'player_damage': {
       const entry = patchWounds(playerVitals[e.charId], {
@@ -364,7 +533,7 @@ export function applyGroundEvent(combat, event) {
       });
       const nextNpcs = npcs.slice();
       nextNpcs[i] = { ...npcs[i], ...entry };
-      return { patch: { ground: { ...c.ground, npcs: nextNpcs } }, fields: ['ground'], unknown: false };
+      return { patch: { ground: { ...ground, npcs: nextNpcs } }, fields: ['ground'], unknown: false };
     }
 
     case 'npc_add': {
@@ -379,14 +548,18 @@ export function applyGroundEvent(combat, event) {
         bs: Number.isFinite(Number(e.bs)) ? Math.floor(Number(e.bs)) : null,
         toughnessBonus: Number.isFinite(Number(e.toughnessBonus)) ? Math.floor(Number(e.toughnessBonus)) : null,
         armour: Number.isFinite(Number(e.armour)) ? Math.floor(Number(e.armour)) : null,
-        weapon: e.weapon ? String(e.weapon).trim().slice(0, 80) : null
+        weapon: e.weapon ? String(e.weapon).trim().slice(0, 80) : null,
+        // Agility Bonus for the initiative roll. Absent means an average 3 —
+        // most things the GM throws at a bridge crew are average.
+        agilityBonus: Number.isFinite(Number(e.agilityBonus)) ? Math.floor(Number(e.agilityBonus)) : 3,
+        conditions: []
       };
-      return { patch: { ground: { ...c.ground, npcs: [...npcs, npc] } }, fields: ['ground'], unknown: false };
+      return { patch: { ground: { ...ground, npcs: [...npcs, npc] } }, fields: ['ground'], unknown: false };
     }
 
     case 'npc_remove':
       return {
-        patch: { ground: { ...c.ground, npcs: npcs.filter((n) => n.id !== e.npcId) } },
+        patch: { ground: { ...ground, npcs: npcs.filter((n) => n.id !== e.npcId) } },
         fields: ['ground'], unknown: false
       };
 

@@ -151,6 +151,10 @@ export const GEAR = {
   'meltagun': { avail: 'Very Rare', kind: 'Basic', stats: '20m · S/–/– · 2d10+4 E · Pen 12', desc: 'A short-ranged thermal weapon that reduces its target to vapour and slag. Nothing survives being caught inside its cone.' },
   'heavy stubber': { avail: 'Rare', kind: 'Heavy', stats: '120m · –/–/10 · 1d10+4 I · Pen 3 · Clip 75', desc: 'A belt-fed automatic weapon, crew-served or tripod-mounted. Volume of fire over precision, every time.' },
   'heavy bolter': { avail: 'Very Rare', kind: 'Heavy', stats: '120m · –/–/6 · 1d10+8 X · Pen 5 · Clip 60 · Tearing', desc: 'A tripod-mounted bolter scaled up to squad-suppression fire. Each round is a small explosive shell in its own right.' },
+  'heavy flamer': { avail: 'Very Rare', kind: 'Heavy', stats: '30m · S/–/– · 2d10+4 E · Pen 4 · Clip 10 · Flame', desc: 'A squad-support flamer with a backpack promethium tank. Washes a corridor end to end in one pull.' },
+  'plasma cannon': { avail: 'Extremely Rare', kind: 'Heavy', stats: '150m · S/–/– · 2d10+10 E · Pen 10 · Clip 6 · Blast (1), Overheats, Recharge', desc: 'A crew-served plasma weapon. Takes a long moment to cycle between shots, and erases what it is aimed at.' },
+  'multi-melta': { avail: 'Extremely Rare', kind: 'Heavy', stats: '60m · S/–/– · 4d10+6 E · Pen 12 · Clip 10 · Blast (1)', desc: 'A multi-barrelled thermal weapon built to open armour. Bulkheads, tanks and anything behind them.' },
+  'lascannon': { avail: 'Extremely Rare', kind: 'Heavy', stats: '300m · S/–/– · 5d10+10 E · Pen 10 · Clip 5 · Recharge', desc: 'The Imperium’s standard anti-armour las weapon. One shot, a long recharge, and very little left to shoot at.' },
   'knife': { avail: 'Plentiful', kind: 'Melee', stats: '1d5 R · Pen 0 · Primitive', desc: 'A plain blade. Concealable, deniable, and always within reach.' },
   'sword': { avail: 'Common', kind: 'Melee', stats: '1d8+1 R · Pen 0 · Primitive, Balanced', desc: 'An honest steel blade, no monomolecular edge or power field to speak of.' },
   'great weapon': { avail: 'Average', kind: 'Melee', stats: '2d10 R · Pen 0 · Primitive, Unwieldy', desc: 'An oversized two-handed blade or axe. Slow to bring to bear, and devastating when it lands.' },
@@ -158,6 +162,8 @@ export const GEAR = {
   'power fist': { avail: 'Extremely Rare', kind: 'Melee', stats: '2d10 E · Pen 8 · Power Field, Unwieldy', desc: 'A disruption field wrapped around a hydraulic gauntlet. Slow, and capable of crushing a bulkhead.' },
   'thunder hammer': { avail: 'Extremely Rare', kind: 'Melee', stats: '2d10+4 E · Pen 10 · Power Field, Shocking, Unwieldy', desc: 'A war-hammer sheathed in disruptive energies, heavy enough to level a wall and leave the target convulsing.' },
   'shock maul': { avail: 'Scarce', kind: 'Melee', stats: '1d10 I · Pen 0 · Shocking', desc: 'An Arbites baton wired for a stunning discharge. Meant to subdue, not to kill.' },
+  'eviscerator': { avail: 'Very Rare', kind: 'Melee', stats: '2d10+2 R · Pen 5 · Tearing, Unbalanced, Unwieldy', desc: 'A two-handed chain weapon the length of a man, carried by zealots who expect to end the fight in one swing.' },
+  'shock whip': { avail: 'Scarce', kind: 'Melee', stats: '1d10 I · Pen 0 · Flexible, Shocking', desc: 'A braided lash threaded with discharge filaments. A slaver’s tool, and a duellist’s affectation.' },
   'heavy leathers': { avail: 'Plentiful', kind: 'Armour', stats: 'AP 1 · arms, body, legs', desc: 'Thick, cured hide. Barely armour at all, but better than the clothes underneath.' },
   'grox-hide vest': { avail: 'Common', kind: 'Armour', stats: 'AP 2 · body', desc: 'A stiff hide vest, tanned from void-grazing grox. Cheap, durable, and smells like it.' },
   'flak helmet': { avail: 'Average', kind: 'Armour', stats: 'AP 2 · head', desc: 'A basic ablative helmet, usually the first piece of a flak kit anyone actually wears.' },
@@ -166,6 +172,33 @@ export const GEAR = {
   'mesh vest': { avail: 'Rare', kind: 'Armour', stats: 'AP 4 · body', desc: 'Fine metal mesh worn under clothing. Protective and, worn right, entirely invisible.' },
   'carapace chestplate': { avail: 'Rare', kind: 'Armour', stats: 'AP 6 · body', desc: 'A single rigid carapace plate over the torso, without the rest of a full suit’s weight or expense.' },
   'power armour': { avail: 'Extremely Rare', kind: 'Armour', stats: 'AP 8 · all', desc: 'Powered ceramite plate, sealed and servo-assisted. Rarely issued, and never without a reason.' },
+  /* ---- force fields ----
+     A field is not armour and is deliberately not given an AP line: it never
+     reduces damage, it either stops a hit outright or it does not. When the
+     wearer is hit, roll d100 against the Protection Rating — on or under, the
+     hit is negated entirely, armour and Toughness untouched; a roll inside the
+     Overload band burns the generator out until it is repaired.
+     ponytail: display-only. The combat engine subtracts armour and knows
+     nothing about fields, so the GM rolls the save. Wire it in when someone
+     actually fields one often enough to resent the dice. */
+  'refractor field': { avail: 'Rare', kind: 'Field', stats: 'Protection Rating 30 · Overload 01–05', desc: 'A shimmering distortion that bends incoming fire aside. The cheapest field worth owning, and the most commonly faked.' },
+  'displacer field': { avail: 'Very Rare', kind: 'Field', stats: 'Protection Rating 30 · Overload 01–10 · displaces 1d10 m', desc: 'Rather than stopping the blow, it moves the wearer — a short, nauseating jump to somewhere the blow is not. Where you land is not up to you.' },
+  'conversion field': { avail: 'Very Rare', kind: 'Field', stats: 'Protection Rating 40 · Overload 01–15 · blinds nearby', desc: 'Converts the energy of a hit into a blinding flash. Protects its wearer admirably and ruins the night vision of everyone beside them.' },
+  'kustom force field': { avail: 'Near Unique', kind: 'Field', stats: 'Protection Rating 45 · aura, 5 m · Overload 01–20', desc: 'A Mek’s bodged field projector that covers everything near it. Nobody, the Mek included, knows precisely why it works.' },
+
+  /* ---- xenos arms the bestiary already fields ----
+     The creature entries carry their own damage lines, which include the
+     wielder's Strength Bonus and psychic ratings; these are the base profiles
+     for a GM arming anyone else with them. */
+  'witchblade': { avail: 'Near Unique', kind: 'Melee', stats: '1d10+4 E · Pen 6 · Balanced, Force', desc: 'An Eldar rune-blade carried by Warlocks and Farseers. Its edge is sharpened by the wielder’s own mind.' },
+  'singing spear': { avail: 'Near Unique', kind: 'Melee', stats: '1d10+5 R · Pen 6 · Balanced, Force, Thrown (SB×3)', desc: 'A psychically attuned spear that keens as it flies and returns to the hand that cast it.' },
+  'shard carbine': { avail: 'Extremely Rare', kind: 'Basic', stats: '60m · S/3/6 · 1d10+2 R · Pen 3 · Clip 40 · Toxic (2)', desc: 'A compact Drukhari splinter weapon. Shorter-ranged than the rifle, and no less unpleasant to be hit by.' },
+  'rad axe': { avail: 'Extremely Rare', kind: 'Melee', stats: '1d10+5 E · Pen 7 · Power Field, Toxic (2)', desc: 'A Rak’Gol butcher’s tool that sheds hard radiation with every swing. The wound it leaves does not stop at the cut.' },
+  'howler rifle': { avail: 'Extremely Rare', kind: 'Basic', stats: '30m · –/–/12 · 1d10+3 I · Pen 4 · Clip 60 · Storm, Inaccurate', desc: 'A Rak’Gol automatic that shrieks as it fires. Hopeless at range and devastating across a boarding deck.' },
+  'ceres pattern bolt pistol': { avail: 'Near Unique', kind: 'Pistol', stats: '30m · S/2/– · 1d10+6 X · Pen 4 · Clip 8 · Tearing, Accurate', desc: 'A master-crafted bolt pistol of the Ceres pattern, built to a standard the Imperium no longer routinely reaches.' },
+  'aspect armour': { avail: 'Near Unique', kind: 'Armour', stats: 'AP 6 · all', desc: 'The wraithbone-ribbed plate of an Eldar Aspect Warrior, shaped to a single way of making war.' },
+  'augur array': { avail: 'Rare', desc: 'An auspex built into the skull rather than carried. Grants the same bonus to Awareness Tests for hidden threats, gas and radiation, and cannot be dropped or confiscated.' },
+
   'auspex': { avail: 'Scarce', desc: 'A hand-held scanner. Grants a bonus to Awareness Tests made to detect hidden threats, gas or radiation.' },
   'clip harness': { avail: 'Common', desc: 'A grapnel line and drop harness. Grants a bonus to Climb Tests and arrests a fall before it becomes fatal.' },
   'glow-globe': { avail: 'Plentiful', desc: 'A portable light source, throwing a wide, steady glow for hours on a single charge.' },
@@ -206,12 +239,16 @@ export function availabilityOf(label) {
 
 /* Strips articles, counts and craftsmanship to find the catalogue entry. */
 export function gearInfo(label) {
-  const quality = (label.match(QUALITY_RE) || [])[1];
-  let base = label.toLowerCase().trim()
+  // The articles and counts come off FIRST, then the craftsmanship: "a Good
+  // Refractor Field" wears its quality behind the article, and reading the
+  // prefix off the raw label would miss it and report the field as common.
+  const counted = String(label).toLowerCase().trim()
     .replace(/^(?:a|an)\s+/, '')
     .replace(/^two sets of\s+/, '')
     .replace(/^two\s+/, '')
-    .replace(/^begins play owning one\s+/, '')
+    .replace(/^begins play owning one\s+/, '');
+  const quality = (counted.match(QUALITY_RE) || [])[1];
+  let base = counted
     .replace(QUALITY_RE, '')
     .replace(/\s+with mono upgrade$/, '');
   let entry = GEAR[base];

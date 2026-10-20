@@ -83,6 +83,25 @@ assert.deepEqual(missing, [], 'gear with no catalogue entry: ' + missing.join(',
   }
 }
 
+/* ---- a force field is not armour ---- */
+
+// The combat engine reads an AP figure off the stats line and subtracts it.
+// A field never reduces damage — it negates a hit or it doesn't — so giving
+// one an AP line would quietly hand the wearer permanent damage reduction on
+// top of a save it is also allowed to make.
+{
+  const fields = Object.entries(GEAR).filter(([, v]) => v.kind === 'Field');
+  assert.ok(fields.length >= 4, 'the force fields went missing');
+  for (const [k, v] of fields) {
+    assert.equal(/\bAP\s*\d/.test(v.stats), false, k + ': a field must not carry an AP figure');
+    assert.match(v.stats, /Protection Rating \d+/, k + ': a field needs its rating');
+    assert.match(v.stats, /Overload \d\d–\d\d/, k + ': and the band it burns out on');
+  }
+  // And it is reachable the way everything else is.
+  assert.equal(availabilityOf('a Good Refractor Field').rating, 'Rare');
+  assert.equal(availabilityOf('a Good Refractor Field').craftsmanship, 'Good');
+}
+
 // Reading it off a label, quality prefix and all. The prefix is reported
 // separately because craftsmanship is a modifier on the test, not a step up
 // the rarity ladder.

@@ -10,6 +10,7 @@ import {
   hitAndRun, boardingRound, BOARDING_TARGET,
   applyEvent, applyRepair, fireDamage, actionOutcome
 } from './voidcombat.js';
+import { SHIP_FIELDS, GM_EVENTS } from './shiproles.js';
 import { deniedWrites } from './shiproles.js';
 import { targetSizeModifier, evadesFreely } from './ship.js';
 
@@ -629,6 +630,36 @@ assert.equal(shieldsRestorable({ conditions: [CONDITIONS.shieldsCollapsed] }), f
   assert.deepEqual(
     deniedWrites('enginseer', ['armourDamage', 'manoeuvrePenalty', 'conditions', 'voidShields']),
     []);
+}
+
+/* ---- the dynasty's Profit Factor ---- */
+
+// Signed like a standing, but it is MEANS, not regard: a standing is a 0-100
+// opinion of the dynasty, while Profit Factor has no printed ceiling — an
+// endeavour is supposed to push it past where the dynasty began. Clamping it
+// to 100 like the standings would silently cap a successful campaign.
+{
+  assert.deepEqual(applyEvent({}, { id: 'profit_factor', amount: 35 }).patch,
+    { profitFactor: 35 }, 'an unset table starts from nothing');
+  assert.deepEqual(applyEvent({ profitFactor: 40 }, { id: 'profit_factor', amount: 12 }).patch,
+    { profitFactor: 52 }, 'profit adds');
+
+  // An acquisition is spent as a negative, the way a purge is on corruption.
+  assert.deepEqual(applyEvent({ profitFactor: 40 }, { id: 'profit_factor', amount: -2 }).patch,
+    { profitFactor: 38 }, 'a Vast acquisition costs 2');
+
+  // No ceiling.
+  assert.deepEqual(applyEvent({ profitFactor: 95 }, { id: 'profit_factor', amount: 50 }).patch,
+    { profitFactor: 145 }, 'Profit Factor is not a 0-100 standing');
+
+  // But a floor: a dynasty cannot owe less than nothing in means.
+  assert.deepEqual(applyEvent({ profitFactor: 3 }, { id: 'profit_factor', amount: -50 }).patch,
+    { profitFactor: 0 });
+
+  // The field it writes is the one the role table already granted the High
+  // Factotum, so the server's write check passes it without a new rule.
+  assert.ok(SHIP_FIELDS.includes('profitFactor'));
+  assert.deepEqual(GM_EVENTS.find((e) => e.id === 'profit_factor').writes, ['profitFactor']);
 }
 
 console.log('voidcombat: all checks passed (%d actions, %d criticals)',

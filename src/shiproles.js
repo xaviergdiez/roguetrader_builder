@@ -195,6 +195,8 @@ export const GM_EVENTS = [
     'Positive gains favour, negative draws suspicion.'),
   E('rep_coldtrade', 'Cold Trade standing', ['repColdTrade'],
     'Positive gains favour, negative sours a deal.'),
+  E('profit_factor', 'Profit Factor', ['profitFactor'],
+    'The dynasty\u2019s means. Positive is profit, negative is an acquisition or a loss.'),
   E('advance_phase', 'Advance the phase', ['phase'],
     'Command & Engineering, then Manoeuvre, then Shooting.'),
   E('enemy_update', 'Enemy ships', ['enemies'],

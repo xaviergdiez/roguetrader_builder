@@ -55,7 +55,7 @@ import {
 import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
 import {
   createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, emitGroundEvent, pollBridge,
-  assignNpc, unassignNpc, sendMessage
+  readBridge, assignNpc, unassignNpc, sendMessage
 } from './bridge.js';
 import {
   EMPTY as EMPTY_HOMEBREW, normalise as readHomebrew, isEmpty as homebrewEmpty,
@@ -63,6 +63,10 @@ import {
   cloudGet as homebrewGet, cloudPut as homebrewPut
 } from './homebrew.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
+import {
+  MACHINE_SPIRIT_ODDITIES, PAST_HISTORIES, oddityById, historyById,
+  rollShipPersonality, readHistory, EMPTY_HISTORY
+} from './shiphistory.js';
 import {
   POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
   allocationTotals, allocate, isComplete, grantable
@@ -2649,6 +2653,30 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [brewOpen, setBrewOpen] = useState(false);
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeCode, setBridgeCode] = useState('');
+  // The DYNASTY's Profit Factor, read off the shared ship while a table is
+  // open. Lifted out of BridgePanel because the Acquisition test belongs to
+  // the character sheet, not the bridge, and it has to spend the pooled
+  // figure rather than this sheet's own derivation. null = no table open.
+  const [dynastyPf, setDynastyPf] = useState(null);
+  // Read once whenever this sheet is at a table, rather than waiting for the
+  // bridge dialog to be opened. The dialog keeps it current while it is up
+  // (see onDynastyPf in BridgePanel); without this the figure would be null
+  // until the player happened to open the bridge, so a reload mid-session
+  // put the sheet back on its own derivation with no sign anything had
+  // changed. Leaving the table clears the code, and the figure with it.
+  useEffect(() => {
+    if (!bridgeCode) { setDynastyPf(null); return undefined; }
+    let dropped = false;
+    readBridge({ code: bridgeCode, since: 0 })
+      .then((st) => {
+        const pf = st && st.ship && st.ship.vitals && st.ship.vitals.profitFactor;
+        if (!dropped) setDynastyPf(pf || null);
+      })
+      // A table that cannot be reached leaves the sheet on its own figure,
+      // which is the same thing that happens when no table is open at all.
+      .catch(() => {});
+    return () => { dropped = true; };
+  }, [bridgeCode]);
   const [fleet, setFleet] = useState([]);          // the GM's NPC ships
   const [combat, setCombat] = useState(EMPTY_COMBAT);
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
@@ -2803,7 +2831,11 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // the sheet showed the origin-path derivation instead.
   const fateBase = finalFate != null ? finalFate : fatePoints;
   const fateShown = fateBase == null ? null : Math.max(0, fateBase + fateAdj);
-  const profitShown = Math.max(0, profitFactor + profitAdj);
+  // A table that has set its Profit Factor overrules the origin-path
+  // derivation: there is one pool, and every Explorer draws on the same one.
+  // 0 means the table has not set one, so the sheet's own figure stands.
+  const ownProfit = Math.max(0, profitFactor + profitAdj);
+  const profitShown = dynastyPf ? dynastyPf : ownProfit;
 
   /* ---- actions ---- */
   const choose = (stepId, id) => {
@@ -3435,6 +3467,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           // mirrorPlayerWounds in lib/bridge.js), and read back afterward so
           // this sheet is the one place Wounds actually lives.
           characteristics={totals} charWounds={ws}
+          onDynastyPf={setDynastyPf}
           onClose={() => setBridgeOpen(false)}
         />
       )}
@@ -3465,7 +3498,10 @@ const AUTOSAVE_KEY = 'rt:current';
    fewer moving part, and it survives a refresh either way. */
 const EMPTY_BLUEPRINT = {
   shipName: '', hullId: null, dynastySP: 60, crew: 'competent',
-  essential: {}, weapons: [], supplemental: []
+  essential: {}, weapons: [], supplemental: [],
+  // Step 3 of starship creation: the Machine Spirit Oddity and the Past
+  // History. See shiphistory.js.
+  history: EMPTY_HISTORY
 };
 
 // The GM's running battle: the phase, the initiative order, and the player
@@ -3479,6 +3515,7 @@ const EMPTY_COMBAT = { phase: 'extended', order: [], playerVitals: null };
 const readBlueprint = (b) => ({
   ...EMPTY_BLUEPRINT,
   ...(b && typeof b === 'object' ? b : null),
+  history: readHistory(b && b.history),
   essential: (b && b.essential) || {},
   weapons: Array.isArray(b && b.weapons) ? b.weapons : [],
   supplemental: Array.isArray(b && b.supplemental) ? b.supplemental : []
@@ -6057,7 +6094,8 @@ const QUICK_LINES = [
    against the station's fields. */
 
 function BridgePanel({ code, setCode, characterName, charId, shipRole,
-  blueprint, fleet, combat, roster, card, characteristics, charWounds, onClose }) {
+  blueprint, fleet, combat, roster, card, characteristics, charWounds,
+  onDynastyPf, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -6258,6 +6296,19 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const ground = (ship && ship.combat && ship.combat.ground) || { npcs: [] };
   const playerVitals = (ship && ship.combat && ship.combat.playerVitals) || {};
   const myVitals = playerVitals[charId] || null;
+
+  // The table's Profit Factor, handed back to the sheet so an Acquisition
+  // tests against the pooled figure rather than this character's own. Cleared
+  // on close, so leaving the table returns the sheet to its own derivation.
+  // Deliberately NOT cleared when this dialog unmounts. The dialog is modal,
+  // so the sheet and the bridge are never on screen together — clearing on
+  // close would mean the pooled figure applied only while the one pane that
+  // cannot show it was open. It is cleared when the character leaves the
+  // table instead, which is what `leave` sets the code to empty for.
+  const sharedPf = (ship && ship.vitals && ship.vitals.profitFactor) || 0;
+  useEffect(() => {
+    if (onDynastyPf) onDynastyPf(sharedPf || null);
+  }, [sharedPf, onDynastyPf]);
 
   const groundEvent = (event, ok) => run(async () => {
     const r = await emitGroundEvent({ code, event });
@@ -6775,6 +6826,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                   the Inquisition/Mechanicus/Navy/Cold Trade standing events. */}
               <div className="rt-conds-h">Dynasty standing</div>
               <div className="rt-gmvitals rt-bridgevitals">
+                <span>PROFIT FACTOR <b>{ship.vitals.profitFactor || '\u2014'}</b></span>
                 <span>INQUISITION <b>{ship.vitals.repInquisition ?? 50}</b></span>
                 <span>MECHANICUS <b>{ship.vitals.repMechanicus ?? 50}</b></span>
                 <span>NAVY <b>{ship.vitals.repNavy ?? 50}</b></span>
@@ -8107,6 +8159,56 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
 
       {hull && (
         <>
+          {/* Step 3 of starship creation, in the place the rules put it:
+              after the hull, before a single Component is bought, because
+              some results change what the ship can afford. */}
+          <div className="rt-conds-h">The ship{'\u2019'}s personality</div>
+          <p className="rt-vox-hint">
+            One roll on each table. The effects are printed in the Rogue
+            Trader Core Rulebook on the pages named below {'\u2014'} this app
+            records which result the ship carries, it does not restate what
+            the book says.
+          </p>
+          <div className="rt-gmmods">
+            <label><span className="rt-der-k">Machine Spirit</span>
+              <select className="rt-sel" value={bp.history.oddityId || ''}
+                onChange={(e) => set({ history: { ...bp.history, oddityId: e.target.value || null } })}>
+                <option value="">{'\u2014 unrolled \u2014'}</option>
+                {MACHINE_SPIRIT_ODDITIES.map((o) => (
+                  <option key={o.id} value={o.id}>{o.roll}. {o.name}</option>
+                ))}
+              </select>
+            </label>
+            <label><span className="rt-der-k">Past history</span>
+              <select className="rt-sel" value={bp.history.historyId || ''}
+                onChange={(e) => set({ history: { ...bp.history, historyId: e.target.value || null } })}>
+                <option value="">{'\u2014 unrolled \u2014'}</option>
+                {PAST_HISTORIES.map((h) => (
+                  <option key={h.id} value={h.id}>{h.roll}. {h.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="rt-btnrow">
+            <button className="rt-btn" onClick={() => set({ history: rollShipPersonality(() => d(10)) })}>
+              Roll both
+            </button>
+          </div>
+          {(bp.history.oddityId || bp.history.historyId) && (
+            <ul className="rt-list">
+              {[oddityById(bp.history.oddityId), historyById(bp.history.historyId)]
+                .filter(Boolean).map((e) => (
+                  <li key={e.id} className="rt-entry">
+                    <span className="rt-entry-t">{e.name}</span>
+                    <span className="rt-entry-c">
+                      {e.effect ? '' : 'Core Rulebook p. ' + e.page}
+                    </span>
+                    {e.effect && <div className="rt-entry-d"><p>{e.effect}</p></div>}
+                  </li>
+                ))}
+            </ul>
+          )}
+
           <div className="rt-conds-h">Crew rating</div>
           <div className="rt-opts">
             {CREW_RATINGS.map((c) => (

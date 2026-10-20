@@ -468,6 +468,13 @@ export function newVitals(bp) {
     morale: s ? s.maxMorale : 100,
     hullIntegrity: hull ? hull.hullIntegrity : 0,
     corruption: 0,
-    repInquisition: 50, repMechanicus: 50, repNavy: 50, repColdTrade: 50
+    repInquisition: 50, repMechanicus: 50, repNavy: 50, repColdTrade: 50,
+    // The DYNASTY's Profit Factor, not any one character's. Rogue Trader
+    // makes this a single pooled figure the whole endeavour draws on, and
+    // acquisition.js has always tested against it — but it was derived per
+    // sheet (20 + the origin path's contribution), so every player carried a
+    // private copy and nobody's purchase moved anyone else's number. 0 means
+    // the table has not set it yet; the GM or the High Factotum does.
+    profitFactor: 0
   };
 }

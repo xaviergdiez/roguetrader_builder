@@ -11,19 +11,28 @@
 
 export const HOMEBREW_KEY = 'rt:homebrew';
 
-export const EMPTY = { hulls: [], components: [] };
+// `encounters` rides here rather than on a route of its own. The Hobby plan
+// allows twelve serverless functions and six are spent; an encounter library
+// is the same kind of thing as a homebrew one — a few hundred bytes an entry,
+// authored by one account, wanted on every device — and the route's own
+// entry-count and byte guards cover it unchanged. See encounters.js.
+export const EMPTY = { hulls: [], components: [], encounters: [] };
 
 // Anything absent or the wrong shape reads as "no homebrew" rather than
 // throwing: this comes from storage, another device, or a hand-edited blob.
 export function normalise(h) {
   const src = h && typeof h === 'object' ? h : null;
   const entries = (v) => (Array.isArray(v) ? v.filter((x) => x && typeof x === 'object') : []);
-  return { hulls: entries(src && src.hulls), components: entries(src && src.components) };
+  return {
+    hulls: entries(src && src.hulls),
+    components: entries(src && src.components),
+    encounters: entries(src && src.encounters)
+  };
 }
 
 export const isEmpty = (h) => {
   const n = normalise(h);
-  return n.hulls.length === 0 && n.components.length === 0;
+  return n.hulls.length === 0 && n.components.length === 0 && n.encounters.length === 0;
 };
 
 /* --------------------------------- local --------------------------------- */

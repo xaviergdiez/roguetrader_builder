@@ -237,9 +237,18 @@ export function rollNpc({
   let origin = originId ? originById(originId) : inTable(ORIGINS, roll1d10(rng));
 
   // Chaos Space Marine is Elite/Named only — a Minor/Heavy roll re-rolls
-  // origin once rather than producing a Chaos Marine with cultist stats.
-  if (origin && origin.eliteOnly && tier && !['elite', 'named'].includes(tier.id)) {
-    origin = inTable(ORIGINS.filter((o) => !o.eliteOnly), roll1d10(rng));
+  // origin rather than producing a Chaos Marine with cultist stats.
+  //
+  // Re-rolled against the WHOLE table, not a filtered copy. Each row's
+  // min/max belong to the full 1-10 table, so dropping the Chaos Marine row
+  // leaves a hole at 9 rather than closing the gap: a re-roll of 9 against
+  // the filtered list matched no row at all, inTable returned null, and the
+  // next line threw on `origin.weaponTable`. That was a 1-in-100 crash on
+  // the GM's own "roll a hostile" button.
+  if (tier && !['elite', 'named'].includes(tier.id)) {
+    for (let tries = 0; tries < 20 && origin && origin.eliteOnly; tries++) {
+      origin = inTable(ORIGINS, roll1d10(rng));
+    }
   }
 
   const column = weaponArmourColumn(tier.id);

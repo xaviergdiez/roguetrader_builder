@@ -45,12 +45,19 @@ assert.deepEqual(normalise({ hulls: [null, 'x', 3, { id: 'h1' }] }).hulls, [{ id
 assert.deepEqual(normalise({ components: [{ id: 'c1' }, undefined] }).components, [{ id: 'c1' }]);
 // and an unexpected key is not carried either
 assert.deepEqual(Object.keys(normalise({ hulls: [], components: [], junk: 1 })).sort(),
-  ['components', 'hulls']);
+  ['components', 'encounters', 'hulls']);
+
+// Encounters ride in this same library rather than on a route of their own,
+// so they get the same treatment as the other two keys.
+assert.deepEqual(normalise({ encounters: 'no' }).encounters, []);
+assert.deepEqual(normalise({ encounters: [null, 2, { id: 'e1' }] }).encounters, [{ id: 'e1' }]);
 
 assert.equal(isEmpty(null), true);
 assert.equal(isEmpty({ hulls: [], components: [] }), true);
 assert.equal(isEmpty({ hulls: [{ id: 'h1' }], components: [] }), false);
 assert.equal(isEmpty({ hulls: [], components: [{ id: 'c1' }] }), false);
+assert.equal(isEmpty({ hulls: [], components: [], encounters: [{ id: 'e1' }] }), false,
+  'a library holding only encounters is not empty');
 
 /* ---- local round trip ---- */
 
@@ -58,10 +65,19 @@ assert.equal(isEmpty({ hulls: [], components: [{ id: 'c1' }] }), false);
   store.clear();
   assert.deepEqual(readLocal(), EMPTY, 'nothing stored reads as empty');
 
-  const lib = { hulls: [{ id: 'hull-x', name: 'X' }], components: [{ id: 'comp-y' }] };
+  const lib = {
+    hulls: [{ id: 'hull-x', name: 'X' }],
+    components: [{ id: 'comp-y' }],
+    encounters: [{ id: 'enc-z', name: 'Ambush' }]
+  };
   assert.equal(writeLocal(lib), true);
   assert.equal(store.has(HOMEBREW_KEY), true);
   assert.deepEqual(readLocal(), lib);
+
+  // A library written before encounters existed still reads, with an empty
+  // encounter list rather than an absent key the UI would have to guard.
+  store.set(HOMEBREW_KEY, JSON.stringify({ hulls: [{ id: 'old' }], components: [] }));
+  assert.deepEqual(readLocal(), { hulls: [{ id: 'old' }], components: [], encounters: [] });
 
   // a corrupt blob reads as empty rather than throwing
   store.set(HOMEBREW_KEY, '{not json');
@@ -80,7 +96,9 @@ assert.equal(isEmpty({ hulls: [], components: [{ id: 'c1' }] }), false);
   nextResponse = () => ({ status: 200,
     body: { homebrew: { hulls: [{ id: 'hull-a' }], components: [] } } });
   const got = await cloudGet();
-  assert.deepEqual(got, { hulls: [{ id: 'hull-a' }], components: [] });
+  // Normalised on the way in, so a server that predates encounters still
+  // hands the editor a library with every key present.
+  assert.deepEqual(got, { hulls: [{ id: 'hull-a' }], components: [], encounters: [] });
   assert.equal(calls[0].opts, undefined, 'a GET sends no body');
 
   calls.length = 0;
@@ -91,9 +109,10 @@ assert.equal(isEmpty({ hulls: [], components: [{ id: 'c1' }] }), false);
 
   // the payload is normalised on the way out, so junk never reaches the server
   calls.length = 0;
-  await cloudPut({ hulls: [null, { id: 'ok' }], components: 'no' });
+  await cloudPut({ hulls: [null, { id: 'ok' }], components: 'no', encounters: [{ id: 'e' }] });
   const sent2 = JSON.parse(calls[0].opts.body);
-  assert.deepEqual(sent2.homebrew, { hulls: [{ id: 'ok' }], components: [] });
+  assert.deepEqual(sent2.homebrew,
+    { hulls: [{ id: 'ok' }], components: [], encounters: [{ id: 'e' }] });
 
   // ...and on the way back, so a bad answer cannot poison the editor
   nextResponse = () => ({ status: 200, body: { homebrew: { hulls: 'broken' } } });

@@ -116,6 +116,55 @@ for (const o of ORIGINS) {
   }
 }
 
+/* ---- a Minor or Heavy roll never crashes on the Chaos Marine re-roll ---- */
+
+// Every row's min/max belong to the whole 1-10 table, so a filtered copy of
+// ORIGINS has a HOLE where the elite-only row was rather than a closed gap.
+// Re-rolling against that copy returned null for the missing number and the
+// next line threw. The fuzz pass above never caught it because it pins an
+// originId, which skips the re-roll entirely.
+{
+  const gapRoll = ORIGINS.find((o) => o.eliteOnly);
+  assert.ok(gapRoll, 'this guard assumes at least one elite-only origin');
+  const filtered = ORIGINS.filter((o) => !o.eliteOnly);
+  let holes = 0;
+  for (let r = 1; r <= 10; r++) {
+    if (!filtered.find((o) => r >= o.min && r <= o.max)) holes += 1;
+  }
+  assert.ok(holes > 0,
+    'the filtered table still has a hole \u2014 keep re-rolling the full table');
+
+  // Drive every rng that lands on the elite-only row twice running, at every
+  // tier that forbids it. This is the exact sequence that used to throw.
+  for (const tierId of ['minor', 'heavy']) {
+    let i = 0;
+    const onNine = () => {
+      i += 1;
+      // tier roll, then origin rolls that keep landing on the elite-only row
+      return i === 1 ? 0.05 : (gapRoll.min - 1) / 10 + 0.05;
+    };
+    const npc = rollNpc({ rng: onNine, tierId });
+    assert.ok(npc && npc.origin, tierId + ': the re-roll produced nothing');
+    assert.notEqual(npc.origin, gapRoll.id, tierId + ' must not keep an elite-only origin');
+  }
+
+  // And a broad unpinned fuzz, which is what the pinned pass above could not
+  // reach: no tier/origin combination may throw.
+  let seed = 7;
+  const rng = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return (seed % 100000) / 100000;
+  };
+  for (let n = 0; n < 4000; n++) {
+    const npc = rollNpc({ rng });
+    assert.ok(npc && npc.name && npc.origin, 'an unpinned roll came back empty');
+    if (['minor', 'heavy'].includes(npc.tier)) {
+      assert.notEqual(npc.origin, gapRoll.id,
+        'a Chaos Marine reached the ' + npc.tier + ' tier');
+    }
+  }
+}
+
 /* ---- Named doubles the Quirk roll ---- */
 
 {

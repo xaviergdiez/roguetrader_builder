@@ -55,6 +55,11 @@ import {
 import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
 import { rollSystem, describeSystem, describePlanet } from './stargen.js';
 import {
+  readLibrary as readEncounters, newEncounter, readHostile, toNpcAdd,
+  difficulty, encounterWeight, hostileWeight, describeEncounter, draftsFromSystem,
+  MAX_HOSTILES
+} from './encounters.js';
+import {
   createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, emitGroundEvent, pollBridge,
   readBridge, assignNpc, unassignNpc, sendMessage
 } from './bridge.js';
@@ -1585,6 +1590,11 @@ const CSS = `
    specificity, so this has to come after it to win. */
 .rt-framer.rt-gm{width:min(1120px,94vw);}
 .rt-shiprow{display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;}
+/* A trailing action button sizes to its own label, so stacked rows ended at
+   different x — "New" is 67px and "Delete" 90px, which staggered the field
+   above by 23px and left their dropdown chevrons visibly out of line. A
+   floor makes short labels match; a long one still takes the room it needs. */
+.rt-shiprow > .rt-btn{min-width:96px;flex:0 0 auto;}
 .rt-shipfield{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;}
 .rt-shipfield.sp{flex:0 0 120px;}
 
@@ -3484,7 +3494,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
         <GmPanel
           fleet={fleet} setFleet={setFleet}
           combat={combat} setCombat={setCombat}
-          blueprint={blueprint} bridgeCode={bridgeCode} homebrew={homebrew}
+          blueprint={blueprint} bridgeCode={bridgeCode}
+          homebrew={homebrew} setHomebrew={setHomebrew}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -7341,7 +7352,7 @@ function shipProfile(ship, blueprint, custom) {
 }
 
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
-  homebrew, onClose }) {
+  homebrew, setHomebrew, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -7362,6 +7373,64 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   // The last rolled star system. Local to this dashboard: it is reference
   // the GM reads out, not state the table shares.
   const [system, setSystem] = useState(null);
+
+  /* ---- the encounter library ----
+     Stored in the homebrew library (see encounters.js for why), which the
+     app already persists to this browser and to the account on change. */
+  const encounters = readEncounters(homebrew && homebrew.encounters);
+  const [encId, setEncId] = useState(null);
+  const [encTier, setEncTier] = useState('heavy');
+  const [encOrigin, setEncOrigin] = useState('');
+  const [encBestiary, setEncBestiary] = useState('');
+  const [assumedParty, setAssumedParty] = useState(4);
+  const [encNote, setEncNote] = useState('');
+
+  const editing = encounters.find((e) => e.id === encId) || null;
+
+  const saveEncounters = (list) =>
+    setHomebrew({ ...(homebrew || {}), encounters: list });
+  const upsert = (enc) => saveEncounters(
+    encounters.some((e) => e.id === enc.id)
+      ? encounters.map((e) => (e.id === enc.id ? enc : e))
+      : [...encounters, enc]
+  );
+
+  // Who the encounter is weighed against. A live table publishes its Wounds
+  // to the shared ship, so those are used when they are there; preparing
+  // before anyone has joined, the GM says how many Explorers to assume.
+  const partyMembers = (() => {
+    const vitals = (combat && combat.playerVitals) || {};
+    const live = Object.values(vitals).filter(Boolean).map((v) => ({ vitals: v }));
+    return live.length ? live
+      : Array.from({ length: Math.max(0, Number(assumedParty) || 0) }, () => ({}));
+  })();
+  const encDifficulty = editing ? difficulty(editing, partyMembers) : null;
+
+  const addHostile = (npc) => {
+    if (!editing || editing.hostiles.length >= MAX_HOSTILES) return;
+    upsert({ ...editing, hostiles: [...editing.hostiles, readHostile(npc)] });
+  };
+  const dropHostile = (ix) => {
+    if (!editing) return;
+    upsert({ ...editing, hostiles: editing.hostiles.filter((_, i) => i !== ix) });
+  };
+
+  // Pushed as one npc_add per hostile. Sequential rather than a batch: the
+  // board's event is already written and authorised, and a six-hostile
+  // encounter is six calls once, not six calls a round.
+  const [pushing, setPushing] = useState('');
+  const pushEncounter = async () => {
+    if (!editing || !bridgeCode) return;
+    setPushing('Pushing\u2026');
+    try {
+      for (const h of editing.hostiles) {
+        await emitGroundEvent({ code: bridgeCode, event: toNpcAdd(h, editing.name) });
+      }
+      setPushing(`${editing.hostiles.length} on the board.`);
+    } catch (e) {
+      setPushing(e.message || 'The bridge refused that.');
+    }
+  };
   const [eventShip, setEventShip] = useState('player');
 
   // The player's ship is always in the fleet, derived rather than stored, so
@@ -7797,6 +7866,180 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       <div className="rt-btnrow">
         <button className="rt-btn" onClick={emit}>Emit</button>
       </div>
+
+      {/* ---- the encounter builder ----
+          A fight assembled before play and weighed against the party, rather
+          than spawned a hostile at a time once everyone is already rolling.
+          Saved in the homebrew library; see encounters.js. */}
+      <div className="rt-conds-h">Encounters</div>
+      <div className="rt-shiprow">
+        <select className="rt-sel" value={encId || ''}
+          onChange={(e) => { setEncId(e.target.value || null); setPushing(''); }}>
+          <option value="">{'\u2014 pick an encounter \u2014'}</option>
+          {encounters.map((e) => (
+            <option key={e.id} value={e.id}>{e.name} {'\u00B7'} {describeEncounter(e)}</option>
+          ))}
+        </select>
+        <button className="rt-btn ghost" onClick={() => {
+          const enc = newEncounter('Encounter ' + (encounters.length + 1));
+          saveEncounters([...encounters, enc]);
+          setEncId(enc.id);
+          setPushing('');
+        }}>New</button>
+      </div>
+
+      {system && draftsFromSystem(system).length > 0 && (
+        <>
+          <p className="rt-vox-hint">
+            The system you rolled names places something lives in. Start an
+            encounter from one:
+          </p>
+          <ul className="rt-addl">
+            {draftsFromSystem(system).map((dft) => (
+              <li key={dft.id}>
+                <button className="rt-addi" onClick={() => {
+                  saveEncounters([...encounters, dft]);
+                  setEncId(dft.id);
+                  if (dft.suggest) {
+                    setEncTier(dft.suggest.tierId || 'heavy');
+                    setEncOrigin(dft.suggest.originId || '');
+                  }
+                  setPushing('');
+                }}>{dft.name}</button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {editing && (
+        <>
+          <div className="rt-shiprow">
+            <input className="rt-field" value={editing.name}
+              onChange={(e) => upsert({ ...editing, name: e.target.value })}
+              placeholder="Name this encounter" />
+            <button className="rt-btn ghost" onClick={() => {
+              saveEncounters(encounters.filter((e) => e.id !== editing.id));
+              setEncId(null);
+            }}>Delete</button>
+          </div>
+          {editing.note && <p className="rt-vox-hint">{editing.note}</p>}
+
+          {/* difficulty */}
+          <div className="rt-gmvitals">
+            <span>THREAT <b>{encDifficulty ? encDifficulty.threat : 0}</b></span>
+            <span>PARTY <b>{encDifficulty ? encDifficulty.party : 0}</b></span>
+            {encDifficulty && encDifficulty.band && (
+              <span className={encDifficulty.band.id === 'deadly' ? 'rt-corrhot' : ''}>
+                {encDifficulty.band.name.toUpperCase()}
+                {' '}<b>{encDifficulty.ratio.toFixed(2)}{'\u00D7'}</b>
+              </span>
+            )}
+          </div>
+          {encDifficulty && encDifficulty.band && (
+            <p className="rt-vox-hint">{encDifficulty.band.note}</p>
+          )}
+          {encDifficulty && !encDifficulty.band && (
+            <p className="rt-warn">Nobody to weigh this against yet.</p>
+          )}
+          {Object.keys((combat && combat.playerVitals) || {}).length === 0 && (
+            <div className="rt-gmmods">
+              <label><span className="rt-der-k">Assume a party of</span>
+                {num(assumedParty, setAssumedParty, { max: 12 })}
+              </label>
+              <span className="rt-vox-hint">
+                Once the table is aboard, their published Wounds are used instead.
+              </span>
+            </div>
+          )}
+
+          {/* the hostiles */}
+          {editing.hostiles.length === 0 ? (
+            <p className="rt-vox-hint">Nothing in it yet.</p>
+          ) : (
+            <ul className="rt-list">
+              {editing.hostiles.map((h, i) => (
+                <li key={i} className="rt-entry">
+                  <span className="rt-entry-t">{h.name}</span>
+                  <span className="rt-entry-c">
+                    {h.max} Wounds {'\u00B7'} weight {hostileWeight(h)}
+                  </span>
+                  {h.weapon && (
+                    <div className="rt-entry-d"><WeaponLine label={h.weapon} /></div>
+                  )}
+                  <button className="rt-rm" onClick={() => dropHostile(i)}
+                    aria-label={'Remove ' + h.name}>&times;</button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* adding to it */}
+          <div className="rt-gmmods">
+            <label><span className="rt-der-k">Tier</span>
+              <select className="rt-sel" value={encTier}
+                onChange={(e) => setEncTier(e.target.value)}>
+                <option value="">{'\u2014 roll \u2014'}</option>
+                {THREAT_TIERS.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </label>
+            <label><span className="rt-der-k">Origin</span>
+              <select className="rt-sel" value={encOrigin}
+                onChange={(e) => setEncOrigin(e.target.value)}>
+                <option value="">{'\u2014 roll \u2014'}</option>
+                {ORIGINS.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="rt-btnrow">
+            <button className="rt-btn"
+              disabled={editing.hostiles.length >= MAX_HOSTILES}
+              onClick={() => addHostile(rollNpc({
+                tierId: encTier || null, originId: encOrigin || null
+              }))}>Roll one in</button>
+            <button className="rt-btn ghost"
+              disabled={editing.hostiles.length + 3 > MAX_HOSTILES}
+              onClick={() => {
+                const rolled = Array.from({ length: 3 }, () => readHostile(rollNpc({
+                  tierId: encTier || null, originId: encOrigin || null
+                })));
+                upsert({ ...editing, hostiles: [...editing.hostiles, ...rolled] });
+              }}>Roll three</button>
+          </div>
+
+          <label className="rt-shipsel">
+            <span className="rt-shipsel-k">Or a named antagonist</span>
+            <select className="rt-sel" value={encBestiary}
+              onChange={(e) => setEncBestiary(e.target.value)}>
+              <option value="">{'\u2014 pick one \u2014'}</option>
+              {BESTIARY.map((b) => (
+                <option key={b.name} value={b.name}>
+                  {b.name}{b.custom ? ' (no numbers)' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="rt-btnrow">
+            <button className="rt-btn ghost" disabled={!encBestiary}
+              onClick={() => addHostile(bestiaryToNpc(encBestiary))}>Add to the encounter</button>
+          </div>
+
+          {/* onto the board */}
+          <div className="rt-btnrow">
+            <button className="rt-btn"
+              disabled={!bridgeCode || editing.hostiles.length === 0}
+              onClick={pushEncounter}>
+              Push to the board
+            </button>
+            {pushing && <span className="rt-vox-hint">{pushing}</span>}
+          </div>
+          {!bridgeCode && (
+            <p className="rt-vox-hint">
+              Open a bridge to push an encounter onto the board.
+            </p>
+          )}
+        </>
+      )}
 
       {/* ---- the system generator ----
           Stars of Inequity's system generation: the star decides which zones

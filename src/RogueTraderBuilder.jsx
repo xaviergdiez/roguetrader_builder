@@ -8285,15 +8285,16 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                 : 'Nobody to weigh this against yet.'}
             </p>
           )}
-          {/* A placeholder from the page index carries no numbers, so it is
-              left out of the reckoning above rather than counted as the one
-              Wound it was created with. Saying so matters: a band that
-              silently ignored half the fight would read as an answer. */}
+          {/* Anything with no numbers on it — a placeholder from the page
+              index, or a bestiary entry the sources leave blank — is left
+              out of the reckoning above rather than counted as the one Wound
+              it was created with. Saying so matters: a band that silently
+              ignored half the fight would read as an answer. */}
           {encDifficulty && encDifficulty.unweighed > 0 && encDifficulty.threat > 0 && (
             <p className="rt-warn">
-              {encDifficulty.unweighed} of these came from the page index and
-              carry no numbers, so the band above counts only the rest. Fill
-              them in from the book to weigh the whole fight.
+              {encDifficulty.unweighed} of these carry no numbers and are
+              yours to adjudicate, so the band above counts only the rest.
+              Fill them in to weigh the whole fight.
             </p>
           )}
           {Object.keys((combat && combat.playerVitals) || {}).length === 0 && (

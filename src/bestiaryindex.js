@@ -335,12 +335,17 @@ export function searchBestiary(query, { type = null, limit = 40 } = {}) {
 
 // A placeholder for the board. No numbers, because the index has none:
 // it arrives named and cited, and the GM fills in what the book says.
+//
+// Absent figures are 0, the same convention bestiary.js uses — the
+// printed dash means the creature has none of that, and one spelling of
+// "nothing on file" is better than two. isUnweighed() keeps it out of the
+// difficulty reckoning either way.
 export function indexToNpc(name) {
   const e = indexEntry(name);
   if (!e) return null;
   return {
-    name: e.name, max: 1, ws: null, bs: null,
-    toughnessBonus: null, armour: null, weapon: null,
+    name: e.name, max: 1, ws: 0, bs: 0,
+    toughnessBonus: 0, armour: 0, weapon: null,
     custom: true, note: citation(e)
   };
 }

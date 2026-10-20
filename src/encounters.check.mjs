@@ -214,8 +214,16 @@ const seeded = (seed) => () => {
   // "no skill on file" as "a skill of zero" and weighs the placeholder after
   // all. Pinned because it is invisible until a GM trusts the band.
   assert.equal(isUnweighed(readHostile({ custom: true, ws: null, bs: null })), true);
-  assert.equal(isUnweighed(readHostile({ custom: true, ws: 0, bs: 0 })), false,
-    'a skill of zero is a statted creature that is simply terrible');
+  // The bestiary spells "no figure on file" as 0, the way the printed dash
+  // does, so a custom entry full of zeros is as unweighable as one full of
+  // nulls. Both halves of the app are covered by one test.
+  assert.equal(isUnweighed(readHostile({ custom: true, ws: 0, bs: 0 })), true,
+    'zeros mean the same thing as nulls here');
+  // But a creature that only shoots is weighed on what it has.
+  assert.equal(isUnweighed(readHostile({ custom: true, ws: 0, bs: 64 })), false,
+    'no Weapon Skill is not no numbers');
+  // And nothing non-custom is ever skipped, however poor its line.
+  assert.equal(isUnweighed(readHostile({ ws: 0, bs: 0 })), false);
 
   // Flagged custom but statted anyway — a bestiary entry that has numbers —
   // is weighed normally.

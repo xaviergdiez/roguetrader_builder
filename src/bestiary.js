@@ -21,8 +21,10 @@
 //                        the span is recorded in the note.
 //   Swarm Wounds        "10/30/50" is a swarm thinning as it dies. The
 //                        first figure is stored and the rest noted.
-//   No numbers          `custom: true`, and bestiaryToNpc carries that
-//                        through rather than inventing a figure.
+//   No numbers          a characteristic the source leaves blank is 0, and
+//                        an entry the source gives nothing usable for is
+//                        marked `custom: true` so the GM knows to run it by
+//                        hand rather than trusting the zeros.
 //
 // WHERE THE SOURCES DISAGREE, the compiled master is followed and the
 // conflict is recorded in `conflict` so nobody has to rediscover it. See
@@ -30,9 +32,12 @@
 
 const B = (name, group, stats, weapon, abilities, extra = {}) => ({
   name, group,
-  ws: null, bs: null, s: null, t: null, ag: null,
-  int: null, per: null, wp: null, fel: null,
-  wounds: null, toughnessBonus: null, armour: null,
+  // A characteristic the source does not give is 0, not null. A beast that
+  // cannot shoot has Ballistic Skill 0, which is what the printed profiles
+  // mean by their dash: it may still be handed a gun, and it will miss.
+  ws: 0, bs: 0, s: 0, t: 0, ag: 0,
+  int: 0, per: 0, wp: 0, fel: 0,
+  wounds: 0, toughnessBonus: 0, armour: 0,
   ...stats,
   weapon: weapon || null,
   abilities: abilities || null,
@@ -53,17 +58,17 @@ const BEASTS = [
   B('Clawed Fiend', 'beast',
     { ws: 43, s: 59, t: 53, ag: 47, int: 16, per: 54, wp: 23, fel: 4,
       wounds: 48, toughnessBonus: 10, armour: 4 },
-    'Claws (1d10+10 R; Pen 1; Razor Sharp, Tearing)',
-    'Tail Spike (1d10+2 R; Tearing). Bestial Fury: gains Frenzy and Lightning Attack when wounded. Brutal Charge, Fear (2).',
+    'Claws (1d10+10 R; Pen 2; Razor Sharp, Tearing)',
+    'Tail Spike (1d10+2 R; Tearing). Bestial Fury: gains Frenzy and Lightning Attack when wounded. Berserk Charge. Crushing Blow. Swift Attack. Iron Jaw. Fear (2).',
     { armourNote: 'Hide 4 all',
-      conflict: 'A tactica sheet gives the claws Pen 2 rather than Pen 1.' }),
+      conflict: 'The tactica sheets are followed here (claws Pen 2). The compiled master gives Pen 1.' }),
   B('Creeping Stalker', 'beast',
     { ws: 30, s: 33, t: 48, ag: 8, int: 8, per: 43, wp: 15, fel: 1,
       wounds: 12, toughnessBonus: 4, armour: 2 },
     'Teeth (1d10+3 R; Pen 1; Tearing, Toxic)',
-    'Whip Tentacles (1d10+3 I; Flexible, Snare, Toxic). Burst of Speed: +20 Agility for 1d10 rounds. Cold Dweller.',
+    'Whip Tentacles (1d10+3 I; Flexible, Snare, Toxic). Burst of Speed: +20 Agility and Move 4/8/12/24 for 1d10 rounds, taking Agility to 48. Cold Dweller.',
     { armourNote: 'Hide 2 all',
-      conflict: 'Both tactica sheets give the Burst of Speed Agility as 48, not 28.' }),
+      conflict: 'The tactica sheets are followed here (Burst of Speed to Agility 48). The compiled master gives 28.' }),
   B('Khymera', 'beast',
     { ws: 45, s: 40, t: 35, ag: 54, int: 15, per: 40, wp: 35,
       wounds: 21, toughnessBonus: 6, armour: 0 },
@@ -364,12 +369,12 @@ const XENOS = [
     'Psy Rating 3, rising by 1 per kill through Roiling Fury to a maximum of 10. Resonator Implants. Techno-Shaman Discipline: Seize the Machine, Telekinetic Sledge, Reap the Flesh, Open the Mind’s Eye.',
     { armourNote: 'Implanted plates 6 all' }),
   B('Sslyth Mercenary', 'xenos',
-    { ws: 35, bs: 42, s: 51, t: 48, ag: 47, int: 31, per: 38, wp: 23, fel: 28,
-      wounds: 25, toughnessBonus: 4, armour: 4 },
+    { ws: 45, bs: 45, s: 40, t: 45, ag: 45, int: 35, per: 45, wp: 40, fel: 20,
+      wounds: 25, toughnessBonus: 4, armour: 3 },
     'Shard Carbine (60m; 1d10+2 R; Pen 3; Toxic)',
-    'Splinter Pistols (25m; 1d10+2 R; Pen 3; Toxic). Xenos Blade (1d10 R; Pen 2; Tearing, Toxic). Punch Claw. Crawler. Multiple Arms. Size (Hulking). Dual Shot. Blademaster.',
-    { armourNote: 'Body and Arms 4, Head and Legs 3',
-      conflict: 'The two tactica sheets give WS 45 / BS 45 / S 40 / T 45 and Wounds 22 or 25. The compiled figures are stored.' }),
+    'Splinter Pistols and Xenos Blade (1d10+4 R; Pen 2; Tearing, Toxic). Crawler. Multiple Arms. Dual Shot. Blademaster. Guardian.',
+    { armourNote: 'Scales 3 all',
+      conflict: 'The tactica sheets are followed here. They differ from each other on Agility (42 or 45) and Wounds (22 or 25); the fuller sheet is taken. The compiled master gave WS 35 / BS 42 / S 51 / T 48 / Ag 47 and Armour 4.' }),
   B('Stryxis Nomad', 'xenos',
     { ws: 33, bs: 33, s: 30, t: 35, ag: 40, int: 47, per: 35, wp: 32, fel: 28,
       wounds: 13, toughnessBonus: 3, armour: 3 },
@@ -453,9 +458,9 @@ const WARP = [
   B('Ebon Geist', 'warp',
     { ws: 36, s: 36, t: 40, ag: 45, int: 14, per: 45, wp: 42,
       wounds: 18, toughnessBonus: 8, armour: 0 },
-    'Chill Talons (1d10+3 R; Tearing, Toxic, Warp Weapon)',
-    'Consume Life: recovers 1d5 Wounds for each living target killed. Phase. Flyer (12). Fear (2).',
-    { conflict: 'A tactica sheet gives the Chill Talons as 1d10+3 E, Pen 3.' }),
+    'Chill Talons (1d10+3 E; Pen 3; Desiccating)',
+    'Consume Life: recovers 1d5 Wounds for each living target killed. Insubstantial: passes through physical barriers. Shadow Movement. Swift Attack. Lightning Attack. Fear (2).',
+    { conflict: 'The tactica sheets are followed here (1d10+3 E, Pen 3, Desiccating). The compiled master gives 1d10+3 R with Tearing, Toxic and Warp Weapon.' }),
   B("T'Zar the Broker", 'warp',
     { ws: 27, bs: 36, s: 36, t: 27, ag: 45, int: 63, per: 54, wp: 63, fel: 36,
       wounds: 18, toughnessBonus: 8, armour: 3 },
@@ -464,11 +469,11 @@ const WARP = [
     { armourNote: 'Shifting clothes 3 all', note: 'A Herald of Tzeentch.' }),
   B('The Luminary', 'warp',
     { ws: 51, bs: 42, s: 42, t: 33, ag: 51, int: 51, per: 42, wp: 51, fel: 60,
-      wounds: 33, toughnessBonus: 6, armour: 2 },
+      wounds: 18, toughnessBonus: 6, armour: 2 },
     'Pincer Claw (1d10+4 R; Pen 3; Tearing)',
     'Soporific Musk: \u221210 to enemy Dodge and Parry. Psy Rating 5: Siren\u2019s Whisper, Call to Ecstasy. Fear (2).',
     { armourNote: 'Fancy clothes 2 all', note: 'A Herald of Slaanesh.',
-      conflict: 'Both tactica sheets give Wounds 18 rather than 33.' }),
+      conflict: 'The tactica sheets are followed here (Wounds 18). The compiled master gives 33.' }),
   B('The Carrier', 'warp',
     { ws: 43, bs: 34, s: 43, t: 61, ag: 34, int: 34, per: 25, wp: 52, fel: 52,
       wounds: 61, toughnessBonus: 12, armour: 5 },
@@ -493,12 +498,11 @@ const WARP = [
     'Plaguesword (1d10+13; Pen 1; Toxic)',
     'Claws (1d10+8; Pen 2; Toxic). Cloud of Flies: \u221210 to enemy Weapon and Ballistic Skill. Regeneration (1). Fear (2).'),
   B('Orden Hyort', 'warp',
-    { ws: 53, bs: 13, s: 34, t: 51, ag: 47, int: 40, per: 39, wp: 58, fel: 12,
-      wounds: 21, toughnessBonus: 5, armour: 0 },
+    {},
     'Energised Fists (2d10+4)',
-    'Protected by the Psycharus Worm: an invulnerable shimmering psy-shield that animates slain crew into Warp Puppets, purges the bridge atmosphere, and regenerates Orden while it remains linked.',
-    { note: 'A possessed Navigator.',
-      conflict: 'Both tactica sheets give him no characteristics at all, on the grounds that the Psycharus Worm makes him unattackable. The compiled profile is stored so the board can hold him; the shield is the GM\u2019s to adjudicate.' }),
+    'Protected by the Psycharus Worm: an invulnerable crimson psy-shield that blocks all direct attacks, animates slain crew into Warp Puppets, purges the bridge atmosphere, and regenerates Orden while it remains linked. Fight the Warp Puppets, or disable the ventilation cogitators \u2014 he is not a target.',
+    { custom: true, note: 'A possessed Navigator.',
+      conflict: 'The tactica sheets are followed here: both give him no characteristics at all, because the Psycharus Worm makes him unattackable. The compiled master gives a full profile (WS 53, Wounds 21, TB 5) if you would rather run him as a creature.' }),
   B('Warp Puppet', 'warp',
     { ws: 33, bs: 13, s: 64, t: 21, ag: 11, per: 12, wp: 13,
       wounds: 6, toughnessBonus: 2, armour: 0 },
@@ -531,9 +535,9 @@ const HUMANS = [
     { ws: 35, bs: 50, s: 35, t: 41, ag: 51, int: 34, per: 39, wp: 45, fel: 40,
       wounds: 18, toughnessBonus: 4, armour: 2 },
     'Custom Ceres Bolt Pistols (30m; S/2/\u2013; 1d10+6 X; Pen 4; Tearing, Accurate)',
-    'Psy Rating 2: Mind\u2019s Shadow, Desperate Transmogrification, Shielded by the Warp, Warp Spasm. Gunslinger. Two-Weapon Wielder.',
+    'Psy Rating 1: Mind\u2019s Shadow, Shielded by the Warp, Warp Spasm. Ambidextrous. Catfall. Blind Fighting. Gunslinger. Two-Weapon Wielder.',
     { armourNote: 'Dusty leathers 2 all',
-      conflict: 'Both tactica sheets give Psy Rating 1, and one gives the pistols as 1d10+4 I, Pen 2.' }),
+      conflict: 'The tactica sheets are followed here (Psy Rating 1). They differ from each other on the pistols; the one matching the compiled master is kept (1d10+6 X, Pen 4), against the other\u2019s 1d10+4 I, Pen 2. The master gave Psy Rating 2.' }),
   B('Warp Guide', 'human',
     { ws: 35, bs: 35, s: 32, t: 41, ag: 31, int: 41, per: 44, wp: 50, fel: 23,
       wounds: 15, toughnessBonus: 4, armour: 2 },

@@ -314,7 +314,11 @@ export function bestiaryToNpc(name) {
   if (!b) return null;
   return {
     name: b.name,
-    max: b.wounds ?? 1,
+    // `||` rather than `??`: a bestiary entry with no Wounds on file stores
+    // 0 now, and `0 ?? 1` is 0 — which would hand the board a combatant
+    // that is already dead. Only the Void Kraken is in that position, and
+    // it is marked custom anyway.
+    max: b.wounds || 1,
     ws: b.ws, bs: b.bs, toughnessBonus: b.toughnessBonus, armour: b.armour,
     weapon: b.weapon,
     custom: b.custom,

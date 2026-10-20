@@ -96,25 +96,30 @@ assert.ok(TYPES.includes('Xenos') && TYPES.includes('Human') && TYPES.includes('
   assert.equal(npc.name, 'Abomination');
   // THE POINT: the index has no numbers, so neither does this. An entry
   // that arrived with invented characteristics would be worse than one that
-  // arrives blank — a GM would have no way to tell it was made up.
-  assert.equal(npc.ws, null);
-  assert.equal(npc.bs, null);
-  assert.equal(npc.armour, null);
-  assert.equal(npc.toughnessBonus, null);
+  // arrives blank — a GM would have no way to tell it was made up. Absent
+  // is 0 here, the same convention bestiary.js uses for a printed dash.
+  assert.equal(npc.ws, 0);
+  assert.equal(npc.bs, 0);
+  assert.equal(npc.armour, 0);
+  assert.equal(npc.toughnessBonus, 0);
   assert.equal(npc.custom, true, 'it must declare itself as needing the book');
   assert.match(npc.note, /p\. \d+/, 'and it must say which page');
   assert.equal(indexToNpc('nothing here'), null);
 
-  // Same shape as the stat-carrying bestiary's own adjudicate-by-hand
-  // entries, so the board and the encounter builder treat the two alike.
-  // Found by filter rather than named: which entry has no numbers changes
-  // as the bestiary is filled in, and this check is about the SHAPE.
-  const statless = BESTIARY.find((b) => b.custom && b.ws === null);
-  if (statless) {
-    const handRolled = bestiaryToNpc(statless.name);
+  // One spelling of "nothing on file" across both halves of the app, so
+  // the board and the difficulty reckoning treat them alike.
+  for (const b of BESTIARY) {
+    for (const k of ['ws', 'bs', 'armour', 'toughnessBonus']) {
+      assert.notEqual(b[k], null,
+        `${b.name}.${k} is null; the index spells absent as 0 and so should this`);
+    }
+  }
+  const adjudicated = BESTIARY.find((b) => b.custom && !b.ws && !b.bs);
+  if (adjudicated) {
+    const handRolled = bestiaryToNpc(adjudicated.name);
     for (const k of ['ws', 'bs', 'armour', 'toughnessBonus', 'custom']) {
       assert.deepEqual(npc[k], handRolled[k],
-        `index and bestiary disagree on ${k} (compared against ${statless.name})`);
+        `index and bestiary disagree on ${k} (compared against ${adjudicated.name})`);
     }
   }
 }

@@ -20,18 +20,18 @@ const CHARS = ['ws', 'bs', 's', 't', 'ag', 'int', 'per', 'wp', 'fel'];
     assert.ok(groupIds.includes(b.group), `${b.name}: unknown group "${b.group}"`);
     assert.ok(b.weapon || b.custom, `${b.name}: needs a weapon or a reason not to have one`);
 
-    // A characteristic is a d100 score or absent. A 0 would read as a real
-    // score of zero and be rolled against; absent means "the source gives
-    // none", which is a different thing.
+    // Every figure is a number. A characteristic the source leaves blank is
+    // 0 — the printed dash means the creature has none of that, which is
+    // what 0 says. Nothing is null, so nothing downstream has to guard for
+    // it, and a stray null would mean an entry was transcribed as absent
+    // rather than as zero.
     for (const k of CHARS) {
       const v = b[k];
-      assert.ok(v === null || (Number.isInteger(v) && v > 0 && v <= 100),
-        `${b.name}: ${k} is ${v}`);
+      assert.ok(Number.isInteger(v) && v >= 0 && v <= 100, `${b.name}: ${k} is ${v}`);
     }
     for (const k of ['wounds', 'toughnessBonus', 'armour']) {
       const v = b[k];
-      assert.ok(v === null || (Number.isInteger(v) && v >= 0),
-        `${b.name}: ${k} is ${v}`);
+      assert.ok(Number.isInteger(v) && v >= 0, `${b.name}: ${k} is ${v}`);
     }
     // Armour given per location stores the body figure and keeps the spread.
     if (b.armourNote) assert.ok(b.armour !== null, `${b.name}: an armour note with no figure`);
@@ -82,20 +82,29 @@ assert.equal(bestiaryEntry(null), null);
   assert.equal(plague.toughnessBonus, 15);
 }
 
-/* ---- a beast has no Ballistic Skill, and that is not a zero ---- */
+/* ---- a beast that cannot shoot has Ballistic Skill 0 ---- */
 
 {
-  // Several creatures only ever claw. Storing 0 would make them rollable
-  // ranged attackers who always miss, rather than melee-only.
-  const melee = BESTIARY.filter((b) => b.bs === null);
+  // The printed dash means "none of that", and 0 is how it is stored. A
+  // creature like this can still be handed a gun by a GM who wants to; it
+  // will simply never hit with it, which is the right outcome.
+  const melee = BESTIARY.filter((b) => b.bs === 0);
   assert.ok(melee.length > 5, 'plenty of things in here cannot shoot');
   for (const b of melee) {
-    assert.ok(b.ws !== null || b.custom, b.name + ': cannot fight at all');
+    assert.ok(b.ws > 0 || b.custom, b.name + ': cannot fight at all');
   }
-  // And one that only shoots.
+  // And the mirror case: something that only ever shoots.
   const wisp = bestiaryEntry('Crystalwisp');
-  assert.equal(wisp.ws, null, 'the Crystalwisp has no Weapon Skill at all');
+  assert.equal(wisp.ws, 0, 'the Crystalwisp has no Weapon Skill at all');
   assert.equal(wisp.bs, 64);
+
+  // Nothing anywhere is null. This is the whole point of the convention:
+  // one kind of "no value", so no caller has to handle two.
+  for (const b of BESTIARY) {
+    for (const k of [...CHARS, 'wounds', 'toughnessBonus', 'armour']) {
+      assert.notEqual(b[k], null, `${b.name}.${k} is null, not 0`);
+    }
+  }
 }
 
 /* ---- everything reaches the board ---- */
@@ -125,7 +134,7 @@ assert.equal(bestiaryEntry(null), null);
   const kraken = bestiaryEntry('Void Kraken');
   assert.equal(kraken.custom, true);
   assert.match(kraken.note, /STARSHIP SCALE/);
-  assert.equal(kraken.wounds, null, 'it has Hull Integrity, not Wounds');
+  assert.equal(kraken.wounds, 0, 'it has Hull Integrity, not Wounds');
 }
 
 /* ---- where the sources disagree, it is written down ---- */
@@ -142,7 +151,24 @@ assert.equal(bestiaryEntry(null), null);
   for (const n of ['The Luminary', 'Sslyth Mercenary', 'Wyrd Gunslinger', 'Orden Hyort']) {
     assert.ok(named.includes(n), n + ': the recorded conflict went missing');
   }
-  assert.match(bestiaryEntry('The Luminary').conflict, /Wounds 18/);
+
+  // The tactica sheets win every disagreement, and each conflict note says
+  // so. A note that did not would mean an entry had been resolved the other
+  // way without anyone deciding to.
+  for (const c of CONFLICTS) {
+    assert.match(c.conflict, /sheets are followed/,
+      c.name + ': the sheets are the tie-breaker, and the note must say so');
+  }
+  // The figures that moved because of it.
+  assert.equal(bestiaryEntry('The Luminary').wounds, 18, 'the sheets give 18');
+  assert.equal(bestiaryEntry('Sslyth Mercenary').ws, 45);
+  assert.equal(bestiaryEntry('Sslyth Mercenary').armour, 3);
+  assert.match(bestiaryEntry('Clawed Fiend').weapon, /Pen 2/);
+  assert.match(bestiaryEntry('Ebon Geist').weapon, /1d10\+3 E; Pen 3/);
+  assert.match(bestiaryEntry('Wyrd Gunslinger').abilities, /Psy Rating 1/);
+  // Orden Hyort has no profile at all in the sheets, so he is adjudicated.
+  assert.equal(bestiaryEntry('Orden Hyort').custom, true);
+  assert.equal(bestiaryEntry('Orden Hyort').ws, 0);
 }
 
 /* ---- the weight formula ranks them the way a GM would expect ---- */

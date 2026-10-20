@@ -58,11 +58,16 @@ export function threatWeight({ wounds = 0, armour = 0, toughnessBonus = 0, ws = 
 // the page index has a name, a citation and nothing else; counting it as the
 // one Wound it was created with would drag an encounter's whole reckoning
 // down and report Trivial for a fight nobody has statted yet.
-// Checked against null rather than through Number(): Number(null) is 0,
-// which is finite, so a finiteness test reads "no skill on file" as "a skill
-// of zero" and the placeholder gets weighed after all.
-const absent = (v) => v === null || v === undefined || v === '';
-export const isUnweighed = (h) => Boolean(h && h.custom) && absent(h.ws) && absent(h.bs);
+// "Nothing to go on" is null, undefined, '' OR 0 — the two halves of the
+// app spell it differently and both mean the same thing here. The page
+// index has no characteristics at all and sends null; the bestiary stores a
+// creature's missing figures as 0, the way the printed dash means it. A
+// test for null alone weighed an adjudicate-by-hand entry full of zeros,
+// and one through Number() weighed the placeholders, because Number(null)
+// is 0 and 0 is finite.
+const nothingOnFile = (v) => v === null || v === undefined || v === '' || Number(v) === 0;
+export const isUnweighed = (h) =>
+  Boolean(h && h.custom) && nothingOnFile(h.ws) && nothingOnFile(h.bs);
 
 // A roster hostile carries its own numbers, so it is weighed directly.
 export const hostileWeight = (h) => (isUnweighed(h) ? 0 : threatWeight({

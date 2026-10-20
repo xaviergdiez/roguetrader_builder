@@ -7469,7 +7469,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const [log, setLog] = useState([]);
   const [eventId, setEventId] = useState('macro_strike');
   const [eventAmount, setEventAmount] = useState(5);
-  const [gmTab, setGmTab] = useState('combat');
+  const [gmTab, setGmTab] = useState('fleet');
   // The last rolled star system. Local to this dashboard: it is reference
   // the GM reads out, not state the table shares.
   const [system, setSystem] = useState(null);
@@ -7531,8 +7531,14 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
 
   // Counts on the tabs so a GM can see what they have prepared without
   // opening each one. The fleet counts the opposition, not their own ship.
+  // Voidship combat and character combat are different events and are kept
+  // apart here. The ship half is the fleet and the gunnery resolver; the
+  // character half is prepared under Encounters and RUN from the Bridge,
+  // because it needs the live board of hostiles the table can see.
   const GM_TABS = [
-    { id: 'combat', label: 'Combat', count: fleet.length },
+    { id: 'fleet', label: 'Fleet', count: fleet.length },
+    { id: 'void', label: 'Void combat', count: 0 },
+    { id: 'events', label: 'Events', count: 0 },
     { id: 'encounters', label: 'Encounters', count: encounters.length },
     { id: 'endeavours', label: 'Endeavours', count: endeavours.length },
     { id: 'systems', label: 'Systems', count: 0 }
@@ -7560,6 +7566,18 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     })
       .then(() => setPublished('The table can read it.'))
       .catch((e) => setPublished(e.message || 'The bridge refused that.'));
+  };
+
+  const startEncounter = () => {
+    const enc = newEncounter('Encounter ' + (encounters.length + 1));
+    saveEncounters([...encounters, enc]);
+    setEncId(enc.id);
+    setPushing('');
+  };
+  const startEndeavour = () => {
+    const end = newEndeavour('Endeavour ' + (endeavours.length + 1));
+    saveEndeavours([...endeavours, end]);
+    setEndId(end.id);
   };
 
   const [pushing, setPushing] = useState('');
@@ -7886,7 +7904,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         ))}
       </div>
       <div className="rt-gmtabbody">
-      {gmTab === 'combat' && (<>
+      {gmTab === 'fleet' && (<>
 
       {/* ---- fleet ---- */}
       <div className="rt-conds-h">Fleet</div>
@@ -7948,8 +7966,16 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         </select>
       </label>
 
+      </>)}
+      {gmTab === 'void' && (<>
       {/* ---- attack ---- */}
-      <div className="rt-conds-h">Attack</div>
+      <div className="rt-conds-h">Ship against ship</div>
+      <p className="rt-vox-hint">
+        Voidship gunnery: Ballistic Skill and the crew, at ranges in VU. A
+        boarding action or a firefight between characters is a different
+        event {'\u2014'} prepare it under Encounters, and run it from the
+        BRIDGE, where the board the table can see lives.
+      </p>
       <label className="rt-shipsel">
         <span className="rt-shipsel-k">Attacker</span>
         <select className="rt-sel" value={attackerId} onChange={(e) => setAttackerId(e.target.value)}>
@@ -7998,6 +8024,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         <button className="rt-btn ghost" disabled={!targetP} onClick={rollCritical}>Roll critical</button>
       </div>
 
+      </>)}
+      {gmTab === 'events' && (<>
       {/* ---- events ---- */}
       <div className="rt-conds-h">Emit an event</div>
       <p className="rt-vox-hint">
@@ -8044,21 +8072,37 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           chevron sat visibly out of line down the column. */}
       <div className="rt-sechead">
         <span className="rt-conds-h">Endeavours</span>
-        <button className="rt-opt" onClick={() => {
-          const end = newEndeavour('Endeavour ' + (endeavours.length + 1));
-          saveEndeavours([...endeavours, end]);
-          setEndId(end.id);
-        }}>New</button>
+        {endeavours.length > 0 && (
+          <button className="rt-opt" onClick={startEndeavour}>New</button>
+        )}
       </div>
-      <select className="rt-sel rt-selwide" value={endId || ''}
-        onChange={(e) => setEndId(e.target.value || null)}>
-        <option value="">{'\u2014 pick an endeavour \u2014'}</option>
-        {endeavours.map((e) => (
-          <option key={e.id} value={e.id}>
-            {e.name} {'\u00B7'} {describeEndeavour(e)}
-          </option>
-        ))}
-      </select>
+      {/* An empty library showed a dropdown with nothing to choose and a
+          small New in the heading, which reads as a broken screen rather
+          than an empty one. Nothing to pick means no picker. */}
+      {endeavours.length === 0 ? (
+        <>
+          <p className="rt-vox-hint">
+            Nothing planned yet. An Endeavour is the campaign itself: a few
+            missions, each with objectives worth Achievement Points, and a
+            Profit Factor reward when it is done.
+          </p>
+          <div className="rt-btnrow">
+            <button className="rt-btn" onClick={startEndeavour}>
+              Start an endeavour
+            </button>
+          </div>
+        </>
+      ) : (
+        <select className="rt-sel rt-selwide" value={endId || ''}
+          onChange={(e) => setEndId(e.target.value || null)}>
+          <option value="">{'\u2014 pick an endeavour \u2014'}</option>
+          {endeavours.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name} {'\u00B7'} {describeEndeavour(e)}
+            </option>
+          ))}
+        </select>
+      )}
 
       {journal && (() => {
         const prog = endeavourProgress(journal);
@@ -8250,20 +8294,36 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           Saved in the homebrew library; see encounters.js. */}
       <div className="rt-sechead">
         <span className="rt-conds-h">Encounters</span>
-        <button className="rt-opt" onClick={() => {
-          const enc = newEncounter('Encounter ' + (encounters.length + 1));
-          saveEncounters([...encounters, enc]);
-          setEncId(enc.id);
-          setPushing('');
-        }}>New</button>
+        {encounters.length > 0 && (
+          <button className="rt-opt" onClick={startEncounter}>New</button>
+        )}
       </div>
-      <select className="rt-sel rt-selwide" value={encId || ''}
-        onChange={(e) => { setEncId(e.target.value || null); setPushing(''); }}>
-        <option value="">{'\u2014 pick an encounter \u2014'}</option>
-        {encounters.map((e) => (
-          <option key={e.id} value={e.id}>{e.name} {'\u00B7'} {describeEncounter(e)}</option>
-        ))}
-      </select>
+      <p className="rt-vox-hint">
+        Character combat: Weapon and Ballistic Skill, at ranges in metres.
+        Build a fight here, then push it to the board from the BRIDGE.
+      </p>
+      {encounters.length === 0 ? (
+        <>
+          <p className="rt-vox-hint">
+            Nothing prepared yet. Build one and it is weighed against the
+            party as you fill it, so you know what you are about to throw at
+            them before they meet it.
+          </p>
+          <div className="rt-btnrow">
+            <button className="rt-btn" onClick={startEncounter}>
+              Build an encounter
+            </button>
+          </div>
+        </>
+      ) : (
+        <select className="rt-sel rt-selwide" value={encId || ''}
+          onChange={(e) => { setEncId(e.target.value || null); setPushing(''); }}>
+          <option value="">{'\u2014 pick an encounter \u2014'}</option>
+          {encounters.map((e) => (
+            <option key={e.id} value={e.id}>{e.name} {'\u00B7'} {describeEncounter(e)}</option>
+          ))}
+        </select>
+      )}
 
       {system && draftsFromSystem(system).length > 0 && (
         <>

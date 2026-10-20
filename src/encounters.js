@@ -54,11 +54,21 @@ export function threatWeight({ wounds = 0, armour = 0, toughnessBonus = 0, ws = 
   return Math.round(durability * (skill / BASELINE_SKILL));
 }
 
+// Has this hostile enough on it to be worth weighing? A placeholder out of
+// the page index has a name, a citation and nothing else; counting it as the
+// one Wound it was created with would drag an encounter's whole reckoning
+// down and report Trivial for a fight nobody has statted yet.
+// Checked against null rather than through Number(): Number(null) is 0,
+// which is finite, so a finiteness test reads "no skill on file" as "a skill
+// of zero" and the placeholder gets weighed after all.
+const absent = (v) => v === null || v === undefined || v === '';
+export const isUnweighed = (h) => Boolean(h && h.custom) && absent(h.ws) && absent(h.bs);
+
 // A roster hostile carries its own numbers, so it is weighed directly.
-export const hostileWeight = (h) => threatWeight({
+export const hostileWeight = (h) => (isUnweighed(h) ? 0 : threatWeight({
   wounds: h && h.max, armour: h && h.armour,
   toughnessBonus: h && h.toughnessBonus, ws: h && h.ws, bs: h && h.bs
-});
+}));
 
 // A tier's own ranges, for weighing something not yet rolled — the midpoint
 // of each range, which is what "a Heavy" is worth on average.
@@ -124,15 +134,20 @@ export const DIFFICULTY_BANDS = [
 ];
 
 export function difficulty(enc, members) {
+  const hostiles = (enc && enc.hostiles) || [];
+  const unweighed = hostiles.filter(isUnweighed).length;
   const threat = encounterWeight(enc);
   const party = partyWeight(members);
-  if (!threat) return null;
+  // Nothing statted at all: there is a fight here but no way to weigh it,
+  // so the band is withheld and the count is reported instead of a 0.01x
+  // that reads as harmless.
+  if (!threat) return unweighed ? { threat: 0, party, ratio: null, band: null, unweighed } : null;
   // Nobody to weigh it against: the threat is real but the ratio is not,
   // so the band is withheld rather than guessed from a party of zero.
-  if (!party) return { threat, party: 0, ratio: null, band: null };
+  if (!party) return { threat, party: 0, ratio: null, band: null, unweighed };
   const ratio = threat / party;
   return {
-    threat, party, ratio,
+    threat, party, ratio, unweighed,
     band: DIFFICULTY_BANDS.find((b) => ratio >= b.min) || DIFFICULTY_BANDS[DIFFICULTY_BANDS.length - 1]
   };
 }
@@ -183,7 +198,13 @@ export function readHostile(h) {
     agilityBonus: num(h && h.agilityBonus, 3),
     // Kept for the GM's own reference; npc_add ignores what it does not know.
     tier: (h && typeof h.tier === 'string') ? h.tier : null,
-    behaviour: (h && h.behaviour) ? String(h.behaviour).slice(0, 200) : null
+    behaviour: (h && h.behaviour) ? String(h.behaviour).slice(0, 200) : null,
+    // A creature taken from the page index arrives named and cited with no
+    // numbers at all — the index has none. It is carried here so the
+    // difficulty reckoning can leave it out rather than weigh a blank as
+    // though it were a real combatant.
+    custom: Boolean(h && h.custom),
+    note: (h && h.note) ? String(h.note).slice(0, 200) : null
   };
 }
 

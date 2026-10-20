@@ -55,6 +55,9 @@ import {
 import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
 import { rollSystem, describeSystem, describePlanet } from './stargen.js';
 import {
+  TYPES as BESTIARY_TYPES, searchBestiary, citation, indexToNpc
+} from './bestiaryindex.js';
+import {
   OBJECTIVE_KINDS, STATUSES, kindById,
   /* the read-only view the players get */
   readLibrary as readEndeavours, newEndeavour, newMission, newObjective,
@@ -7450,6 +7453,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const [encOrigin, setEncOrigin] = useState('');
   const [encBestiary, setEncBestiary] = useState('');
   const [assumedParty, setAssumedParty] = useState(4);
+  const [lookup, setLookup] = useState('');
+  const [lookupType, setLookupType] = useState('');
   const [encNote, setEncNote] = useState('');
 
   const editing = encounters.find((e) => e.id === encId) || null;
@@ -8253,7 +8258,22 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
             <p className="rt-vox-hint">{encDifficulty.band.note}</p>
           )}
           {encDifficulty && !encDifficulty.band && (
-            <p className="rt-warn">Nobody to weigh this against yet.</p>
+            <p className="rt-warn">
+              {encDifficulty.unweighed && !encDifficulty.threat
+                ? 'Nothing here is statted yet, so there is no weighing it.'
+                : 'Nobody to weigh this against yet.'}
+            </p>
+          )}
+          {/* A placeholder from the page index carries no numbers, so it is
+              left out of the reckoning above rather than counted as the one
+              Wound it was created with. Saying so matters: a band that
+              silently ignored half the fight would read as an answer. */}
+          {encDifficulty && encDifficulty.unweighed > 0 && encDifficulty.threat > 0 && (
+            <p className="rt-warn">
+              {encDifficulty.unweighed} of these came from the page index and
+              carry no numbers, so the band above counts only the rest. Fill
+              them in from the book to weigh the whole fight.
+            </p>
           )}
           {Object.keys((combat && combat.playerVitals) || {}).length === 0 && (
             <div className="rt-gmmods">
@@ -8279,6 +8299,13 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                   </span>
                   {h.weapon && (
                     <div className="rt-entry-d"><WeaponLine label={h.weapon} /></div>
+                  )}
+                  {h.note && (
+                    <div className="rt-entry-d">
+                      <p className="rt-entry-s">
+                        {h.note} {'—'} numbers to be filled in from the book
+                      </p>
+                    </div>
                   )}
                   <button className="rt-rm" onClick={() => dropHostile(i)}
                     aria-label={'Remove ' + h.name}>&times;</button>
@@ -8319,6 +8346,55 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                 upsert({ ...editing, hostiles: [...editing.hostiles, ...rolled] });
               }}>Roll three</button>
           </div>
+
+          {/* ---- the page index ----
+              294 creatures from across the Rogue Trader line, as a lookup.
+              It carries no numbers on purpose: the source is an index of
+              book and page references, so an entry says where a creature is
+              printed and arrives on the board as a named placeholder for
+              the GM to fill in from the page. See bestiaryindex.js. */}
+          <div className="rt-conds-h">Look one up</div>
+          <div className="rt-gmmods">
+            <label><span className="rt-der-k">Search</span>
+              <input className="rt-field" value={lookup}
+                onChange={(e) => setLookup(e.target.value)}
+                placeholder="Name or affiliation \u2014 rak'gol, eldar, ork\u2026" />
+            </label>
+            <label><span className="rt-der-k">Type</span>
+              <select className="rt-sel" value={lookupType}
+                onChange={(e) => setLookupType(e.target.value)}>
+                <option value="">{'\u2014 any \u2014'}</option>
+                {BESTIARY_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+          </div>
+          {(lookup.trim() || lookupType) && (() => {
+            const hits = searchBestiary(lookup, { type: lookupType || null, limit: 12 });
+            if (!hits.length) return <p className="rt-vox-hint">Nothing by that name.</p>;
+            return (
+              <ul className="rt-list">
+                {hits.map((e) => (
+                  <li key={e.name} className="rt-entry">
+                    <span className="rt-entry-t">{e.name}</span>
+                    <span className="rt-entry-c">{e.type} {'\u00B7'} {e.affiliation}</span>
+                    <div className="rt-entry-d">
+                      <p className="rt-entry-s">{citation(e)}</p>
+                      <button className="rt-opt"
+                        disabled={!editing || editing.hostiles.length >= MAX_HOSTILES}
+                        onClick={() => addHostile(indexToNpc(e.name))}>
+                        {editing ? 'Add as a placeholder' : 'Pick an encounter first'}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            );
+          })()}
+          <p className="rt-vox-hint">
+            A lookup, not a stat block {'\u2014'} the source indexes where each
+            creature is printed, so one added here arrives named and cited
+            with its numbers left for you to type in from the book.
+          </p>
 
           <label className="rt-shipsel">
             <span className="rt-shipsel-k">Or a named antagonist</span>

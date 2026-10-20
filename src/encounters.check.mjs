@@ -5,8 +5,9 @@ import {
   threatWeight, hostileWeight, tierWeight, encounterWeight,
   partyMemberWeight, partyWeight, DIFFICULTY_BANDS, difficulty,
   MAX_HOSTILES, EMPTY_ENCOUNTER, readEncounter, readHostile, readLibrary,
-  newEncounter, toNpcAdd, draftsFromSystem, describeEncounter, stockDraft
+  newEncounter, toNpcAdd, draftsFromSystem, describeEncounter, stockDraft, isUnweighed
 } from './encounters.js';
+import { indexToNpc } from './bestiaryindex.js';
 import { THREAT_TIERS, tierById, rollNpc, bestiaryToNpc } from './npcgen.js';
 import { rollSystem, featureById } from './stargen.js';
 import { applyGroundEvent, groundEventById } from './groundcombat.js';
@@ -76,11 +77,15 @@ const seeded = (seed) => () => {
     const w = hostileWeight(npc);
     assert.ok(Number.isFinite(w) && w > 0, 'a rolled hostile weighed ' + w);
   }
-  // Orden Hyort has no usable numbers at all; it must not throw or go
-  // negative, and it must not silently count as nothing either.
-  const vague = bestiaryToNpc('Orden Hyort');
+  // Orden Hyort has no usable numbers at all. It must not throw, and it must
+  // weigh NOTHING rather than a token amount: an entry the GM has to
+  // adjudicate by hand cannot be reckoned for them, and a token weight was
+  // worse than none because it made an unstatted encounter read as Trivial.
+  const vague = readHostile(bestiaryToNpc('Orden Hyort'));
   assert.equal(vague.ws, null);
-  assert.ok(hostileWeight(vague) > 0, 'even a statless bestiary entry has presence');
+  assert.equal(isUnweighed(vague), true);
+  assert.equal(hostileWeight(vague), 0,
+    'an entry with nothing on it cannot be weighed, and must not pretend to be');
 
   const kaptin = bestiaryToNpc('Kaptin Orlog Mordakka');
   assert.ok(hostileWeight(kaptin) > hostileWeight(vague));
@@ -171,6 +176,54 @@ const seeded = (seed) => () => {
   assert.ok(noParty.threat > 0);
   assert.equal(noParty.ratio, null);
   assert.equal(noParty.band, null);
+}
+
+/* ---- a creature with no numbers is not weighed as though it had some ---- */
+
+// A placeholder from the page index arrives named and cited and nothing
+// else, because the index carries no characteristics. Counting it as the
+// one Wound it was created with reported "Trivial 0.01x" for an encounter
+// nobody had statted yet — which is worse than reporting nothing, because
+// it looks like an answer.
+{
+  const ph = readHostile(indexToNpc('Abomination'));
+  assert.equal(ph.custom, true, 'the placeholder must declare itself');
+  assert.match(ph.note, /p\. \d+/, 'and keep its citation through storage');
+  assert.equal(isUnweighed(ph), true);
+  assert.equal(hostileWeight(ph), 0, 'nothing to go on means no weight');
+
+  // An encounter of nothing but placeholders withholds the band and says
+  // how many are unstatted.
+  const blank = difficulty({ hostiles: [ph, ph] }, [{}, {}, {}, {}]);
+  assert.equal(blank.threat, 0);
+  assert.equal(blank.band, null, 'no band for a fight nobody has statted');
+  assert.equal(blank.ratio, null);
+  assert.equal(blank.unweighed, 2);
+
+  // Mixed: the statted half is weighed, the rest is reported separately so
+  // the GM knows the band is incomplete.
+  const brute = readHostile({ name: 'Brute', max: 15, ws: 40, armour: 4, toughnessBonus: 4 });
+  const mixed = difficulty({ hostiles: [ph, brute] }, [{}, {}, {}, {}]);
+  assert.ok(mixed.band, 'a partly statted encounter still bands what it can');
+  assert.equal(mixed.unweighed, 1);
+  assert.equal(mixed.threat, hostileWeight(brute), 'only the statted one counts');
+
+  // THE TRAP: Number(null) is 0 and 0 is finite, so a finiteness test reads
+  // "no skill on file" as "a skill of zero" and weighs the placeholder after
+  // all. Pinned because it is invisible until a GM trusts the band.
+  assert.equal(isUnweighed(readHostile({ custom: true, ws: null, bs: null })), true);
+  assert.equal(isUnweighed(readHostile({ custom: true, ws: 0, bs: 0 })), false,
+    'a skill of zero is a statted creature that is simply terrible');
+
+  // Flagged custom but statted anyway — a bestiary entry that has numbers —
+  // is weighed normally.
+  const named = readHostile({ name: 'Named', max: 40, ws: 55, custom: true });
+  assert.equal(isUnweighed(named), false);
+  assert.ok(hostileWeight(named) > 0);
+
+  // A placeholder still reaches the board; it is the GM's to fill in.
+  assert.equal(toNpcAdd(ph).id, 'npc_add');
+  assert.equal(toNpcAdd(ph).name, 'Abomination');
 }
 
 /* ---- the stored shape survives a hand-edited blob ---- */

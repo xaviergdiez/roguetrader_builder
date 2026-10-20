@@ -1,6 +1,8 @@
 // Self-check for the compiled bestiary. Run: node src/bestiary.check.mjs
 import assert from 'node:assert/strict';
-import { BESTIARY, GROUPS, bestiaryEntry, byGroup, CONFLICTS } from './bestiary.js';
+import {
+  BESTIARY, GROUPS, bestiaryEntry, byGroup, CONFLICTS, TIER_NAMES, describeTier
+} from './bestiary.js';
 import { bestiaryToNpc } from './npcgen.js';
 import { threatWeight, readHostile, hostileWeight } from './encounters.js';
 
@@ -134,7 +136,11 @@ assert.equal(bestiaryEntry(null), null);
   const kraken = bestiaryEntry('Void Kraken');
   assert.equal(kraken.custom, true);
   assert.match(kraken.note, /STARSHIP SCALE/);
-  assert.equal(kraken.wounds, 0, 'it has Hull Integrity, not Wounds');
+  // Its figures ARE on file now — 50 Hull Integrity and Armour 17 — but they
+  // are a ship's, in a creature's columns. The flag is what stops a GM
+  // dropping it onto a boarding board as a 50-Wound monster.
+  assert.equal(kraken.wounds, 50);
+  assert.equal(kraken.armour, 17);
 }
 
 /* ---- where the sources disagree, it is written down ---- */
@@ -156,19 +162,23 @@ assert.equal(bestiaryEntry(null), null);
   // so. A note that did not would mean an entry had been resolved the other
   // way without anyone deciding to.
   for (const c of CONFLICTS) {
-    assert.match(c.conflict, /sheets are followed/,
-      c.name + ': the sheets are the tie-breaker, and the note must say so');
+    assert.match(c.conflict, /(sheets|Directory) (are|is) followed/,
+      c.name + ': a conflict note must name which source won');
   }
-  // The figures that moved because of it.
-  assert.equal(bestiaryEntry('The Luminary').wounds, 18, 'the sheets give 18');
-  assert.equal(bestiaryEntry('Sslyth Mercenary').ws, 45);
-  assert.equal(bestiaryEntry('Sslyth Mercenary').armour, 3);
+  // Three entries the Master Bestiary Directory settles against the tactica
+  // sheets, because the Directory is the GM's own master list. Pinned so
+  // that moving one back is a deliberate act, in either direction.
+  assert.equal(bestiaryEntry('The Luminary').wounds, 33, 'the Directory gives 33');
+  assert.equal(bestiaryEntry('Sslyth Mercenary').ws, 35);
+  assert.equal(bestiaryEntry('Sslyth Mercenary').armour, 4);
+  assert.equal(bestiaryEntry('Orden Hyort').ws, 53, 'the Directory gives him a profile');
+  assert.equal(bestiaryEntry('Orden Hyort').custom, false);
+
+  // And four the tactica sheets still settle, because the Directory agrees
+  // or is silent.
   assert.match(bestiaryEntry('Clawed Fiend').weapon, /Pen 2/);
   assert.match(bestiaryEntry('Ebon Geist').weapon, /1d10\+3 E; Pen 3/);
   assert.match(bestiaryEntry('Wyrd Gunslinger').abilities, /Psy Rating 1/);
-  // Orden Hyort has no profile at all in the sheets, so he is adjudicated.
-  assert.equal(bestiaryEntry('Orden Hyort').custom, true);
-  assert.equal(bestiaryEntry('Orden Hyort').ws, 0);
 }
 
 /* ---- the weight formula ranks them the way a GM would expect ---- */
@@ -184,5 +194,52 @@ assert.equal(bestiaryEntry(null), null);
   assert.ok(threatWeight({ wounds: 1 }) >= 0);
 }
 
-console.log('bestiary.js OK (%d antagonists across %d groups, %d source conflicts)',
-  BESTIARY.length, GROUPS.length, CONFLICTS.length);
+/* ---- the tactica carried over from the Master Bestiary Directory ---- */
+
+{
+  const tiered = BESTIARY.filter((b) => b.threatTier);
+  assert.ok(tiered.length > 75, 'most of the bestiary should carry a tier');
+  for (const b of BESTIARY) {
+    assert.ok(Number.isInteger(b.threatTier) && b.threatTier >= 0 && b.threatTier <= 4,
+      `${b.name}: threatTier is ${b.threatTier}`);
+    // A tier and its advice travel together; one without the other is a
+    // half-merged row.
+    assert.equal(Boolean(b.threatTier), Boolean(b.counterTactics),
+      `${b.name}: tier and counter-tactics must both be present or both absent`);
+    if (b.counterTactics) {
+      // Low enough to let a terse real line through — the Mutant
+      // Abomination's whole entry is "Heavy fire." — while still catching a
+      // cell that came across empty or truncated.
+      assert.ok(b.counterTactics.length > 5, `${b.name}: advice came across empty`);
+    }
+    assert.equal(describeTier(b), b.threatTier
+      ? `Tier ${b.threatTier} \u00B7 ${TIER_NAMES[b.threatTier]}` : null);
+  }
+  assert.equal(describeTier(null), null);
+
+  // Every tier is used, or the scale is finer than the data behind it.
+  for (const t of [1, 2, 3, 4]) {
+    assert.ok(tiered.some((b) => b.threatTier === t), 'no creature at tier ' + t);
+  }
+
+  // The tier is a judgement, the weight is arithmetic, and they should
+  // broadly agree: a Tier 4 boss ought to outweigh the average Tier 1.
+  const avg = (t) => {
+    const xs = tiered.filter((b) => b.threatTier === t)
+      .map((b) => hostileWeight(readHostile(bestiaryToNpc(b.name))));
+    return xs.reduce((a, c) => a + c, 0) / xs.length;
+  };
+  assert.ok(avg(4) > avg(1), 'tier 4 should outweigh tier 1 on average');
+  assert.ok(avg(3) > avg(1));
+
+  // Page references were deliberately NOT carried over.
+  for (const b of BESTIARY) {
+    assert.equal(b.sources, undefined, b.name + ': page references are not wanted here');
+    assert.equal(/\bp\.\s*\d/.test(b.counterTactics || ''), false,
+      b.name + ': no page reference in the advice either');
+  }
+}
+
+console.log('bestiary.js OK (%d antagonists, %d groups, %d tiered, %d conflicts)',
+  BESTIARY.length, GROUPS.length, BESTIARY.filter((b) => b.threatTier).length,
+  CONFLICTS.length);

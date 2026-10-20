@@ -299,8 +299,8 @@ export function rollNpc({
 // the name into this module's own scope, and bestiaryToNpc below needs it.
 import { bestiaryEntry } from './bestiary.js';
 
-export { BESTIARY, bestiaryEntry, GROUPS as BESTIARY_GROUPS, byGroup, CONFLICTS }
-  from './bestiary.js';
+export { BESTIARY, bestiaryEntry, GROUPS as BESTIARY_GROUPS, byGroup, CONFLICTS,
+  TIER_NAMES, describeTier } from './bestiary.js';
 
 // Shapes a bestiary entry into the npc_add payload shape. `weapon` here is
 // almost always a bespoke ability string, not a gear.js label — pass it to
@@ -326,6 +326,7 @@ export function bestiaryToNpc(name) {
     // can do beyond its one weapon line, where its armour is thickest, and
     // whether the sources disagreed about it.
     note: [b.abilities, b.armourNote && `Armour: ${b.armourNote}`, b.note,
+      b.counterTactics && `Counter: ${b.counterTactics}`,
       b.conflict && `Sources differ: ${b.conflict}`].filter(Boolean).join(' ')
       || null
   };

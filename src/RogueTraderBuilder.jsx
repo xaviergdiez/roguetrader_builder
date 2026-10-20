@@ -7127,6 +7127,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                             <option key={b.name} value={b.name}>
                               {b.name}
                               {b.wounds ? ` · ${b.wounds}w` : ''}
+                              {b.threatTier ? ` · T${b.threatTier}` : ''}
                               {b.custom ? ' (adjudicate by hand)' : ''}
                             </option>
                           ))}
@@ -8532,6 +8533,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                     <option key={b.name} value={b.name}>
                       {b.name}
                       {b.wounds ? ` \u00B7 ${b.wounds}w` : ''}
+                      {b.threatTier ? ` \u00B7 T${b.threatTier}` : ''}
                       {b.custom ? ' (adjudicate by hand)' : ''}
                     </option>
                   ))}

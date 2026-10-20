@@ -56,6 +56,7 @@ import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcge
 import { rollSystem, describeSystem, describePlanet } from './stargen.js';
 import {
   OBJECTIVE_KINDS, STATUSES, kindById,
+  /* the read-only view the players get */
   readLibrary as readEndeavours, newEndeavour, newMission, newObjective,
   readEndeavour, objectiveTarget, objectiveComplete, missionProgress,
   endeavourProgress, describeEndeavour
@@ -63,7 +64,7 @@ import {
 import {
   readLibrary as readEncounters, newEncounter, readHostile, toNpcAdd,
   difficulty, encounterWeight, hostileWeight, describeEncounter, draftsFromSystem,
-  MAX_HOSTILES
+  stockDraft, MAX_HOSTILES
 } from './encounters.js';
 import {
   createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, emitGroundEvent, pollBridge,
@@ -7287,7 +7288,64 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
 
           {ship && (ship.log || []).length > 0 && (
             <>
-              <div className="rt-conds-h">Bridge log</div>
+              {/* ---- the party's own quest log ----
+              Published by the GM. Objectives marked hidden were removed on
+              the server before this arrived, so there is nothing here to
+              filter — see redactEndeavour in endeavours.js. */}
+          {ship && ship.endeavour && (ship.endeavour.missions || []).length > 0 && (() => {
+            const end = ship.endeavour;
+            const prog = endeavourProgress(end);
+            return (
+              <>
+                <div className="rt-conds-h">
+                  {end.name}
+                  {end.status && end.status !== 'active'
+                    ? ' \u00B7 ' + (STATUSES.find((x) => x.id === end.status) || {}).name
+                    : ''}
+                </div>
+                {end.note && <p className="rt-vox-hint">{end.note}</p>}
+                <div className="rt-gmvitals rt-bridgevitals">
+                  <span>MISSIONS <b>{prog.doneMissions}/{prog.missions}</b></span>
+                  <span>OBJECTIVES <b>{prog.doneObjectives}/{prog.objectives}</b></span>
+                  {prog.target > 0 && (
+                    <span>ACHIEVEMENT <b>{prog.earned}/{prog.target}</b></span>
+                  )}
+                </div>
+                {end.missions.map((m) => {
+                  const mp = missionProgress(m, end.apModifier);
+                  return (
+                    <div key={m.id}>
+                      <div className="rt-conds-h">
+                        {m.name}{mp.complete ? ' \u00B7 complete' : ''}
+                      </div>
+                      {m.note && <p className="rt-vox-hint">{m.note}</p>}
+                      <ul className="rt-list">
+                        {m.objectives.map((o) => {
+                          const done = objectiveComplete(o, end.apModifier);
+                          const target = objectiveTarget(o, end.apModifier);
+                          return (
+                            <li key={o.id} className={'rt-entry' + (done ? ' rt-gmdead' : '')}>
+                              <span className="rt-entry-t">
+                                {(kindById(o.kind) || {}).name} {'\u00B7'} {o.name}
+                              </span>
+                              <span className="rt-entry-c">
+                                {done ? 'done' : (target > 0 ? `${o.earned}/${target} AP` : 'open')}
+                              </span>
+                              {o.note && (
+                                <div className="rt-entry-d"><p>{o.note}</p></div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </>
+            );
+          })()}
+
+          <div className="rt-conds-h">Bridge log</div>
               <ul className="rt-gmlog">
                 {ship.log.map((l, i) => (
                   <li key={i} className={'rt-gmline ' + (l.event ? 'event' : '')}>
@@ -7445,6 +7503,18 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   // Pushed as one npc_add per hostile. Sequential rather than a batch: the
   // board's event is already written and authorised, and a six-hostile
   // encounter is six calls once, not six calls a round.
+  const [published, setPublished] = useState('');
+  const publishEndeavour = () => {
+    if (!journal || !bridgeCode) return undefined;
+    setPublished('Publishing\u2026');
+    return writeBridge({
+      code: bridgeCode, doc: { endeavour: journal },
+      log: `The GM published "${journal.name}" to the table.`
+    })
+      .then(() => setPublished('The table can read it.'))
+      .catch((e) => setPublished(e.message || 'The bridge refused that.'));
+  };
+
   const [pushing, setPushing] = useState('');
   const pushEncounter = async () => {
     if (!editing || !bridgeCode) return;
@@ -8051,6 +8121,14 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                                     (x) => ({ ...x, done: e.target.checked }))} />
                                 done
                               </label>
+                              {/* Stripped on the server before the journal
+                                  reaches a player — see redactEndeavour. */}
+                              <label className="rt-gmevade">
+                                <input type="checkbox" checked={o.hidden}
+                                  onChange={(e) => editObjective(m.id, o.id,
+                                    (x) => ({ ...x, hidden: e.target.checked }))} />
+                                hidden from the party
+                              </label>
                               <button className="rt-rm" onClick={() => editMission(m.id,
                                 (x) => ({ ...x, objectives: x.objectives.filter((y) => y.id !== o.id) }))}
                                 aria-label={'Remove ' + o.name}>&times;</button>
@@ -8076,7 +8154,16 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                 missions: [...journal.missions,
                   newMission('Mission ' + (journal.missions.length + 1))]
               })}>Add a mission</button>
+              <button className="rt-btn ghost" disabled={!bridgeCode}
+                onClick={publishEndeavour}>Publish to the table</button>
+              {published && <span className="rt-vox-hint">{published}</span>}
             </div>
+            <p className="rt-vox-hint">
+              {bridgeCode
+                ? 'The party reads this one in their own panel. Objectives '
+                  + 'marked hidden never leave this machine.'
+                : 'Open a bridge to publish this to the table.'}
+            </p>
           </>
         );
       })()}
@@ -8105,15 +8192,20 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       {system && draftsFromSystem(system).length > 0 && (
         <>
           <p className="rt-vox-hint">
-            The system you rolled names places something lives in. Start an
-            encounter from one:
+            The system you rolled names places something lives in. Pick one
+            and it arrives stocked {'\u2014'} a rolled warband with a leader,
+            yours to cut down or build on:
           </p>
           <ul className="rt-addl">
             {draftsFromSystem(system).map((dft) => (
               <li key={dft.id}>
                 <button className="rt-addi" onClick={() => {
-                  saveEncounters([...encounters, dft]);
-                  setEncId(dft.id);
+                  // Stocked on the way in: the point of a draft is a fight
+                  // you did not have to assemble. Everything in it can be
+                  // dropped or added to afterwards.
+                  const stocked = stockDraft(dft);
+                  saveEncounters([...encounters, stocked]);
+                  setEncId(stocked.id);
                   if (dft.suggest) {
                     setEncTier(dft.suggest.tierId || 'heavy');
                     setEncOrigin(dft.suggest.originId || '');

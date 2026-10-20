@@ -5,7 +5,7 @@ import {
   threatWeight, hostileWeight, tierWeight, encounterWeight,
   partyMemberWeight, partyWeight, DIFFICULTY_BANDS, difficulty,
   MAX_HOSTILES, EMPTY_ENCOUNTER, readEncounter, readHostile, readLibrary,
-  newEncounter, toNpcAdd, draftsFromSystem, describeEncounter
+  newEncounter, toNpcAdd, draftsFromSystem, describeEncounter, stockDraft
 } from './encounters.js';
 import { THREAT_TIERS, tierById, rollNpc, bestiaryToNpc } from './npcgen.js';
 import { rollSystem, featureById } from './stargen.js';
@@ -281,6 +281,54 @@ const seeded = (seed) => () => {
   }
   assert.ok(sawElement, 'no derelict or graveyard turned up in 120 systems');
   assert.ok(sawInhabitants, 'no inhabited world turned up in 120 systems');
+
+  // Stocking a draft turns a place into a usable fight.
+  {
+    const dft = denDrafts.find((d) => d.source.feature === 'pirate_den');
+    assert.deepEqual(dft.hostiles, [], 'the draft itself stays a place');
+
+    const stocked = stockDraft(dft, { rng: seeded(5) });
+    assert.ok(stocked.hostiles.length >= 4, 'a den is 3-6 plus a leader');
+    assert.ok(stocked.hostiles.length <= 7);
+    assert.equal(stocked.id, dft.id, 'stocking keeps the draft it came from');
+    assert.equal(stocked.name, dft.name);
+    // The original is untouched — stocking twice gives two fights, not one
+    // that grew.
+    assert.deepEqual(dft.hostiles, []);
+
+    // The leader is the toughest thing in it, which is the point of rolling
+    // one: six identical Heavies is a wall, not an encounter.
+    const weights = stocked.hostiles.map(hostileWeight);
+    const leader = stocked.hostiles[stocked.hostiles.length - 1];
+    assert.equal(Math.max(...weights), hostileWeight(leader),
+      'the leader should outweigh the rank and file');
+    assert.equal(leader.tier, 'elite');
+
+    // Every stocked hostile is pushable, and the encounter weighs something.
+    for (const h of stocked.hostiles) {
+      assert.ok(h.name && h.max >= 1, 'a stocked hostile came back unusable');
+      assert.equal(toNpcAdd(h).id, 'npc_add');
+    }
+    assert.ok(encounterWeight(stocked) > 0);
+    assert.ok(difficulty(stocked, [{}, {}, {}, {}]).band, 'a stocked draft has a difficulty');
+  }
+
+  // A draft with no suggestion at all still stocks rather than throwing.
+  {
+    const bare = stockDraft({ id: 'x', name: 'Somewhere', hostiles: [] }, { rng: seeded(9) });
+    assert.ok(bare.hostiles.length >= 1 && bare.hostiles.length <= 4);
+  }
+  assert.equal(stockDraft(null), null);
+
+  // Every draft a system produces can be stocked, across many systems — a
+  // suggestion naming an unrollable combination would throw here.
+  for (let seed = 1; seed < 60; seed++) {
+    for (const dft of draftsFromSystem(rollSystem(seeded(seed)))) {
+      const stocked = stockDraft(dft, { rng: seeded(seed + 500) });
+      assert.ok(stocked.hostiles.length > 0, dft.name + ' stocked empty');
+      assert.ok(stocked.hostiles.length <= MAX_HOSTILES);
+    }
+  }
 
   // The dependency runs one way: stargen must not know about encounters.
   const stargenSource = await import('node:fs')

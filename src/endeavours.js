@@ -80,7 +80,12 @@ export function readObjective(o) {
     encounterId: (src && typeof src.encounterId === 'string') ? src.encounterId : null,
     // Set by hand when an Objective is finished some way the points did not
     // capture — which happens, and a tracker that argues is useless.
-    done: Boolean(src && src.done)
+    done: Boolean(src && src.done),
+    // GM-only. A campaign has objectives the party is not told about, and
+    // the journal is published to the table — so this is stripped on the
+    // server, the same way an unscanned enemy's numbers and a private word
+    // are. A client-side filter would ship the secret and hide it.
+    hidden: Boolean(src && src.hidden)
   };
 }
 
@@ -165,6 +170,24 @@ export function endeavourProgress(end) {
     complete: objectives > 0 && doneObjectives === objectives,
     fraction: target > 0 ? Math.min(1, earned / target) : null
   };
+}
+
+/* ------------------------------- publishing -------------------------------
+   The journal is the GM's, and the party reads a copy of the one that is
+   running. What they must not read is an objective marked hidden, so that
+   is removed here rather than merely skipped when rendering — the whole
+   document reaches every browser, and anything left in it is readable.
+
+   A mission that holds nothing but hidden objectives is dropped whole: its
+   name alone ("Betray the Navigator") gives the secret away. */
+
+export function redactEndeavour(end, { isGm = false } = {}) {
+  if (!end) return null;
+  if (isGm) return end;
+  const missions = (end.missions || [])
+    .map((m) => ({ ...m, objectives: (m.objectives || []).filter((o) => !o.hidden) }))
+    .filter((m) => (m.objectives || []).length > 0);
+  return { ...end, missions };
 }
 
 /* ---- what a list prints ---- */

@@ -17,7 +17,7 @@
 // A hostile inside an encounter is stored in exactly the shape npc_add
 // takes, so pushing one to the board is a copy rather than a conversion.
 
-import { THREAT_TIERS, tierById } from './npcgen.js';
+import { THREAT_TIERS, tierById, rollNpc } from './npcgen.js';
 
 /* ------------------------------ threat weight ------------------------------
    One formula, used for a hostile and for a player character alike. Using
@@ -220,9 +220,34 @@ const ORIGIN_FOR_SPECIES = {
   ork: 'ork', rakgol: 'xenos_hybrid', other_xenos: 'xenos_hybrid'
 };
 
+// A draft is a PLACE, not a fight: it names somewhere something lives and
+// carries what to roll if the GM wants it stocked. It is kept empty until
+// then, because a GM who only wanted the name should not be handed six
+// hostiles they did not ask for.
+//
+// suggest.count is the range of rank-and-file to roll; suggest.leaderTierId,
+// where a place warrants one, rolls a single tougher hostile on top. Six
+// identical Heavies is a wall, not an encounter.
 const draft = (name, note, suggest, source) => ({
   ...EMPTY_ENCOUNTER, id: newId(), name, note, suggest, source
 });
+
+export function stockDraft(dft, { rng = Math.random } = {}) {
+  if (!dft) return null;
+  const sug = dft.suggest || {};
+  const [lo, hi] = Array.isArray(sug.count) ? sug.count : [2, 4];
+  const n = Math.max(1, lo + Math.floor(rng() * (Math.max(lo, hi) - lo + 1)));
+
+  const hostiles = Array.from({ length: n }, () => readHostile(
+    rollNpc({ rng, tierId: sug.tierId || null, originId: sug.originId || null })
+  ));
+  if (sug.leaderTierId) {
+    hostiles.push(readHostile(
+      rollNpc({ rng, tierId: sug.leaderTierId, originId: sug.originId || null })
+    ));
+  }
+  return { ...dft, hostiles: hostiles.slice(0, MAX_HOSTILES) };
+}
 
 export function draftsFromSystem(system) {
   if (!system || !Array.isArray(system.zones)) return [];
@@ -231,7 +256,7 @@ export function draftsFromSystem(system) {
   if ((system.features || []).some((f) => f.id === 'pirate_den')) {
     out.push(draft('Pirate Den',
       'Somebody is using this system and not declaring themselves.',
-      { tierId: 'heavy', originId: 'renegade' },
+      { tierId: 'heavy', originId: 'renegade', count: [3, 6], leaderTierId: 'elite' },
       { kind: 'system_feature', feature: 'pirate_den' }));
   }
 
@@ -240,18 +265,19 @@ export function draftsFromSystem(system) {
       if (el.id === 'derelict_station') {
         out.push(draft(`Derelict Station — ${zone.name}`,
           'Whatever is still aboard has had a long time to get used to the dark.',
-          { tierId: 'minor', originId: 'xenos_hybrid' },
+          { tierId: 'minor', originId: 'xenos_hybrid', count: [1, 4] },
           { kind: 'element', element: 'derelict_station', zone: zone.id }));
       } else if (el.id === 'starship_graveyard') {
         out.push(draft(`Starship Graveyard — ${zone.name}`,
           'Hulls enough to hide a fleet, and scavengers who got here first.',
-          { tierId: 'heavy', originId: 'renegade' },
+          { tierId: 'heavy', originId: 'renegade', count: [2, 5], leaderTierId: 'elite' },
           { kind: 'element', element: 'starship_graveyard', zone: zone.id }));
       } else if (el.kind === 'planet' && el.planet && el.planet.inhabitants) {
         const sp = el.planet.inhabitants;
         out.push(draft(`${sp.name} — ${el.planet.climate.name}`,
           `A ${el.planet.habitability.name.toLowerCase()} world in the ${zone.name}, and it is not empty.`,
-          { tierId: 'heavy', originId: ORIGIN_FOR_SPECIES[sp.id] || 'xenos_hybrid' },
+          { tierId: 'heavy', originId: ORIGIN_FOR_SPECIES[sp.id] || 'xenos_hybrid',
+            count: [3, 6], leaderTierId: 'elite' },
           { kind: 'inhabitants', species: sp.id, zone: zone.id }));
       }
     }

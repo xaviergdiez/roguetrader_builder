@@ -66,7 +66,7 @@ import {
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
   MACHINE_SPIRIT_ODDITIES, PAST_HISTORIES, oddityById, historyById,
-  rollShipPersonality, readHistory, EMPTY_HISTORY
+  rollShipPersonality, readHistory, EMPTY_HISTORY, describeMods
 } from './shiphistory.js';
 import {
   POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
@@ -8266,10 +8266,10 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
               some results change what the ship can afford. */}
           <div className="rt-conds-h">The ship{'\u2019'}s personality</div>
           <p className="rt-vox-hint">
-            One roll on each table. The effects are printed in the Rogue
-            Trader Core Rulebook on the pages named below {'\u2014'} this app
-            records which result the ship carries, it does not restate what
-            the book says.
+            One roll on each table. A result that moves a ship statistic is
+            applied to the hull below; the rest {'\u2014'} test modifiers,
+            anything that changes in combat, and anything the GM adjudicates
+            {' \u2014'} is printed here and left to the table.
           </p>
           <div className="rt-gmmods">
             <label><span className="rt-der-k">Machine Spirit</span>
@@ -8299,15 +8299,26 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
           {(bp.history.oddityId || bp.history.historyId) && (
             <ul className="rt-list">
               {[oddityById(bp.history.oddityId), historyById(bp.history.historyId)]
-                .filter(Boolean).map((e) => (
-                  <li key={e.id} className="rt-entry">
-                    <span className="rt-entry-t">{e.name}</span>
-                    <span className="rt-entry-c">
-                      {e.effect ? '' : 'Core Rulebook p. ' + e.page}
-                    </span>
-                    {e.effect && <div className="rt-entry-d"><p>{e.effect}</p></div>}
-                  </li>
-                ))}
+                .filter(Boolean).map((e) => {
+                  const applied = describeMods(e.mods);
+                  return (
+                    <li key={e.id} className="rt-entry">
+                      <span className="rt-entry-t">{e.name}</span>
+                      <span className="rt-entry-c">
+                        {applied || 'no change to the hull'}
+                      </span>
+                      <div className="rt-entry-d">
+                        <p>{e.effect}</p>
+                        <p className="rt-entry-s">
+                          Core Rulebook p. {e.page}
+                          {applied
+                            ? ' \u00B7 applied to the hull below'
+                            : ' \u00B7 run at the table'}
+                        </p>
+                      </div>
+                    </li>
+                  );
+                })}
             </ul>
           )}
 
@@ -8408,6 +8419,11 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
                   <div className="rt-der-k">SHIELDS</div></div>
                 <div className="rt-der"><div className="rt-der-v">{derived.maxMorale}</div>
                   <div className="rt-der-k">MORALE</div></div>
+                {/* A Death Cult costs 8 of the crew permanently. Without this
+                    tile the only rule that moves Population looked, on this
+                    panel, like a rule that did nothing. */}
+                <div className="rt-der"><div className="rt-der-v">{derived.maxPopulation}</div>
+                  <div className="rt-der-k">CREW</div></div>
               </div>
               {derived.moraleLossReduction > 0 && (
                 <p className="rt-vox-hint">

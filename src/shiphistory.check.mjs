@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   MACHINE_SPIRIT_ODDITIES, PAST_HISTORIES,
   oddityById, historyById, oddityForRoll, historyForRoll,
-  rollShipPersonality, readHistory, describeHistory, EMPTY_HISTORY
+  rollShipPersonality, readHistory, describeHistory, EMPTY_HISTORY,
+  MOD_KEYS, historyMods, describeMods, entriesOf
 } from './shiphistory.js';
+import { stats, newVitals, budget, powerUsed } from './ship.js';
 
 /* ---- both tables are complete 1d10 tables ---- */
 
@@ -48,18 +50,130 @@ assert.deepEqual(PAST_HISTORIES.map((e) => e.name), [
 assert.ok(MACHINE_SPIRIT_ODDITIES.every((e) => e.page === 197));
 assert.ok(PAST_HISTORIES.every((e) => e.page === 198));
 
-/* ---- effects are deliberately empty, not forgotten ---- */
+/* ---- every entry states what it does ---- */
 
-// This is the one place in the app that names a rule without stating what it
-// does. The gap is deliberate: the effects are not in any source worth
-// trusting, and inventing them would put fan numbers on screen in an app
-// that quotes the book everywhere else. The assertion is here so that
-// filling them in is a conscious act — whoever types the first effect in
-// from pp. 197-198 updates this check and says where it came from.
-assert.ok(MACHINE_SPIRIT_ODDITIES.every((e) => e.effect === ''),
-  'effects are unsourced: fill them from the Core Rulebook, then update this check');
-assert.ok(PAST_HISTORIES.every((e) => e.effect === ''),
-  'effects are unsourced: fill them from the Core Rulebook, then update this check');
+// Transcribed from Tables 8-1 and 8-2 of the Core Rulebook. An entry with no
+// effect is the state this table shipped in before the pages were to hand,
+// and must not come back: a named rule with no text is unusable at a table.
+for (const e of [...MACHINE_SPIRIT_ODDITIES, ...PAST_HISTORIES]) {
+  assert.ok(e.effect && e.effect.length > 40, e.id + ': needs its printed effect');
+  // The printed tables use a true minus sign for penalties, and several of
+  // these rules turn on the sign. A hyphen here would read as a dash.
+  assert.equal(/[a-z] -\d/.test(e.effect), false,
+    e.id + ': use \u2212 for a penalty, not a hyphen');
+}
+
+/* ---- only the flat half is applied, and it is applied correctly ---- */
+
+{
+  // A typo'd key would silently do nothing, so the keys are pinned.
+  for (const e of [...MACHINE_SPIRIT_ODDITIES, ...PAST_HISTORIES]) {
+    for (const [k, v] of Object.entries(e.mods || {})) {
+      assert.ok(MOD_KEYS.includes(k), `${e.id}: unknown modifier "${k}"`);
+      assert.ok(Number.isInteger(v) && v !== 0, `${e.id}: ${k} must be a non-zero integer`);
+    }
+  }
+
+  // The seven entries that move a ship statistic, as printed.
+  assert.deepEqual(oddityById('a_nose_for_trouble').mods, { detection: 5, armour: -1 });
+  assert.deepEqual(oddityById('resolute').mods, { speed: -1, hullIntegrity: 3 });
+  assert.deepEqual(oddityById('ancient_and_wise').mods, { hullIntegrity: -4 });
+  assert.deepEqual(historyById('haunted').mods, { morale: -10, detection: 6 });
+  assert.deepEqual(historyById('wolf_in_sheep_s_clothing').mods, { power: -2 });
+  assert.deepEqual(historyById('death_cult').mods, { population: -8, moraleLossReduction: 2 });
+  assert.deepEqual(historyById('wrested_from_a_space_hulk').mods,
+    { armour: 1, speed: 1, manoeuvre: 3 });
+
+  // The ones left to the GM carry no mods at all. Applying half of a rule
+  // is worse than applying none, so an entry whose printed effect is a test
+  // modifier, a conditional, or an adjudication stays text-only.
+  for (const id of ['blasphemous_tendencies', 'martial_hubris', 'rebellious', 'stoic',
+                    'skittish', 'wrothful', 'adventurous']) {
+    assert.equal(oddityById(id).mods, null, id + ' is not a flat ship modifier');
+  }
+  for (const id of ['reliquary_of_mars', 'emissary_of_the_imperator', 'turbulent_past',
+                    'temperamental_warp_engine', 'finances_in_arrears', 'xenophilous']) {
+    assert.equal(historyById(id).mods, null, id + ' is not a flat ship modifier');
+  }
+
+  // Wrothful and Skittish both change Speed, but only while in combat, and
+  // the ship does not track that — so neither may quietly apply it.
+  assert.equal(oddityById('wrothful').mods, null, 'Wrothful is combat-only');
+  assert.equal(oddityById('skittish').mods, null, 'Skittish is combat-only');
+  assert.match(oddityById('wrothful').effect, /During combat/);
+  assert.match(oddityById('skittish').effect, /When in combat/);
+
+  // Summing both rolled entries.
+  assert.deepEqual(historyMods({ oddityId: 'a_nose_for_trouble', historyId: 'haunted' }),
+    { detection: 11, armour: -1, morale: -10 }, 'two sources of Detection add up');
+  assert.deepEqual(historyMods(null), {});
+  assert.deepEqual(historyMods({}), {});
+  // An unrolled half contributes nothing rather than throwing.
+  assert.deepEqual(historyMods({ oddityId: 'resolute' }), { speed: -1, hullIntegrity: 3 });
+
+  assert.equal(entriesOf({ oddityId: 'resolute', historyId: 'haunted' }).length, 2);
+  assert.equal(entriesOf({ oddityId: 'ghost' }).length, 0);
+
+  assert.equal(describeMods({ detection: 5, armour: -1 }),
+    '+5 Detection, \u22121 Armour');
+  assert.equal(describeMods({}), '');
+  assert.equal(describeMods(null), '');
+}
+
+/* ---- the modifiers reach the ship itself ---- */
+
+// The point of `mods` is that a Resolute ship really does sail with +3 Hull
+// Integrity. If stats() stops reading the history this goes quiet, and the
+// builder would show the printed rule beside a hull that ignores it.
+{
+  const base = { hullId: 'hull-jericho', crew: 'competent', essential: {}, weapons: [], supplemental: [] };
+  const plain = stats(base);
+  assert.ok(plain, 'the sample hull resolves');
+
+  const resolute = stats({ ...base, history: { oddityId: 'resolute', historyId: null } });
+  assert.equal(resolute.hullIntegrity, plain.hullIntegrity + 3);
+  assert.equal(resolute.speed, plain.speed - 1);
+
+  const nose = stats({ ...base, history: { oddityId: 'a_nose_for_trouble', historyId: null } });
+  assert.equal(nose.detection, plain.detection + 5);
+  assert.equal(nose.armour, plain.armour - 1);
+
+  const hulk = stats({ ...base, history: { oddityId: null, historyId: 'wrested_from_a_space_hulk' } });
+  assert.equal(hulk.armour, plain.armour + 1);
+  assert.equal(hulk.speed, plain.speed + 1);
+  assert.equal(hulk.manoeuvre, plain.manoeuvre + 3);
+
+  // Haunted costs Morale permanently, which is the ship's maximum, not its
+  // current figure — so a freshly built haunted ship starts at 90, not 100.
+  const haunted = stats({ ...base, history: { oddityId: null, historyId: 'haunted' } });
+  assert.equal(haunted.maxMorale, plain.maxMorale - 10);
+  assert.equal(haunted.detection, plain.detection + 6);
+  assert.equal(newVitals({ ...base, history: { oddityId: null, historyId: 'haunted' } }).morale,
+    plain.maxMorale - 10, 'a haunted ship is launched already short of Morale');
+
+  // A Death Cult costs 8 of the crew, permanently, and the ship launches
+  // with that many fewer aboard rather than at a full complement.
+  const cult = stats({ ...base, history: { oddityId: null, historyId: 'death_cult' } });
+  assert.equal(cult.maxPopulation, 92);
+  assert.equal(cult.moraleLossReduction, plain.moraleLossReduction + 2);
+  assert.equal(newVitals({ ...base, history: { oddityId: null, historyId: 'death_cult' } }).population, 92);
+
+  // And it is not counted as understaffed for having done so: the penalty is
+  // for losing crew, not for having fewer berths.
+  assert.equal(cult.understaffed, false, 'a full death-cult crew is not understaffed');
+  assert.equal(stats({ ...base, history: { oddityId: null, historyId: 'death_cult' } },
+    { population: 50 }).understaffed, true, 'but half a crew still is');
+
+  // An unrolled or absent history changes nothing at all.
+  for (const h of [undefined, null, {}, EMPTY_HISTORY]) {
+    assert.deepEqual(stats({ ...base, history: h }), plain, 'an unrolled ship is unmodified');
+  }
+
+  // The disguise draws Power from the same plant a component does.
+  const disguised = { ...base, history: { oddityId: null, historyId: 'wolf_in_sheep_s_clothing' } };
+  assert.equal(powerUsed(disguised), powerUsed(base) + 2);
+  assert.equal(budget(disguised).powerRemaining, budget(base).powerRemaining - 2);
+}
 
 /* ---- lookup ---- */
 

@@ -55,6 +55,12 @@ import {
 import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
 import { rollSystem, describeSystem, describePlanet } from './stargen.js';
 import {
+  OBJECTIVE_KINDS, STATUSES, kindById,
+  readLibrary as readEndeavours, newEndeavour, newMission, newObjective,
+  readEndeavour, objectiveTarget, objectiveComplete, missionProgress,
+  endeavourProgress, describeEndeavour
+} from './endeavours.js';
+import {
   readLibrary as readEncounters, newEncounter, readHostile, toNpcAdd,
   difficulty, encounterWeight, hostileWeight, describeEncounter, draftsFromSystem,
   MAX_HOSTILES
@@ -7387,6 +7393,27 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
 
   const editing = encounters.find((e) => e.id === encId) || null;
 
+  /* ---- the Endeavour journal ---- */
+  const endeavours = readEndeavours(homebrew && homebrew.endeavours);
+  const [endId, setEndId] = useState(null);
+  const journal = endeavours.find((e) => e.id === endId) || null;
+
+  const saveEndeavours = (list) =>
+    setHomebrew({ ...(homebrew || {}), endeavours: list });
+  const putEndeavour = (end) => saveEndeavours(
+    endeavours.map((e) => (e.id === end.id ? end : e))
+  );
+  // Every edit below rebuilds the Endeavour whole and hands it back, which
+  // keeps the nesting honest: there is one writer, and it writes a shape
+  // readEndeavour already understands.
+  const editMission = (mid, fn) => putEndeavour({
+    ...journal,
+    missions: journal.missions.map((m) => (m.id === mid ? fn(m) : m))
+  });
+  const editObjective = (mid, oid, fn) => editMission(mid, (m) => ({
+    ...m, objectives: m.objectives.map((o) => (o.id === oid ? fn(o) : o))
+  }));
+
   const saveEncounters = (list) =>
     setHomebrew({ ...(homebrew || {}), encounters: list });
   const upsert = (enc) => saveEncounters(
@@ -7866,6 +7893,193 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       <div className="rt-btnrow">
         <button className="rt-btn" onClick={emit}>Emit</button>
       </div>
+
+      {/* ---- the Endeavour journal ----
+          Endeavour -> missions -> objectives. A combat objective can name a
+          saved encounter, which is where the two halves of GM prep meet.
+          See endeavours.js, including what is deliberately not modelled. */}
+      <div className="rt-conds-h">Endeavours</div>
+      <div className="rt-shiprow">
+        <select className="rt-sel" value={endId || ''}
+          onChange={(e) => setEndId(e.target.value || null)}>
+          <option value="">{'\u2014 pick an endeavour \u2014'}</option>
+          {endeavours.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.name} {'\u00B7'} {describeEndeavour(e)}
+            </option>
+          ))}
+        </select>
+        <button className="rt-btn ghost" onClick={() => {
+          const end = newEndeavour('Endeavour ' + (endeavours.length + 1));
+          saveEndeavours([...endeavours, end]);
+          setEndId(end.id);
+        }}>New</button>
+      </div>
+
+      {journal && (() => {
+        const prog = endeavourProgress(journal);
+        return (
+          <>
+            <div className="rt-shiprow">
+              <input className="rt-field" value={journal.name}
+                onChange={(e) => putEndeavour({ ...journal, name: e.target.value })}
+                placeholder="Name this endeavour" />
+              <button className="rt-btn ghost" onClick={() => {
+                saveEndeavours(endeavours.filter((e) => e.id !== journal.id));
+                setEndId(null);
+              }}>Delete</button>
+            </div>
+
+            <div className="rt-gmmods">
+              <label><span className="rt-der-k">Status</span>
+                <select className="rt-sel" value={journal.status}
+                  onChange={(e) => putEndeavour({ ...journal, status: e.target.value })}>
+                  {STATUSES.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+                </select>
+              </label>
+              <label><span className="rt-der-k">Profit Factor on completion</span>
+                {num(journal.profitFactorReward,
+                  (v) => putEndeavour({ ...journal, profitFactorReward: v }))}
+              </label>
+              <label><span className="rt-der-k">AP modifier per objective</span>
+                {num(journal.apModifier,
+                  (v) => putEndeavour({ ...journal, apModifier: v }), { min: -500 })}
+              </label>
+            </div>
+            {journal.apModifier !== 0 && (
+              <p className="rt-vox-hint">
+                Every objective below needs {journal.apModifier > 0 ? 'another ' : ''}
+                {Math.abs(journal.apModifier)} Achievement Points
+                {journal.apModifier > 0 ? '' : ' fewer'}
+                {' \u2014 a ship with Finances in Arrears carries +50.'}
+              </p>
+            )}
+
+            <div className="rt-gmvitals">
+              <span>MISSIONS <b>{prog.doneMissions}/{prog.missions}</b></span>
+              <span>OBJECTIVES <b>{prog.doneObjectives}/{prog.objectives}</b></span>
+              {prog.target > 0 && (
+                <span>ACHIEVEMENT <b>{prog.earned}/{prog.target}</b></span>
+              )}
+              {prog.complete && <span className="rt-vox">COMPLETE</span>}
+            </div>
+
+            {journal.missions.map((m) => {
+              const mp = missionProgress(m, journal.apModifier);
+              return (
+                <div key={m.id} className="rt-sysout">
+                  <div className="rt-shiprow">
+                    <input className="rt-field" value={m.name}
+                      onChange={(e) => editMission(m.id, (x) => ({ ...x, name: e.target.value }))}
+                      placeholder="Mission" />
+                    <button className="rt-btn ghost" onClick={() => putEndeavour({
+                      ...journal, missions: journal.missions.filter((x) => x.id !== m.id)
+                    })}>Drop</button>
+                  </div>
+                  <p className="rt-vox-hint">
+                    {mp.done}/{mp.total} objectives
+                    {mp.target > 0 ? ` \u00B7 ${mp.earned}/${mp.target} AP` : ''}
+                    {mp.complete ? ' \u00B7 complete' : ''}
+                  </p>
+
+                  {m.objectives.length > 0 && (
+                    <ul className="rt-list">
+                      {m.objectives.map((o) => {
+                        const done = objectiveComplete(o, journal.apModifier);
+                        const target = objectiveTarget(o, journal.apModifier);
+                        const enc = o.encounterId
+                          ? encounters.find((x) => x.id === o.encounterId) : null;
+                        return (
+                          <li key={o.id} className={'rt-entry' + (done ? ' rt-gmdead' : '')}>
+                            <span className="rt-entry-t">
+                              {(kindById(o.kind) || {}).name} {'\u00B7'} {o.name}
+                            </span>
+                            <span className="rt-entry-c">
+                              {target > 0 ? `${o.earned}/${target} AP` : 'no points set'}
+                            </span>
+                            <div className="rt-entry-d">
+                              <div className="rt-gmmods">
+                                <label><span className="rt-der-k">Name</span>
+                                  <input className="rt-field" value={o.name}
+                                    onChange={(e) => editObjective(m.id, o.id,
+                                      (x) => ({ ...x, name: e.target.value }))} />
+                                </label>
+                                <label><span className="rt-der-k">Kind</span>
+                                  <select className="rt-sel" value={o.kind}
+                                    onChange={(e) => editObjective(m.id, o.id,
+                                      (x) => ({ ...x, kind: e.target.value }))}>
+                                    {OBJECTIVE_KINDS.map((k) => (
+                                      <option key={k.id} value={k.id}>{k.name}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label><span className="rt-der-k">Worth</span>
+                                  {num(o.achievementPoints, (v) => editObjective(m.id, o.id,
+                                    (x) => ({ ...x, achievementPoints: v })), { max: 9999 })}
+                                </label>
+                                <label><span className="rt-der-k">Earned</span>
+                                  {num(o.earned, (v) => editObjective(m.id, o.id,
+                                    (x) => ({ ...x, earned: v })), { max: 9999 })}
+                                </label>
+                              </div>
+                              {o.kind === 'combat' && (
+                                <label className="rt-shipsel">
+                                  <span className="rt-shipsel-k">Encounter</span>
+                                  <select className="rt-sel" value={o.encounterId || ''}
+                                    onChange={(e) => editObjective(m.id, o.id,
+                                      (x) => ({ ...x, encounterId: e.target.value || null }))}>
+                                    <option value="">{'\u2014 none \u2014'}</option>
+                                    {encounters.map((x) => (
+                                      <option key={x.id} value={x.id}>{x.name}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                              )}
+                              {enc && (
+                                <p className="rt-entry-s">
+                                  {describeEncounter(enc)}
+                                  {' \u00B7 '}
+                                  <button className="rt-opt" onClick={() => {
+                                    setEncId(enc.id);
+                                    setPushing('');
+                                  }}>open it</button>
+                                </p>
+                              )}
+                              <label className="rt-gmevade">
+                                <input type="checkbox" checked={o.done}
+                                  onChange={(e) => editObjective(m.id, o.id,
+                                    (x) => ({ ...x, done: e.target.checked }))} />
+                                done
+                              </label>
+                              <button className="rt-rm" onClick={() => editMission(m.id,
+                                (x) => ({ ...x, objectives: x.objectives.filter((y) => y.id !== o.id) }))}
+                                aria-label={'Remove ' + o.name}>&times;</button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  <div className="rt-btnrow">
+                    <button className="rt-opt" onClick={() => editMission(m.id, (x) => ({
+                      ...x, objectives: [...x.objectives, newObjective('other', 'New objective')]
+                    }))}>Add an objective</button>
+                  </div>
+                </div>
+              );
+            })}
+
+            <div className="rt-btnrow">
+              <button className="rt-btn" onClick={() => putEndeavour({
+                ...journal,
+                missions: [...journal.missions,
+                  newMission('Mission ' + (journal.missions.length + 1))]
+              })}>Add a mission</button>
+            </div>
+          </>
+        );
+      })()}
 
       {/* ---- the encounter builder ----
           A fight assembled before play and weighed against the party, rather

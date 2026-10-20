@@ -31,7 +31,8 @@ function clean(homebrew) {
   return {
     hulls: entries(h.hulls),
     components: entries(h.components),
-    encounters: entries(h.encounters)
+    encounters: entries(h.encounters),
+    endeavours: entries(h.endeavours)
   };
 }
 
@@ -50,7 +51,7 @@ export default async function handler(req, res) {
     const homebrew = clean((req.body ?? {}).homebrew);
 
     const count = homebrew.hulls.length + homebrew.components.length
-      + homebrew.encounters.length;
+      + homebrew.encounters.length + homebrew.endeavours.length;
     if (count > MAX_ENTRIES) {
       return res.status(413).json({
         error: `That is ${count} entries, over the ${MAX_ENTRIES} limit.`

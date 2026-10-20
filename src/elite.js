@@ -257,6 +257,110 @@ export const ELITE_ADVANCES = [
     note: 'Ascension\u2019s stepping stone. A Legate who does well is held to be headed for a '
       + 'rosette; some reach it quickly, and some never do.'
   },
+  /* ---- the working trade of an investigation ----
+     The ladder above is RANK: who you are allowed to be. These are the
+     CRAFT: what a cult breaker actually does between the warrant and the
+     arrest. They are keyed to the Legature rather than to the rosette,
+     because that is the rung where a character starts running enquiries of
+     their own, and priced below it so a Legate can afford a toolkit instead
+     of saving for the next title.
+
+     Skill names are Rogue Trader's own (Scrutiny, Inquiry, Interrogation,
+     Logic, Search, Forbidden Lore), so a GM adjudicates these with the
+     tests already on the sheet. */
+
+  {
+    id: 'read-the-room',
+    name: 'Scrutiny (Inquisition)',
+    type: 'Skill',
+    cost: 200,
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
+    minRank: 2,
+    requires: 'Seneschal, Missionary, Arch-Militant or Astropath, Rank II',
+    effect: 'You are trained to read a subject rather than merely listen to one. +10 to '
+      + 'Scrutiny when a subject is answering a direct question, and on a success the GM tells '
+      + 'you not only whether they lied but which part of the answer they rehearsed.',
+    note: 'The first thing any Acolyte is taught: most people do not lie well, and the ones '
+      + 'who do give themselves away by how carefully they do it.'
+  },
+  {
+    id: 'canvass-the-locale',
+    name: 'Canvass the Locale',
+    type: 'Talent',
+    cost: 300,
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Void-Master'],
+    minRank: 3,
+    requires: 'Seneschal, Missionary, Arch-Militant or Void-Master, Rank III',
+    effect: 'Working a district rather than a person. One Inquiry Test covering a day\u2019s '
+      + 'canvassing returns a lead on each Degree of Success instead of a single answer, and '
+      + 'a failure still names who refused to talk \u2014 which is a lead of its own.',
+    note: 'Slow, unglamorous and how most heresies are actually found.'
+  },
+  {
+    id: 'scene-of-the-deed',
+    name: 'Scene of the Deed',
+    type: 'Talent',
+    cost: 300,
+    careers: ['Seneschal', 'Missionary', 'Explorator', 'Arch-Militant'],
+    minRank: 3,
+    requires: 'Seneschal, Missionary, Explorator or Arch-Militant, Rank III',
+    effect: 'You reconstruct an event from what it left behind. On a successful Search or '
+      + 'Logic Test at the site of a killing, a ritual or a theft, you establish the order in '
+      + 'which things happened; each further Degree of Success adds one detail, including '
+      + 'whether anything has been removed since.',
+    note: 'The Ordos teach that a cleaned scene is more informative than a filthy one: '
+      + 'somebody chose what to take away.'
+  },
+  {
+    id: 'the-long-question',
+    name: 'The Long Question',
+    type: 'Talent',
+    cost: 400,
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
+    minRank: 4,
+    prereqElite: 'Talented (Interrogation)',
+    requires: 'Rank IV, and Talented (Interrogation) before it',
+    effect: 'An interrogation conducted over days rather than an evening. Spend a week with a '
+      + 'subject in your custody to take a single Interrogation Test at +20 that cannot be '
+      + 'resisted by Willpower alone; the subject takes 1 Fatigue and the GM may call for '
+      + 'Insanity on your side as well as theirs.',
+    note: 'The Ordos do not pretend this is clean. A subject broken this way is rarely much '
+      + 'use for anything afterwards.'
+  },
+  {
+    id: 'cult-signifiers',
+    name: 'Forbidden Lore (Cult Signifiers)',
+    type: 'Skill',
+    cost: 300,
+    careers: ['Seneschal', 'Missionary', 'Astropath Transcendent', 'Arch-Militant'],
+    minRank: 3,
+    requires: 'Seneschal, Missionary, Astropath or Arch-Militant, Rank III',
+    effect: 'You know the marks: the eight-pointed star worked into a ledger\u2019s margin, '
+      + 'the wrong number of candles, a hymn with a verse that is not in the hymnal. A '
+      + 'successful Forbidden Lore Test identifies which Ruinous Power or xenos influence a '
+      + 'sign belongs to; a second Degree of Success tells you whether it was made by a '
+      + 'believer or copied by somebody who is not one.',
+    note: 'Carries the usual risk the Ordos accept in their own agents: knowing the signs '
+      + 'means having studied them. The GM may call for a Willpower Test on a bad result.'
+  },
+  {
+    id: 'cell-handler',
+    name: 'Cell Handler',
+    type: 'Trait',
+    // Priced below the Interrogator rung on purpose: a Legate should be able
+    // to afford the craft of the job without saving for the next title.
+    cost: 400,
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
+    minRank: 5,
+    prereqElite: 'Legate Investigator',
+    requires: 'Rank V, and Legate Investigator before it',
+    effect: 'You run informants rather than merely question them. Keep a standing roster of '
+      + 'three contacts in any locale you have worked; each may be called on once per enquiry '
+      + 'for information the GM judges they could plausibly have, without a Fellowship Test. '
+      + 'A contact spent on something they should not have known is burned.',
+    note: 'The difference between an Acolyte and a handler is that a handler loses people and '
+      + 'keeps working.'
+  },
   {
     id: 'inquisitorial-rosette',
     name: 'Inquisitorial Rosette',

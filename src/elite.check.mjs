@@ -160,6 +160,48 @@ for (const career of CAREERS_WITH_TABLES) {
 assert.equal(meetsRequirement(eliteById('executioner'),
   { careerName: 'Bladedancer', rank: 4, owned: [] }), true);
 
+/* ---- the investigator's craft sits below the titles, not above ---- */
+
+// The ladder is rank: who you are allowed to be. The craft is what a cult
+// breaker actually does. A toolkit priced above the title it serves would
+// never be bought, so each craft entry must cost less than the Interrogator
+// rung it works beneath.
+{
+  const CRAFT = ['read-the-room', 'canvass-the-locale', 'scene-of-the-deed',
+    'the-long-question', 'cult-signifiers', 'cell-handler'];
+  const interrogator = eliteById('interrogator');
+
+  for (const id of CRAFT) {
+    const e = eliteById(id);
+    assert.ok(e, id + ' is missing');
+    assert.ok(e.cost < interrogator.cost,
+      id + ' costs more than the Interrogator rung it works beneath');
+    // Every one names a test a GM can actually call for off the sheet.
+    assert.match(e.effect,
+      /Scrutiny|Inquiry|Interrogation|Logic|Search|Willpower|Fellowship|Degree/,
+      id + ': an advance has to say what is rolled');
+  }
+
+  // The two that stand on a rung say so, and the rung exists.
+  const long = eliteById('the-long-question');
+  assert.equal(long.prereqElite, 'Talented (Interrogation)');
+  const handler = eliteById('cell-handler');
+  assert.equal(handler.prereqElite, 'Legate Investigator');
+
+  // A Seneschal with the Legature can take the handler; one without cannot,
+  // however senior. That is the whole point of keying the craft to the rung.
+  const sen = (rank, owned = []) => ({ careerName: 'Seneschal', rank, owned });
+  assert.equal(meetsRequirement(handler, sen(8)), false);
+  assert.equal(meetsRequirement(handler, sen(8, ['Legate Investigator'])), true);
+  assert.equal(meetsRequirement(handler, sen(4, ['Legate Investigator'])), false,
+    'the rank still applies');
+
+  // The craft is reachable before the rosette, so an investigator can be
+  // equipped to investigate long before anyone hands them one.
+  assert.ok(eliteById('read-the-room').minRank < eliteById('legate-investigator').minRank,
+    'the first tool should come before the warrant');
+}
+
 /* ---- distance is measured in metres, never in tiles ---- */
 
 // Rogue Trader measures range in metres throughout, and movement.js already

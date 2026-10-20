@@ -1887,6 +1887,14 @@ const CSS = `
 .rt-order-i.out{opacity:.4;text-decoration:line-through;}
 .rt-tn-parts{display:block;margin-top:3px;font-family:var(--mono);font-size:9.5px;
   letter-spacing:.04em;color:var(--dim);}
+.rt-gmtabbody{border-top:1px solid var(--brass);padding-top:12px;}
+/* A section heading that carries its own action, so the field below it can
+   run the full width of the panel and line up with every other one. */
+.rt-sechead{display:flex;align-items:center;justify-content:space-between;
+  gap:10px;margin-bottom:4px;}
+.rt-sechead .rt-conds-h{margin:0;}
+/* A select that owns its whole row rather than sharing it with a button. */
+.rt-selwide{display:block;width:100%;margin-bottom:12px;}
 .rt-sysout{margin-top:6px;border-top:1px solid rgba(197,160,90,.25);padding-top:6px;}
 .rt-cond-chips{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
 .rt-condchip{display:flex;align-items:baseline;gap:4px;padding:1px 6px;
@@ -7461,6 +7469,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const [log, setLog] = useState([]);
   const [eventId, setEventId] = useState('macro_strike');
   const [eventAmount, setEventAmount] = useState(5);
+  const [gmTab, setGmTab] = useState('combat');
   // The last rolled star system. Local to this dashboard: it is reference
   // the GM reads out, not state the table shares.
   const [system, setSystem] = useState(null);
@@ -7519,6 +7528,15 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       : Array.from({ length: Math.max(0, Number(assumedParty) || 0) }, () => ({}));
   })();
   const encDifficulty = editing ? difficulty(editing, partyMembers) : null;
+
+  // Counts on the tabs so a GM can see what they have prepared without
+  // opening each one. The fleet counts the opposition, not their own ship.
+  const GM_TABS = [
+    { id: 'combat', label: 'Combat', count: fleet.length },
+    { id: 'encounters', label: 'Encounters', count: encounters.length },
+    { id: 'endeavours', label: 'Endeavours', count: endeavours.length },
+    { id: 'systems', label: 'Systems', count: 0 }
+  ];
 
   const addHostile = (npc) => {
     if (!editing || editing.hostiles.length >= MAX_HOSTILES) return;
@@ -7853,6 +7871,23 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         <button className="rt-opt" onClick={rollInitiative}>Roll initiative</button>
       </TurnStrip>
 
+      {/* The dashboard outgrew one scroll. The turn strip and the log stay
+          put — the clock and the running record are wanted whatever you are
+          doing — and everything else is behind a tab. Same tab furniture the
+          Dossier and the Bridge already use. */}
+      <div className="rt-dtabs" role="tablist">
+        {GM_TABS.map((t) => (
+          <button key={t.id} role="tab" aria-selected={gmTab === t.id}
+            className={'rt-dtab' + (gmTab === t.id ? ' on' : '')}
+            onClick={() => setGmTab(t.id)}>
+            {t.label}
+            {t.count ? <span className="rt-dtab-n">{t.count}</span> : null}
+          </button>
+        ))}
+      </div>
+      <div className="rt-gmtabbody">
+      {gmTab === 'combat' && (<>
+
       {/* ---- fleet ---- */}
       <div className="rt-conds-h">Fleet</div>
       <ul className="rt-list">
@@ -7997,27 +8032,33 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         <button className="rt-btn" onClick={emit}>Emit</button>
       </div>
 
+      </>)}
+      {gmTab === 'endeavours' && (<>
       {/* ---- the Endeavour journal ----
           Endeavour -> missions -> objectives. A combat objective can name a
           saved encounter, which is where the two halves of GM prep meet.
           See endeavours.js, including what is deliberately not modelled. */}
-      <div className="rt-conds-h">Endeavours</div>
-      <div className="rt-shiprow">
-        <select className="rt-sel" value={endId || ''}
-          onChange={(e) => setEndId(e.target.value || null)}>
-          <option value="">{'\u2014 pick an endeavour \u2014'}</option>
-          {endeavours.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name} {'\u00B7'} {describeEndeavour(e)}
-            </option>
-          ))}
-        </select>
-        <button className="rt-btn ghost" onClick={() => {
+      {/* The action sits in the heading rather than beside the field. A
+          trailing button stole 106px from the select, so this row's box
+          stopped short of every other field on the panel and its dropdown
+          chevron sat visibly out of line down the column. */}
+      <div className="rt-sechead">
+        <span className="rt-conds-h">Endeavours</span>
+        <button className="rt-opt" onClick={() => {
           const end = newEndeavour('Endeavour ' + (endeavours.length + 1));
           saveEndeavours([...endeavours, end]);
           setEndId(end.id);
         }}>New</button>
       </div>
+      <select className="rt-sel rt-selwide" value={endId || ''}
+        onChange={(e) => setEndId(e.target.value || null)}>
+        <option value="">{'\u2014 pick an endeavour \u2014'}</option>
+        {endeavours.map((e) => (
+          <option key={e.id} value={e.id}>
+            {e.name} {'\u00B7'} {describeEndeavour(e)}
+          </option>
+        ))}
+      </select>
 
       {journal && (() => {
         const prog = endeavourProgress(journal);
@@ -8201,26 +8242,28 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         );
       })()}
 
+      </>)}
+      {gmTab === 'encounters' && (<>
       {/* ---- the encounter builder ----
           A fight assembled before play and weighed against the party, rather
           than spawned a hostile at a time once everyone is already rolling.
           Saved in the homebrew library; see encounters.js. */}
-      <div className="rt-conds-h">Encounters</div>
-      <div className="rt-shiprow">
-        <select className="rt-sel" value={encId || ''}
-          onChange={(e) => { setEncId(e.target.value || null); setPushing(''); }}>
-          <option value="">{'\u2014 pick an encounter \u2014'}</option>
-          {encounters.map((e) => (
-            <option key={e.id} value={e.id}>{e.name} {'\u00B7'} {describeEncounter(e)}</option>
-          ))}
-        </select>
-        <button className="rt-btn ghost" onClick={() => {
+      <div className="rt-sechead">
+        <span className="rt-conds-h">Encounters</span>
+        <button className="rt-opt" onClick={() => {
           const enc = newEncounter('Encounter ' + (encounters.length + 1));
           saveEncounters([...encounters, enc]);
           setEncId(enc.id);
           setPushing('');
         }}>New</button>
       </div>
+      <select className="rt-sel rt-selwide" value={encId || ''}
+        onChange={(e) => { setEncId(e.target.value || null); setPushing(''); }}>
+        <option value="">{'\u2014 pick an encounter \u2014'}</option>
+        {encounters.map((e) => (
+          <option key={e.id} value={e.id}>{e.name} {'\u00B7'} {describeEncounter(e)}</option>
+        ))}
+      </select>
 
       {system && draftsFromSystem(system).length > 0 && (
         <>
@@ -8458,6 +8501,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         </>
       )}
 
+      </>)}
+      {gmTab === 'systems' && (<>
       {/* ---- the system generator ----
           Stars of Inequity's system generation: the star decides which zones
           are rich and which are starved, and the zone a world lands in
@@ -8583,6 +8628,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         </div>
       )}
 
+      </>)}
+      </div>
       {/* ---- log ---- */}
       {log.length > 0 && (
         <>

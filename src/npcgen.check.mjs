@@ -175,7 +175,10 @@ for (const o of ORIGINS) {
 
 /* ---- the bestiary ---- */
 
-assert.equal(BESTIARY.length, 20);
+// The bestiary lives in bestiary.js now and is checked there; npcgen only
+// re-exports it. Asserted as a floor rather than an exact count, so adding
+// an antagonist is not a check edit.
+assert.ok(BESTIARY.length >= 90, 'the compiled bestiary should be here');
 assert.ok(bestiaryEntry('kaptin orlog mordakka'), 'lookup is case-insensitive');
 assert.equal(bestiaryEntry('nobody here'), null);
 
@@ -191,10 +194,18 @@ assert.equal(bestiaryEntry('nobody here'), null);
 }
 
 {
-  // Orden Hyort has no usable numbers at all in the source.
-  const npc = bestiaryToNpc('Orden Hyort');
+  // An entry the sources give no usable numbers for comes through as
+  // custom, for the GM to adjudicate. Found by filter rather than named:
+  // which entry that is changes as the bestiary is filled in.
+  const statless = BESTIARY.find((b) => b.custom);
+  assert.ok(statless, 'at least one entry still needs adjudicating by hand');
+  const npc = bestiaryToNpc(statless.name);
   assert.equal(npc.custom, true);
-  assert.equal(npc.ws, null);
+  // `custom` means "do not just drop this on the board" — which covers an
+  // entry with no numbers AND one whose numbers are the wrong SCALE. The
+  // Void Kraken has a full profile and is still custom, because it is a
+  // starship and the ground engine cannot resolve it.
+  assert.ok(npc.note, 'a custom entry has to say why it needs adjudicating');
 }
 
 console.log('npcgen.check.mjs: all assertions passed');

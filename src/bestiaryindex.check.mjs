@@ -105,11 +105,17 @@ assert.ok(TYPES.includes('Xenos') && TYPES.includes('Human') && TYPES.includes('
   assert.match(npc.note, /p\. \d+/, 'and it must say which page');
   assert.equal(indexToNpc('nothing here'), null);
 
-  // Same shape as the stat-carrying bestiary's own custom entries, so the
-  // board and the encounter builder treat the two alike.
-  const handRolled = bestiaryToNpc('Orden Hyort');
-  for (const k of ['ws', 'bs', 'armour', 'toughnessBonus', 'custom']) {
-    assert.deepEqual(npc[k], handRolled[k], `index and bestiary disagree on ${k}`);
+  // Same shape as the stat-carrying bestiary's own adjudicate-by-hand
+  // entries, so the board and the encounter builder treat the two alike.
+  // Found by filter rather than named: which entry has no numbers changes
+  // as the bestiary is filled in, and this check is about the SHAPE.
+  const statless = BESTIARY.find((b) => b.custom && b.ws === null);
+  if (statless) {
+    const handRolled = bestiaryToNpc(statless.name);
+    for (const k of ['ws', 'bs', 'armour', 'toughnessBonus', 'custom']) {
+      assert.deepEqual(npc[k], handRolled[k],
+        `index and bestiary disagree on ${k} (compared against ${statless.name})`);
+    }
   }
 }
 
@@ -123,11 +129,14 @@ assert.ok(TYPES.includes('Xenos') && TYPES.includes('Human') && TYPES.includes('
   const statted = BESTIARY.filter((b) => !b.custom).map((b) => b.name);
   assert.ok(statted.length > 0);
   for (const name of statted) {
-    const alsoIndexed = indexEntry(name);
-    if (alsoIndexed) {
-      assert.ok(bestiaryToNpc(name).ws !== null,
-        name + ': prefer the entry that has numbers');
-    }
+    if (!indexEntry(name)) continue;
+    const npc2 = bestiaryToNpc(name);
+    // "Has numbers" is not "has a Weapon Skill": the Crystalwisp has no WS
+    // at all because it only ever shoots, and a creature like that is still
+    // perfectly spawnable. What matters is that SOMETHING is on file.
+    const usable = npc2.max > 1
+      || [npc2.ws, npc2.bs, npc2.armour, npc2.toughnessBonus].some((v) => v !== null);
+    assert.ok(usable, name + ': prefer the entry that has numbers');
   }
 }
 

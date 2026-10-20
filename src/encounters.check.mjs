@@ -8,7 +8,7 @@ import {
   newEncounter, toNpcAdd, draftsFromSystem, describeEncounter, stockDraft, isUnweighed
 } from './encounters.js';
 import { indexToNpc } from './bestiaryindex.js';
-import { THREAT_TIERS, tierById, rollNpc, bestiaryToNpc } from './npcgen.js';
+import { THREAT_TIERS, tierById, rollNpc, bestiaryToNpc, BESTIARY } from './npcgen.js';
 import { rollSystem, featureById } from './stargen.js';
 import { applyGroundEvent, groundEventById } from './groundcombat.js';
 
@@ -77,11 +77,13 @@ const seeded = (seed) => () => {
     const w = hostileWeight(npc);
     assert.ok(Number.isFinite(w) && w > 0, 'a rolled hostile weighed ' + w);
   }
-  // Orden Hyort has no usable numbers at all. It must not throw, and it must
-  // weigh NOTHING rather than a token amount: an entry the GM has to
-  // adjudicate by hand cannot be reckoned for them, and a token weight was
-  // worse than none because it made an unstatted encounter read as Trivial.
-  const vague = readHostile(bestiaryToNpc('Orden Hyort'));
+  // An entry with no usable numbers must not throw, and must weigh NOTHING
+  // rather than a token amount: one the GM has to adjudicate by hand cannot
+  // be reckoned for them, and a token weight was worse than none because it
+  // made an unstatted encounter read as Trivial.
+  // Built here rather than taken from the bestiary: every entry in it has
+  // numbers now, and this is about what happens to one that does not.
+  const vague = readHostile({ name: 'Something unstatted', custom: true });
   assert.equal(vague.ws, null);
   assert.equal(isUnweighed(vague), true);
   assert.equal(hostileWeight(vague), 0,

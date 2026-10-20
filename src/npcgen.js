@@ -290,60 +290,17 @@ export function rollNpc({
 }
 
 /* ================================ Section 9 ================================
-   The fixed bestiary. Numbers are copied as given; a `null` means the
-   source gives no usable number (Orden Hyort has none at all; Sslyth's are
-   qualitative "High/Mid/Low" placeholders) — bestiaryToNpc() carries that
-   through as `custom: true` rather than inventing a figure. */
+   The fixed bestiary. It outgrew this file and lives in bestiary.js now —
+   94 antagonists with real numbers, grouped, and carrying the places the
+   sources disagree. Re-exported here because every caller already imports
+   it from npcgen. */
 
-const B = (name, stats, weapon, custom) => ({ name, ...stats, weapon: weapon || null, custom: Boolean(custom) });
+// Imported as well as re-exported: a bare `export ... from` does not bring
+// the name into this module's own scope, and bestiaryToNpc below needs it.
+import { bestiaryEntry } from './bestiary.js';
 
-export const BESTIARY = [
-  B('Orden Hyort', { ws: null, bs: null, s: null, t: null, ag: null, int: null, per: null, wp: null, fel: null,
-    wounds: null, toughnessBonus: null, armour: null },
-    null, true),
-  B('Kaptin Orlog Mordakka', { ws: 55, bs: 35, s: 64, t: 65, ag: 31, int: 28, per: 32, wp: 42, fel: 40,
-    wounds: 44, toughnessBonus: 6, armour: null }, "Da 'Eadzappa (melee, 2d10+11 E, Pen 2, Shocking, Tearing)"),
-  B('Guardian of the Inner Sanctum', { ws: 46, bs: 18, s: 48, t: 46, ag: 30, int: 20, per: 33, wp: 25, fel: 6,
-    wounds: 45, toughnessBonus: 8, armour: 8 }, 'Chain Axe / Heavy Flamer / Stomp'),
-  B('Inquisitor Havelock Blackheel', { ws: 55, bs: 50, s: 45, t: 55, ag: 45, int: 60, per: 60, wp: 65, fel: 50,
-    wounds: 21, toughnessBonus: 5, armour: 5 }, 'Baleflame Incinerator / Burning Blade'),
-  B("T'Zar the Broker", { ws: 27, bs: 36, s: 36, t: 27, ag: 45, int: 63, per: 54, wp: 63, fel: 36,
-    wounds: 18, toughnessBonus: 8, armour: 3 }, 'Blessings of Tzeentch (spawns 2 Blue Horrors on death)'),
-  B('The Luminary', { ws: 51, bs: 42, s: 42, t: 33, ag: 51, int: 51, per: 42, wp: 51, fel: 60,
-    wounds: 18, toughnessBonus: 6, armour: 2 }, 'Pincer Claw / Soporific Musk'),
-  B('Clawed Fiend', { ws: 43, bs: null, s: 59, t: 53, ag: 47, int: 16, per: 54, wp: 23, fel: 4,
-    wounds: 48, toughnessBonus: 10, armour: 4 }, 'Claws & Barbed Tail'),
-  B('Creeping Stalker', { ws: 30, bs: null, s: 33, t: 48, ag: 8, int: 8, per: 43, wp: 15, fel: 1,
-    wounds: 12, toughnessBonus: 4, armour: 2 }, 'Lashing Tentacles & Acidic Mouth'),
-  B('Khymera', { ws: 45, bs: null, s: 40, t: 35, ag: 54, int: 15, per: 40, wp: 35, fel: null,
-    wounds: 21, toughnessBonus: 6, armour: 0 }, 'Teeth & Claws / Raptorial Arms'),
-  B("Killian's Bane", { ws: 43, bs: null, s: 46, t: 53, ag: 47, int: 22, per: 36, wp: 33, fel: null,
-    wounds: 41, toughnessBonus: 8, armour: 5 }, 'Extendable Jaws / Gulp Attack'),
-  B('Terrorax', { ws: 43, bs: null, s: 47, t: 38, ag: 49, int: 18, per: 38, wp: 23, fel: null,
-    wounds: 28, toughnessBonus: 6, armour: 6 }, 'Fore-Claws & Serrated Fangs'),
-  B("Rak'Gol Render", { ws: 58, bs: 24, s: 50, t: 50, ag: 20, int: 24, per: 39, wp: 15, fel: 3,
-    wounds: 33, toughnessBonus: 10, armour: 9 }, 'Implanted Mono-Blades'),
-  B('Sslyth', { ws: null, bs: null, s: null, t: null, ag: null, int: null, per: null, wp: null, fel: null,
-    wounds: null, toughnessBonus: null, armour: null },
-    'Shard Carbine / Splinter Pistols & Xenos Blade', true),
-  B('Ebon Geist', { ws: 36, bs: null, s: 36, t: 40, ag: 45, int: 14, per: 45, wp: 42, fel: null,
-    wounds: 18, toughnessBonus: 8, armour: 0 }, 'Chill Talons'),
-  B('Screamer of Tzeentch', { ws: 35, bs: 35, s: 40, t: 40, ag: 50, int: 15, per: 35, wp: 40, fel: 10,
-    wounds: 15, toughnessBonus: 8, armour: 0 }, 'Warp Jaws / Force Bolt'),
-  B('Veiled Deceit', { ws: 25, bs: null, s: 20, t: 35, ag: 25, int: 50, per: 45, wp: 50, fel: 35,
-    wounds: 10, toughnessBonus: 6, armour: 0 }, 'Psychic Manipulation (Psy Rating 6)'),
-  B('Children of the Sacred Flesh', { ws: 40, bs: 19, s: 48, t: 46, ag: 30, int: 24, per: 30, wp: 25, fel: 19,
-    wounds: 20, toughnessBonus: 4, armour: 3 }, 'Savage Metal Spear'),
-  B('Warp Puppets', { ws: 33, bs: 13, s: 64, t: 21, ag: 11, int: null, per: 12, wp: 13, fel: null,
-    wounds: 6, toughnessBonus: 2, armour: 0 }, 'Jagged Debris / laspistol'),
-  B('Wyrd Gunslinger', { ws: 35, bs: 50, s: 35, t: 41, ag: 51, int: 34, per: 39, wp: 45, fel: 40,
-    wounds: 18, toughnessBonus: 4, armour: 2 }, 'Dual Pistols'),
-  B('Void Pirate Captain', { ws: 44, bs: 38, s: 34, t: 42, ag: 34, int: 34, per: 38, wp: 42, fel: 36,
-    wounds: 15, toughnessBonus: 4, armour: 5 }, 'bolt pistol / chainsword')
-];
-
-export const bestiaryEntry = (name) =>
-  BESTIARY.find((b) => b.name.toLowerCase() === String(name || '').toLowerCase()) || null;
+export { BESTIARY, bestiaryEntry, GROUPS as BESTIARY_GROUPS, byGroup, CONFLICTS }
+  from './bestiary.js';
 
 // Shapes a bestiary entry into the npc_add payload shape. `weapon` here is
 // almost always a bespoke ability string, not a gear.js label — pass it to
@@ -360,6 +317,12 @@ export function bestiaryToNpc(name) {
     max: b.wounds ?? 1,
     ws: b.ws, bs: b.bs, toughnessBonus: b.toughnessBonus, armour: b.armour,
     weapon: b.weapon,
-    custom: b.custom
+    custom: b.custom,
+    // Carried through for the GM to read on the board: what the creature
+    // can do beyond its one weapon line, where its armour is thickest, and
+    // whether the sources disagreed about it.
+    note: [b.abilities, b.armourNote && `Armour: ${b.armourNote}`, b.note,
+      b.conflict && `Sources differ: ${b.conflict}`].filter(Boolean).join(' ')
+      || null
   };
 }

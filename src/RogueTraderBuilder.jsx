@@ -52,7 +52,10 @@ import {
   ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES, GROUND_CONDITIONS,
   weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll, resolveHits
 } from './groundcombat.js';
-import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
+import {
+  rollNpc, bestiaryToNpc, BESTIARY, BESTIARY_GROUPS, byGroup,
+  THREAT_TIERS, ORIGINS
+} from './npcgen.js';
 import { rollSystem, describeSystem, describePlanet } from './stargen.js';
 import {
   TYPES as BESTIARY_TYPES, searchBestiary, citation, indexToNpc
@@ -4818,7 +4821,19 @@ function TurnStrip({ label, clock, order = [], current = null, onAdvance,
 
 function WeaponLine({ label, className = 'rt-entry-s' }) {
   const w = gcWeaponProfile(label);
-  if (!w) return <p className={className}>{label} {'—'} no stats on file, adjudicate by hand.</p>;
+  if (!w) {
+    // A bestiary weapon carries its own line — "Da 'Eadzappa (2d10+11 E;
+    // Pen 2; Shocking)" — and is not a gear.js catalogue entry. It needs no
+    // apology: the figures are right there. Only a bare label with no dice
+    // in it is genuinely missing its stats.
+    const selfDescribing = /\dd\d/.test(String(label || ''));
+    return (
+      <p className={className}>
+        {label}
+        {selfDescribing ? '' : ' — no stats on file, adjudicate by hand.'}
+      </p>
+    );
+  }
   const bits = [
     w.damage ? `${w.damage.dice}d${w.damage.die}${w.damage.bonus ? (w.damage.bonus > 0 ? '+' : '−') + Math.abs(w.damage.bonus) : ''} ${w.damage.type}` : null,
     w.pen != null ? `Pen ${w.pen}` : null,
@@ -7098,10 +7113,16 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                     <select className="rt-sel" value={gBestiaryPick}
                       onChange={(e) => setGBestiaryPick(e.target.value)}>
                       <option value="">{'\u2014 pick a named antagonist \u2014'}</option>
-                      {BESTIARY.map((b) => (
-                        <option key={b.name} value={b.name}>
-                          {b.name}{b.custom ? ' (no numbers — adjudicate by hand)' : ''}
-                        </option>
+                      {BESTIARY_GROUPS.map((g) => (
+                        <optgroup key={g.id} label={g.name}>
+                          {byGroup(g.id).map((b) => (
+                            <option key={b.name} value={b.name}>
+                              {b.name}
+                              {b.wounds ? ` · ${b.wounds}w` : ''}
+                              {b.custom ? ' (adjudicate by hand)' : ''}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
                   </label>
@@ -8401,10 +8422,16 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
             <select className="rt-sel" value={encBestiary}
               onChange={(e) => setEncBestiary(e.target.value)}>
               <option value="">{'\u2014 pick one \u2014'}</option>
-              {BESTIARY.map((b) => (
-                <option key={b.name} value={b.name}>
-                  {b.name}{b.custom ? ' (no numbers)' : ''}
-                </option>
+              {BESTIARY_GROUPS.map((g) => (
+                <optgroup key={g.id} label={g.name}>
+                  {byGroup(g.id).map((b) => (
+                    <option key={b.name} value={b.name}>
+                      {b.name}
+                      {b.wounds ? ` \u00B7 ${b.wounds}w` : ''}
+                      {b.custom ? ' (adjudicate by hand)' : ''}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </label>

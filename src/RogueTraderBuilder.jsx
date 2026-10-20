@@ -53,6 +53,7 @@ import {
   weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll, resolveHits
 } from './groundcombat.js';
 import { rollNpc, bestiaryToNpc, BESTIARY, THREAT_TIERS, ORIGINS } from './npcgen.js';
+import { rollSystem, describeSystem, describePlanet } from './stargen.js';
 import {
   createDynasty, joinBridge, leaveBridge, writeBridge, emitEvent, emitGroundEvent, pollBridge,
   readBridge, assignNpc, unassignNpc, sendMessage
@@ -1863,6 +1864,7 @@ const CSS = `
 .rt-order-i.out{opacity:.4;text-decoration:line-through;}
 .rt-tn-parts{display:block;margin-top:3px;font-family:var(--mono);font-size:9.5px;
   letter-spacing:.04em;color:var(--dim);}
+.rt-sysout{margin-top:6px;border-top:1px solid rgba(197,160,90,.25);padding-top:6px;}
 .rt-cond-chips{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
 .rt-condchip{display:flex;align-items:baseline;gap:4px;padding:1px 6px;
   font-family:var(--mono);font-size:9px;letter-spacing:.06em;
@@ -7357,6 +7359,9 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const [log, setLog] = useState([]);
   const [eventId, setEventId] = useState('macro_strike');
   const [eventAmount, setEventAmount] = useState(5);
+  // The last rolled star system. Local to this dashboard: it is reference
+  // the GM reads out, not state the table shares.
+  const [system, setSystem] = useState(null);
   const [eventShip, setEventShip] = useState('player');
 
   // The player's ship is always in the fleet, derived rather than stored, so
@@ -7792,6 +7797,103 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       <div className="rt-btnrow">
         <button className="rt-btn" onClick={emit}>Emit</button>
       </div>
+
+      {/* ---- the system generator ----
+          Stars of Inequity's system generation: the star decides which zones
+          are rich and which are starved, and the zone a world lands in
+          reaches all the way down into its air and its climate. Rolled on
+          the GM's own screen like everything else here — nothing reaches the
+          table until it is pushed. */}
+      <div className="rt-conds-h">Roll a star system</div>
+      <p className="rt-vox-hint">
+        A whole system from its star outward: features, zones, and every world
+        in detail. Nothing here touches the shared bridge.
+      </p>
+      <div className="rt-btnrow">
+        <button className="rt-btn" onClick={() => setSystem(rollSystem())}>
+          Roll a system
+        </button>
+        {system && (
+          <button className="rt-btn ghost" onClick={() => setSystem(null)}>Clear</button>
+        )}
+      </div>
+
+      {system && (
+        <div className="rt-sysout">
+          <div className="rt-gmvitals">
+            <span>STAR <b>{system.star.type.name}</b></span>
+            <span>{describeSystem(system)}</span>
+          </div>
+          {system.star.detail && <p className="rt-vox-hint">{system.star.detail}</p>}
+
+          <ul className="rt-list">
+            {system.features.map((f) => (
+              <li key={f.id} className="rt-entry">
+                <span className="rt-entry-t">{f.name}</span>
+                <div className="rt-entry-d"><p>{f.note}</p></div>
+              </li>
+            ))}
+          </ul>
+
+          {system.zones.map((z) => (
+            <div key={z.id}>
+              <div className="rt-conds-h">
+                {z.name}
+                {z.size !== 'normal' ? ' \u00B7 ' + z.size : ''}
+              </div>
+              {z.elements.length === 0 ? (
+                <p className="rt-vox-hint">Empty and barren.</p>
+              ) : (
+                <ul className="rt-list">
+                  {z.elements.map((e, i) => (
+                    <li key={i} className="rt-entry">
+                      <span className="rt-entry-t">
+                        {e.name}
+                        {e.intensity > 1 ? ' \u00D7' + e.intensity : ''}
+                        {e.homeworld ? ' \u2014 homeworld' : ''}
+                      </span>
+                      {e.kind === 'planet' && (
+                        <>
+                          <span className="rt-entry-c">{describePlanet(e.planet)}</span>
+                          <div className="rt-entry-d">
+                            <p>
+                              {e.planet.gravity.name}
+                              {e.planet.landmasses
+                                ? ` \u00B7 ${e.planet.landmasses.continents} continents, ${e.planet.landmasses.islands} islands`
+                                : ' \u00B7 no landmasses'}
+                              {e.planet.territories
+                                ? ` \u00B7 ${e.planet.territories} territor${e.planet.territories === 1 ? 'y' : 'ies'}`
+                                : ''}
+                            </p>
+                            <p>
+                              {e.planet.resources.minerals} mineral
+                              {e.planet.resources.minerals === 1 ? '' : 's'}
+                              {' \u00B7 '}{e.planet.resources.organics} organic
+                              {e.planet.resources.organics === 1 ? '' : 's'}
+                              {e.planet.resources.exotic ? ' \u00B7 exotic materials' : ''}
+                              {e.planet.orbitalFeatures.length
+                                ? ' \u00B7 ' + e.planet.orbitalFeatures.map((o) => o.name).join(', ')
+                                : ''}
+                            </p>
+                            {e.planet.resources.caches.map((c, ci) => (
+                              <p key={ci}>
+                                {c.name}{c.abundance ? ` (abundance ${c.abundance})` : ''}
+                              </p>
+                            ))}
+                            {e.planet.inhabitants && (
+                              <p><b>Inhabited</b> {'\u2014'} {e.planet.inhabitants.name}</p>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ---- log ---- */}
       {log.length > 0 && (

@@ -441,11 +441,16 @@ export function validate(bp) {
 export const POP_PENALTY_THRESHOLD = 0.75;
 export const POP_MANOEUVRE_PENALTY = -5;
 
-export function stats(bp, vitals) {
+// `context` says what the ship is DOING, which three history entries turn
+// on: Wrothful and Skittish change in combat, Adventurous on whether an
+// Endeavour is running. Defaulting to neither is the ordinary case — a ship
+// sitting in the builder is not fighting and not chasing anything — and it
+// is also what every caller written before this did.
+export function stats(bp, vitals, context = {}) {
   const hull = hullById(bp && bp.hullId, bp);
   if (!hull) return null;
   const comps = listed(bp);
-  const hist = historyMods(bp && bp.history);
+  const hist = historyMods(bp && bp.history, context);
   // A component's mods and the ship's own history move the same figures, so
   // they are added together rather than kept apart: nothing downstream cares
   // whether the +5 Detection came from an auger array or from a machine

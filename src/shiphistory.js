@@ -37,9 +37,14 @@
 const ODDITY_PAGE = 197;
 const HISTORY_PAGE = 198;
 
-const entry = (roll, name, page, effect, mods = null) => ({
+// mods: flat, always applied. conditional: applied only when the ship is in
+// the state the rule names. The app knows two of those states now — a ship
+// is in combat when the attack resolver is working it out, and an Endeavour
+// is running when one in the journal is marked under way — so the three
+// entries that turn on them are no longer printed-text-only.
+const entry = (roll, name, page, effect, mods = null, conditional = null) => ({
   id: name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''),
-  roll, name, page, effect, mods
+  roll, name, page, effect, mods, conditional
 });
 
 /* ---- Table 8-1: Machine Spirit Oddities (Core Rulebook p. 197) ---- */
@@ -81,13 +86,19 @@ export const MACHINE_SPIRIT_ODDITIES = [
     'The ship fears battle, bucking against its masters when entering the fray. When in combat, '
     + 'reduce the ship’s Speed by 1. However, when not in danger, it runs eagerly and fast. '
     + 'Reduce the travel time for any long distance (between stars) voyage by 1d5 weeks, to a '
-    + 'minimum of 1.'),
+    + 'minimum of 1.',
+    null,
+    // The travel-time half stays text: this app does not track a voyage.
+    { inCombat: { speed: -1 } }),
 
   entry(7, 'Wrothful', ODDITY_PAGE,
     'The ship’s spirit constantly smoulders with anger. In battle, it explodes into a '
     + 'berserker fury, straining and exhausting its systems. During combat, the ship gains +1 '
     + 'Speed and +7 Manoeuvrability. Out of combat, the ship suffers −1 Speed and −5 to '
-    + 'Manoeuvrability and Detection.'),
+    + 'Manoeuvrability and Detection.',
+    null,
+    { inCombat: { speed: 1, manoeuvre: 7 },
+      outOfCombat: { speed: -1, manoeuvre: -5, detection: -5 } }),
 
   entry(8, 'Resolute', ODDITY_PAGE,
     'There is little in the universe that can stagger this vessel. No matter the foe, it will '
@@ -98,7 +109,12 @@ export const MACHINE_SPIRIT_ODDITIES = [
   entry(9, 'Adventurous', ODDITY_PAGE,
     'The vessel is eager to seek new horizons, to turn its bow from civilisation and delve into '
     + 'the darkness of the unknown. When participating in an Endeavour the ship gains +10 '
-    + 'Detection; when not participating in an Endeavour it suffers −10 Detection.'),
+    + 'Detection; when not participating in an Endeavour it suffers −10 Detection.',
+    null,
+    // There is no neutral state in the printed rule: a ship is on an
+    // Endeavour or it is not, and the penalty is the default because a ship
+    // with nothing to chase is the ordinary case.
+    { inEndeavour: { detection: 10 }, outOfEndeavour: { detection: -10 } }),
 
   entry(10, 'Ancient and Wise', ODDITY_PAGE,
     'This ship is of a bygone age, having survived many millennia of voyages and adventures. Its '
@@ -238,12 +254,35 @@ export const MOD_KEYS = [
 
 // The flat modifiers of both rolled entries, summed. ship.js adds these to
 // the hull's own figures the same way it adds a component's.
-export function historyMods(h) {
+export function historyMods(h, { inCombat = false, inEndeavour = false } = {}) {
   const out = {};
+  const add = (src) => {
+    for (const [k, v] of Object.entries(src || {})) out[k] = (out[k] || 0) + v;
+  };
   for (const e of entriesOf(h)) {
-    for (const [k, v] of Object.entries(e.mods || {})) out[k] = (out[k] || 0) + v;
+    add(e.mods);
+    const c = e.conditional;
+    if (!c) continue;
+    add(inCombat ? c.inCombat : c.outOfCombat);
+    add(inEndeavour ? c.inEndeavour : c.outOfEndeavour);
   }
   return out;
+}
+
+// Both sides of a conditional rule, for the builder to show at once: a GM
+// choosing a hull wants to see what Wrothful costs at rest as well as what
+// it is worth in a fight.
+export function describeConditional(e) {
+  const c = e && e.conditional;
+  if (!c) return null;
+  const line = (label, m) => (m && Object.keys(m).length
+    ? `${label} ${describeMods(m)}` : null);
+  return [
+    line('in combat', c.inCombat),
+    line('out of combat', c.outOfCombat),
+    line('on an Endeavour', c.inEndeavour),
+    line('otherwise', c.outOfEndeavour)
+  ].filter(Boolean).join(' \u00B7 ');
 }
 
 // The same figures as a line a reader can check against the hull: "+5

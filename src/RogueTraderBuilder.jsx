@@ -78,7 +78,7 @@ import {
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
 import {
   MACHINE_SPIRIT_ODDITIES, PAST_HISTORIES, oddityById, historyById,
-  rollShipPersonality, readHistory, EMPTY_HISTORY, describeMods
+  rollShipPersonality, readHistory, EMPTY_HISTORY, describeMods, describeConditional
 } from './shiphistory.js';
 import {
   POINT_BASE, POINT_POOL, emptyAllocation, pointsRemaining,
@@ -7381,10 +7381,13 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
    the dashboard shows and what a server would compute cannot diverge. */
 
 // The combat-relevant numbers for either kind of ship.
-function shipProfile(ship, blueprint, custom) {
+function shipProfile(ship, blueprint, custom, context = {}) {
   if (ship.player) {
     const hull = hullById(blueprint.hullId, blueprint);
-    const s = stats(blueprint, ship.vitals);
+    // In combat by definition: this profile exists to resolve an attack.
+    // That is what makes Wrothful's berserker fury and Skittish's flinch
+    // real rather than printed text.
+    const s = stats(blueprint, ship.vitals, { inCombat: true, ...context });
     if (!hull || !s) return null;
     return {
       name: blueprint.shipName || 'Your ship',
@@ -7539,7 +7542,11 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const ships = [playerShip, ...fleet];
   const usable = usableCustom(homebrew);
   const bpWithCustom = { ...blueprint, custom: usable };
-  const profileOf = (s) => shipProfile(s, bpWithCustom, usable);
+  // An Endeavour marked under way is the app's answer to "participating in
+  // an Endeavour" — the one Adventurous turns on.
+  const onEndeavour = endeavours.some((e) => e.status === 'active');
+  const profileOf = (s) => shipProfile(s, bpWithCustom, usable,
+    { inEndeavour: onEndeavour });
   const byId = (id) => ships.find((s) => s.id === id);
 
   const say = (entry) => setLog((p) => [{ ...entry, key: newId() }, ...p].slice(0, 30));
@@ -8401,6 +8408,34 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                         {e.intensity > 1 ? ' \u00D7' + e.intensity : ''}
                         {e.homeworld ? ' \u2014 homeworld' : ''}
                       </span>
+                      {e.kind === 'site' && e.site && (
+                        <>
+                          <span className="rt-entry-c">
+                            {e.site.origin.name}
+                            {e.site.hulks
+                              ? ` \u00B7 ${e.site.hulks.length} hulks, ${e.site.salvageable} salvageable`
+                              : ` \u00B7 Armour ${e.site.armour}, Hull ${e.site.hullIntegrity}`}
+                          </span>
+                          <div className="rt-entry-d">
+                            {e.site.hulks && (
+                              <p>
+                                {[...new Set(e.site.hulks.map((h) => h.species.name))].join(', ')}
+                              </p>
+                            )}
+                            {e.site.finds.length === 0 ? (
+                              <p>Nothing left worth taking.</p>
+                            ) : (
+                              <p>
+                                {e.site.finds.length} find{e.site.finds.length === 1 ? '' : 's'}
+                                {' \u00B7 '}
+                                {[...new Set(e.site.finds.map((f) => f.name))].join(' and ')}
+                                {' \u00B7 '}
+                                {e.site.finds.reduce((n, f) => n + f.abundance, 0)} total abundance
+                              </p>
+                            )}
+                          </div>
+                        </>
+                      )}
                       {e.kind === 'planet' && (
                         <>
                           <span className="rt-entry-c">{describePlanet(e.planet)}</span>
@@ -8850,19 +8885,23 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
               {[oddityById(bp.history.oddityId), historyById(bp.history.historyId)]
                 .filter(Boolean).map((e) => {
                   const applied = describeMods(e.mods);
+                  const swings = describeConditional(e);
                   return (
                     <li key={e.id} className="rt-entry">
                       <span className="rt-entry-t">{e.name}</span>
                       <span className="rt-entry-c">
-                        {applied || 'no change to the hull'}
+                        {applied || swings || 'no change to the hull'}
                       </span>
                       <div className="rt-entry-d">
                         <p>{e.effect}</p>
                         <p className="rt-entry-s">
                           Core Rulebook p. {e.page}
-                          {applied
+                          {applied || swings
                             ? ' \u00B7 applied to the hull below'
                             : ' \u00B7 run at the table'}
+                          {swings
+                            ? ' \u00B7 the figures below are this ship at rest'
+                            : ''}
                         </p>
                       </div>
                     </li>

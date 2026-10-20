@@ -4,7 +4,7 @@ import {
   MACHINE_SPIRIT_ODDITIES, PAST_HISTORIES,
   oddityById, historyById, oddityForRoll, historyForRoll,
   rollShipPersonality, readHistory, describeHistory, EMPTY_HISTORY,
-  MOD_KEYS, historyMods, describeMods, entriesOf
+  MOD_KEYS, historyMods, describeMods, entriesOf, describeConditional
 } from './shiphistory.js';
 import { stats, newVitals, budget, powerUsed } from './ship.js';
 
@@ -96,12 +96,28 @@ for (const e of [...MACHINE_SPIRIT_ODDITIES, ...PAST_HISTORIES]) {
     assert.equal(historyById(id).mods, null, id + ' is not a flat ship modifier');
   }
 
-  // Wrothful and Skittish both change Speed, but only while in combat, and
-  // the ship does not track that — so neither may quietly apply it.
-  assert.equal(oddityById('wrothful').mods, null, 'Wrothful is combat-only');
-  assert.equal(oddityById('skittish').mods, null, 'Skittish is combat-only');
+  // Wrothful and Skittish change Speed only in combat, and Adventurous only
+  // on an Endeavour, so none of them is a FLAT modifier — they carry a
+  // `conditional` instead, and applying it unconditionally would be wrong.
+  for (const id of ['wrothful', 'skittish', 'adventurous']) {
+    assert.equal(oddityById(id).mods, null, id + ' must not be flat');
+    assert.ok(oddityById(id).conditional, id + ' needs its conditional');
+  }
   assert.match(oddityById('wrothful').effect, /During combat/);
   assert.match(oddityById('skittish').effect, /When in combat/);
+
+  // Every conditional branch uses keys the engine knows, same as the flat
+  // ones — a typo here would silently do nothing in the one state it matters.
+  for (const e of [...MACHINE_SPIRIT_ODDITIES, ...PAST_HISTORIES]) {
+    for (const [branch, m] of Object.entries(e.conditional || {})) {
+      assert.ok(['inCombat', 'outOfCombat', 'inEndeavour', 'outOfEndeavour'].includes(branch),
+        `${e.id}: unknown branch "${branch}"`);
+      for (const [k, v] of Object.entries(m)) {
+        assert.ok(MOD_KEYS.includes(k), `${e.id}.${branch}: unknown modifier "${k}"`);
+        assert.ok(Number.isInteger(v) && v !== 0, `${e.id}.${branch}: ${k} must be non-zero`);
+      }
+    }
+  }
 
   // Summing both rolled entries.
   assert.deepEqual(historyMods({ oddityId: 'a_nose_for_trouble', historyId: 'haunted' }),
@@ -163,6 +179,68 @@ for (const e of [...MACHINE_SPIRIT_ODDITIES, ...PAST_HISTORIES]) {
   assert.equal(cult.understaffed, false, 'a full death-cult crew is not understaffed');
   assert.equal(stats({ ...base, history: { oddityId: null, historyId: 'death_cult' } },
     { population: 50 }).understaffed, true, 'but half a crew still is');
+
+  /* ---- the conditional half, in each state ---- */
+
+  // Wrothful is the whole point of the context: a berserker in a fight and
+  // a sulk at rest, from one rolled result.
+  {
+    const wrothful = { oddityId: 'wrothful', historyId: null };
+    assert.deepEqual(historyMods(wrothful),
+      { speed: -1, manoeuvre: -5, detection: -5 }, 'at rest it sulks');
+    assert.deepEqual(historyMods(wrothful, { inCombat: true }),
+      { speed: 1, manoeuvre: 7 }, 'in a fight it rages');
+
+    const atRest = stats({ ...base, history: wrothful });
+    const fighting = stats({ ...base, history: wrothful }, null, { inCombat: true });
+    assert.equal(fighting.speed, atRest.speed + 2, 'from -1 to +1 is two steps');
+    assert.equal(fighting.manoeuvre, atRest.manoeuvre + 12);
+    assert.equal(fighting.detection, atRest.detection + 5);
+  }
+
+  // Skittish flinches in combat and does nothing at rest — the travel-time
+  // half is not modelled, and must not leak in as a bonus.
+  {
+    const skittish = { oddityId: 'skittish', historyId: null };
+    assert.deepEqual(historyMods(skittish), {}, 'no voyage is tracked, so nothing applies');
+    assert.deepEqual(historyMods(skittish, { inCombat: true }), { speed: -1 });
+    assert.equal(stats({ ...base, history: skittish }).speed, plain.speed);
+    assert.equal(stats({ ...base, history: skittish }, null, { inCombat: true }).speed,
+      plain.speed - 1);
+  }
+
+  // Adventurous has no neutral state: it is +10 on an Endeavour and -10 off
+  // one, and the penalty is the default.
+  {
+    const adv = { oddityId: 'adventurous', historyId: null };
+    assert.deepEqual(historyMods(adv), { detection: -10 });
+    assert.deepEqual(historyMods(adv, { inEndeavour: true }), { detection: 10 });
+    assert.equal(stats({ ...base, history: adv }).detection, plain.detection - 10);
+    assert.equal(stats({ ...base, history: adv }, null, { inEndeavour: true }).detection,
+      plain.detection + 10);
+  }
+
+  // The two contexts are independent: a Wrothful ship on an Endeavour is
+  // still only Wrothful, and combat does not switch the Endeavour on.
+  {
+    const both = { oddityId: 'wrothful', historyId: null };
+    assert.deepEqual(historyMods(both, { inCombat: true, inEndeavour: true }),
+      historyMods(both, { inCombat: true }));
+  }
+
+  // A flat modifier is unaffected by either state.
+  for (const ctx of [{}, { inCombat: true }, { inEndeavour: true },
+                     { inCombat: true, inEndeavour: true }]) {
+    assert.deepEqual(historyMods({ oddityId: 'resolute' }, ctx),
+      { speed: -1, hullIntegrity: 3 }, 'Resolute is Resolute whatever is happening');
+  }
+
+  // Both sides are readable, so the builder can show what a result costs at
+  // rest as well as what it is worth in a fight.
+  assert.match(describeConditional(oddityById('wrothful')), /in combat .*out of combat/);
+  assert.match(describeConditional(oddityById('adventurous')), /on an Endeavour.*otherwise/);
+  assert.equal(describeConditional(oddityById('resolute')), null);
+  assert.equal(describeConditional(null), null);
 
   // An unrolled or absent history changes nothing at all.
   for (const h of [undefined, null, {}, EMPTY_HISTORY]) {

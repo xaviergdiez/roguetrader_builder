@@ -6,7 +6,9 @@ import {
   ZONE_ELEMENTS, ZONE_SIZE_MOD, elementCount,
   BODIES, GRAVITIES, gravityFor, ORBITAL_FEATURES, ATMOSPHERES, COMPOSITIONS,
   CLIMATES, CLIMATE_ZONE_MOD, HABITABILITIES, INHABITANT_SPECIES,
-  ADDITIONAL_RESOURCES, rollPlanet, rollSystem, describeSystem, describePlanet
+  ADDITIONAL_RESOURCES, rollPlanet, rollSystem, describeSystem, describePlanet,
+  DERELICT_ORIGINS, DERELICT_ARMOUR, rollDerelict,
+  GRAVEYARD_ORIGINS, HULK_CONDITIONS, HULK_SPECIES, hulkCondition, rollGraveyard
 } from './stargen.js';
 
 /* ---- a scripted rng: plays back fixed [0,1) values ---- */
@@ -269,6 +271,117 @@ assert.deepEqual(Object.keys(ZONE_ELEMENTS).sort(), ZONES.map((z) => z.id).sort(
   }
 }
 
+/* ---- derelict stations ---- */
+
+checkRange(DERELICT_ORIGINS, 100, 'DERELICT_ORIGINS');
+
+{
+  for (const o of DERELICT_ORIGINS) {
+    assert.ok(o.id && o.name, o.id + ' incomplete');
+    assert.equal(typeof o.xenos, 'boolean', o.id + ': must say whose it was');
+  }
+  // The two STC stations are the only human ones, and they are the only ones
+  // that leave archeotech rather than xenos ruins behind.
+  const human = DERELICT_ORIGINS.filter((o) => !o.xenos).map((o) => o.id);
+  assert.deepEqual(human.sort(), ['stc_defence', 'stc_monitor']);
+
+  for (let seed = 1; seed < 400; seed++) {
+    const d = rollDerelict(seeded(seed));
+    assert.ok(d.origin, 'a station came back without an origin');
+    assert.equal(d.armour, DERELICT_ARMOUR);
+    assert.ok(d.hullIntegrity >= 4 && d.hullIntegrity <= 40, '4d10: got ' + d.hullIntegrity);
+    assert.ok(d.finds.length >= 0 && d.finds.length <= 4, 'd5-1 finds');
+    for (const f of d.finds) {
+      assert.ok(f.abundance >= 1, 'a find worth nothing is not a find');
+      // What is aboard follows who built it: no archeotech in an Eldar
+      // orrery, no xenos ruins in an STC station.
+      assert.equal(f.id, d.xenos ? 'xenos_ruin' : 'archeotech_cache',
+        d.origin.name + ' left behind a ' + f.name);
+    }
+  }
+
+  // A Ruined Empire makes what is left behind richer.
+  {
+    const sum = (rules) => {
+      let t = 0;
+      for (let seed = 1; seed < 300; seed++) {
+        t += rollDerelict(seeded(seed), { rules }).finds.reduce((n, f) => n + f.abundance, 0);
+      }
+      return t;
+    };
+    assert.ok(sum({ ruinedEmpire: true }) > sum({}),
+      'a ruined empire should leave more behind');
+  }
+}
+
+/* ---- starship graveyards ---- */
+
+checkRange(GRAVEYARD_ORIGINS, 100, 'GRAVEYARD_ORIGINS');
+
+{
+  for (const o of GRAVEYARD_ORIGINS) {
+    assert.ok(Array.isArray(o.hulks) && o.hulks[0] >= 1, o.id + ': needs a hulk count');
+    assert.ok(o.hulks[1] >= o.hulks[0], o.id + ': backwards hulk range');
+    assert.ok(HULK_CONDITIONS[o.salvage], o.id + ': salvage ' + o.salvage + ' has no band');
+  }
+  for (const sp of HULK_SPECIES) {
+    assert.ok(['archeotech', 'xenotech'].includes(sp.tech), sp.id + ': unknown tech');
+  }
+
+  // The condition bands run in the right direction: a Lost Explorers field
+  // is mostly salvageable, a Crushed Defence Force is mostly scrap.
+  const spread = (salvage) => {
+    const out = { salvageable: 0, boardable: 0, shattered: 0 };
+    for (let r = 1; r <= 10; r++) out[hulkCondition(r, salvage).id] += 1;
+    return out;
+  };
+  assert.equal(spread(0).salvageable, 0, 'nothing survives a crushing');
+  assert.equal(spread(8).salvageable, 8, 'lost explorers are mostly intact');
+  assert.ok(spread(8).shattered === 0);
+  assert.ok(spread(0).shattered > spread(2).shattered);
+  // A plundered convoy was boarded once and can be boarded again.
+  assert.ok(spread(1).boardable > spread(0).boardable);
+  // Every 1d10 lands somewhere, for every band.
+  for (const salvage of Object.keys(HULK_CONDITIONS)) {
+    const s2 = spread(Number(salvage));
+    assert.equal(s2.salvageable + s2.boardable + s2.shattered, 10, 'band ' + salvage);
+  }
+
+  for (let seed = 1; seed < 400; seed++) {
+    const g = rollGraveyard(seeded(seed));
+    assert.ok(g.origin, 'a graveyard came back without an origin');
+    assert.ok(g.hulks.length >= g.origin.hulks[0] && g.hulks.length <= g.origin.hulks[1],
+      `${g.origin.name}: ${g.hulks.length} hulks outside ${g.origin.hulks}`);
+    for (const h of g.hulks) {
+      assert.ok(h.species && h.species.name, 'a hulk with no provenance');
+      assert.ok(h.condition && h.condition.id, 'a hulk with no condition');
+    }
+    assert.equal(g.salvageable,
+      g.hulks.filter((h) => h.condition.id === 'salvageable').length);
+    assert.ok(g.finds.length >= 3 && g.finds.length <= 12, 'd10+2 finds');
+    // What can be stripped follows whose hulls are out there: an all-Ork
+    // field yields no archeotech.
+    const kinds = new Set(g.hulks.map((h) => h.species.tech));
+    for (const f of g.finds) {
+      const want = f.id === 'archeotech_cache' ? 'archeotech' : 'xenotech';
+      assert.ok(kinds.has(want),
+        `a ${f.name} in a field of ${[...kinds].join('/')} hulls`);
+      assert.ok(f.abundance >= 27, 'a salvage find is 2d10+25 at least');
+    }
+  }
+
+  // Unknown Provenance really is a mixed field, at least sometimes.
+  {
+    let mixed = false;
+    for (let seed = 1; seed < 600 && !mixed; seed++) {
+      const g = rollGraveyard(seeded(seed));
+      if (g.origin.id !== 'unknown_provenance') continue;
+      if (new Set(g.hulks.map((h) => h.species.id)).size > 1) mixed = true;
+    }
+    assert.ok(mixed, 'Unknown Provenance should mix species');
+  }
+}
+
 /* ---- whole systems ---- */
 
 {
@@ -283,6 +396,13 @@ assert.deepEqual(Object.keys(ZONE_ELEMENTS).sort(), ZONES.map((z) => z.id).sort(
       assert.ok(['weak', 'normal', 'dominant'].includes(z.size));
       for (const e of z.elements) {
         assert.ok(e.id && e.name, 'an element came back unnamed');
+        // The two boardable elements carry what is inside them, rather than
+        // being a label the GM has to stock by hand.
+        if (['derelict_station', 'starship_graveyard'].includes(e.id)) {
+          assert.equal(e.kind, 'site', e.id + ' should be a site');
+          assert.ok(e.site && e.site.origin, e.id + ' came back empty');
+          assert.ok(Array.isArray(e.site.finds));
+        }
         // "Nothing" is an empty orbit, not a thing in the system.
         assert.notEqual(e.id, 'nothing', 'Nothing should never be listed');
         if (e.kind === 'planet') assert.ok(e.planet.body, 'a planet element needs its planet');

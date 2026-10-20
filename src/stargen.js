@@ -222,6 +222,130 @@ export const elementCount = (rng, size) =>
 // intense, which is why they carry an `intensity`.
 const STACKING = ['radiation_bursts', 'solar_flares'];
 
+/* ====================== derelict stations and graveyards ======================
+   The two elements that are worth boarding. Both were names on a list until
+   now; a GM who rolled one had a label and nothing to find inside it.
+
+   A station is one structure with an origin that decides whether what is
+   left behind is archeotech or xenos. A graveyard is several hulks with an
+   origin that decides how many, whose they were, and how much is left of
+   them — a Lost Explorers field is mostly salvageable, a Crushed Defence
+   Force is mostly scrap. */
+
+export const DERELICT_ORIGINS = [
+  { min: 1, max: 10, id: 'egarian_void_maze', name: 'Egarian Void-maze', xenos: true },
+  { min: 11, max: 20, id: 'eldar_orrery', name: 'Eldar Orrery', xenos: true },
+  { min: 21, max: 25, id: 'eldar_gate', name: 'Eldar Gate', xenos: true },
+  { min: 26, max: 40, id: 'ork_rok', name: 'Ork Rok', xenos: true },
+  { min: 41, max: 50, id: 'stc_defence', name: 'STC Defence Station', xenos: false },
+  { min: 51, max: 65, id: 'stc_monitor', name: 'STC Monitor Station', xenos: false },
+  { min: 66, max: 76, id: 'stryxis_collection', name: 'Stryxis Collection', xenos: true },
+  { min: 77, max: 85, id: 'xenos_defence', name: 'Xenos Defence Station', xenos: true },
+  { min: 86, max: 100, id: 'xenos_monitor', name: 'Xenos Monitor Station', xenos: true }
+];
+
+export const DERELICT_ARMOUR = 10;
+
+export function rollDerelict(rng = Math.random, { rules = {} } = {}) {
+  const origin = inTable(DERELICT_ORIGINS, d100(rng));
+  // 4d10 of hull left, which is what a boarding party has to cut through.
+  const hullIntegrity = [0, 0, 0, 0].reduce((n) => n + d10(rng), 0);
+
+  const finds = [];
+  const rolls = clampLow(d5(rng) - 1);
+  for (let i = 0; i < rolls; i++) {
+    const kind = origin.xenos
+      ? { id: 'xenos_ruin', name: 'Xenos Ruin' }
+      : { id: 'archeotech_cache', name: 'Archeotech Cache' };
+    finds.push({
+      ...kind,
+      abundance: d100(rng) + (rules.ruinedEmpire ? d10(rng) + 5 : 0)
+    });
+  }
+  return { origin, xenos: origin.xenos, armour: DERELICT_ARMOUR, hullIntegrity, finds };
+}
+
+/* ---- starship graveyards ---- */
+
+// hulks: [min,max] to roll; salvage: which column of HULK_CONDITIONS to use.
+export const GRAVEYARD_ORIGINS = [
+  { min: 1, max: 15, id: 'crushed_defence', name: 'Crushed Defence Force',
+    hulks: [2, 10], salvage: 0 },
+  { min: 16, max: 20, id: 'fleet_engagement', name: 'Fleet Engagement',
+    hulks: [7, 16], salvage: 2 },
+  { min: 21, max: 35, id: 'lost_explorers', name: 'Lost Explorers',
+    hulks: [1, 6], salvage: 8 },
+  { min: 36, max: 65, id: 'plundered_convoy', name: 'Plundered Convoy',
+    hulks: [3, 7], salvage: 1 },
+  { min: 66, max: 90, id: 'skirmish', name: 'Skirmish', hulks: [4, 8], salvage: 2 },
+  { min: 91, max: 100, id: 'unknown_provenance', name: 'Unknown Provenance',
+    hulks: [3, 7], salvage: 3 }
+];
+
+// Keyed by the origin's salvage chance: the 1d10 at or below which a hulk is
+// worth salvaging, and at or below which it is at least boardable.
+export const HULK_CONDITIONS = {
+  0: { salvage: 0, boardable: 2 },
+  1: { salvage: 1, boardable: 7 },      // a plundered convoy is easy to board
+  2: { salvage: 2, boardable: 4 },
+  3: { salvage: 3, boardable: 5 },
+  8: { salvage: 8, boardable: 10 }
+};
+
+export const hulkCondition = (roll, salvage) => {
+  const band = HULK_CONDITIONS[salvage] || HULK_CONDITIONS[2];
+  if (roll <= band.salvage) return { id: 'salvageable', name: 'May be possible to salvage' };
+  if (roll <= band.boardable) {
+    return { id: 'boardable', name: 'Intact enough to board, but little else' };
+  }
+  return { id: 'shattered', name: 'Shattered beyond any value' };
+};
+
+// Whose hulls they were decides what can be stripped out of them.
+export const HULK_SPECIES = [
+  { id: 'human', name: 'Human', tech: 'archeotech' },
+  { id: 'chaos_reaver', name: 'Chaos Reaver', tech: 'archeotech' },
+  { id: 'ork', name: 'Ork', tech: 'xenotech' },
+  { id: 'eldar', name: 'Eldar', tech: 'xenotech' },
+  { id: 'drukhari', name: 'Dark Eldar', tech: 'xenotech' },
+  { id: 'stryxis', name: 'Stryxis', tech: 'xenotech' },
+  { id: 'rakgol', name: "Rak'Gol", tech: 'xenotech' },
+  { id: 'kroot', name: 'Kroot', tech: 'xenotech' }
+];
+
+export function rollGraveyard(rng = Math.random, { rules = {} } = {}) {
+  const origin = inTable(GRAVEYARD_ORIGINS, d100(rng));
+  const [lo, hi] = origin.hulks;
+  const count = Math.max(1, lo + Math.floor(rng() * (hi - lo + 1)));
+
+  // Unknown Provenance is a different species every hull; everything else is
+  // one fleet, or one fleet that met another.
+  const pick = () => HULK_SPECIES[Math.floor(rng() * HULK_SPECIES.length)];
+  const majority = pick();
+  const minority = ['fleet_engagement', 'skirmish', 'crushed_defence'].includes(origin.id)
+    ? pick() : null;
+
+  const hulks = Array.from({ length: count }, (_, i) => {
+    const species = origin.id === 'unknown_provenance' ? pick()
+      : (minority && i >= Math.ceil(count / 2) ? minority : majority);
+    return { species, condition: hulkCondition(d10(rng), origin.salvage) };
+  });
+
+  // What can be stripped out, split by whose hulls are out there.
+  const kinds = [...new Set(hulks.map((h) => h.species.tech))];
+  const total = d10(rng) + 2;
+  const finds = Array.from({ length: total }, () => {
+    const tech = kinds[Math.floor(rng() * kinds.length)];
+    return tech === 'archeotech'
+      ? { id: 'archeotech_cache', name: 'Archeotech Cache',
+          abundance: d10(rng) + d10(rng) + 25 + (rules.ruinedEmpire ? d10(rng) + 5 : 0) }
+      : { id: 'xenos_ruin', name: 'Xenos Ruin',
+          abundance: d10(rng) + d10(rng) + 25 + (rules.ruinedEmpire ? d10(rng) + 5 : 0) };
+  });
+
+  return { origin, hulks, finds, salvageable: hulks.filter((h) => h.condition.id === 'salvageable').length };
+}
+
 /* ================================= planets ================================= */
 
 export const BODIES = [
@@ -465,6 +589,16 @@ export function rollSystem(rng = Math.random, { features: forced = null } = {}) 
       if (row.id === 'planet') {
         elements.push({ id: 'planet', name: 'Planet', kind: 'planet',
           planet: rollPlanet(rng, { zoneId: z.id, rules }) });
+        continue;
+      }
+      if (row.id === 'derelict_station') {
+        elements.push({ id: row.id, name: row.name, kind: 'site',
+          site: rollDerelict(rng, { rules }) });
+        continue;
+      }
+      if (row.id === 'starship_graveyard') {
+        elements.push({ id: row.id, name: row.name, kind: 'site',
+          site: rollGraveyard(rng, { rules }) });
         continue;
       }
       elements.push({ id: row.id, name: row.name, kind: 'feature' });

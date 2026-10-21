@@ -1906,6 +1906,12 @@ const CSS = `
 /* In a window of its own the map gets the whole screen, not a slice of a
    modal, so the stage stops capping its own height. */
 .rt-bm-win .rt-bm-stage{max-height:calc(100vh - 190px);}
+/* The map's own window wears .rt-root to pick up the custom properties every
+   rule here reads, but not the atmosphere that comes with it: the vignette
+   would darken the corners of a deck that is being projected onto a table,
+   and the layered background would show through the grid. */
+.rt-mapwin{min-height:0;background:#05070a;}
+.rt-mapwin::after{content:none;}
 .rt-bm-stage canvas{display:block;max-width:none;}
 .rt-bm-measure{font-family:var(--mono);font-size:11px;padding:6px 8px;margin-bottom:8px;
   border:1px solid var(--brass);background:rgba(212,175,55,.08);}

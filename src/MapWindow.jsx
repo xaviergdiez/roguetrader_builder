@@ -32,6 +32,13 @@ export default function MapWindow({ title = 'Battle map', width = 1400, height =
       w.document.head.appendChild(node.cloneNode(true));
     }
     const body = w.document.body;
+    // EVERY colour, border and font in this app is a custom property declared
+    // on .rt-root, and a popup's body has no ancestor carrying it. Without
+    // this the stylesheet clones across and still renders nothing: the rules
+    // match, but every var() resolves to empty, so borders and backgrounds
+    // vanish while the font and letter-spacing survive — which looks like the
+    // styles failed to copy rather than like a missing class.
+    body.className = 'rt-root rt-mapwin';
     body.style.margin = '0';
     body.style.padding = '10px';
     body.style.background = '#05070a';

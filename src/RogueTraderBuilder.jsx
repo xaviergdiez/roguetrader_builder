@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import BattleMap from './BattleMap.jsx';
+import MapWindow from './MapWindow.jsx';
 import { readMap as readBattleMap } from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
@@ -1902,6 +1903,9 @@ const CSS = `
    squashing it, so a square stays the size the GM calibrated it to. */
 .rt-bm-stage{overflow:auto;max-height:62vh;border:1px solid var(--brass);
   background:#05070a;padding:4px;}
+/* In a window of its own the map gets the whole screen, not a slice of a
+   modal, so the stage stops capping its own height. */
+.rt-bm-win .rt-bm-stage{max-height:calc(100vh - 190px);}
 .rt-bm-stage canvas{display:block;max-width:none;}
 .rt-bm-measure{font-family:var(--mono);font-size:11px;padding:6px 8px;margin-bottom:8px;
   border:1px solid var(--brass);background:rgba(212,175,55,.08);}
@@ -2701,6 +2705,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [shipRole, setShipRole] = useState('');    // '' = no station
   const [shipOpen, setShipOpen] = useState(false);
   const [gmOpen, setGmOpen] = useState(false);
+  // The boarding map's own window. Owned here rather than in the GM panel so
+  // that closing the dashboard mid-encounter does not shut the map with it.
+  const [mapWindow, setMapWindow] = useState(false);
+  const [mapErr, setMapErr] = useState('');
   const [brewOpen, setBrewOpen] = useState(false);
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeCode, setBridgeCode] = useState('');
@@ -3535,8 +3543,41 @@ export default function RogueTraderBuilder({ me, cloud }) {
           combat={combat} setCombat={setCombat}
           blueprint={blueprint} bridgeCode={bridgeCode}
           homebrew={homebrew} setHomebrew={setHomebrew}
+          mapWindow={mapWindow} setMapWindow={setMapWindow}
+          mapErr={mapErr} setMapErr={setMapErr}
           onClose={() => setGmOpen(false)}
         />
+      )}
+
+      {/* The boarding map lives OUT here, not inside the GM panel, so closing
+          the dashboard to look something up does not shut the window the
+          table is playing on. One React tree and one piece of state, so the
+          popup and the panel can never hold different maps. */}
+      {mapWindow && (
+        <MapWindow
+          title="Boarding map"
+          onClose={(why) => {
+            setMapWindow(false);
+            if (why === 'blocked') {
+              setMapErr('The browser blocked the pop-up. Allow pop-ups for this site, then try again.');
+            }
+          }}
+        >
+          {(win) => (
+            <BattleMap
+              map={readBattleMap((combat && combat.ground && combat.ground.map) || null)}
+              onChange={(next) => setCombat({
+                ...combat,
+                ground: {
+                  ...((combat && combat.ground) || {}),
+                  npcs: (combat && combat.ground && combat.ground.npcs) || [],
+                  map: next
+                }
+              })}
+              win={win}
+            />
+          )}
+        </MapWindow>
       )}
     </div>
   );
@@ -7470,7 +7511,7 @@ function shipProfile(ship, blueprint, custom, context = {}) {
 }
 
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
-  homebrew, setHomebrew, onClose }) {
+  homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -7575,6 +7616,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     ...combat,
     ground: { ...groundState, npcs: groundState.npcs || [], map: next }
   });
+  // The window itself is owned by the component above, so neither switching
+  // tabs nor closing this dashboard shuts the map the table is playing on.
 
   const addHostile = (npc) => {
     if (!editing || editing.hostiles.length >= MAX_HOSTILES) return;
@@ -8598,9 +8641,21 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       {gmTab === 'map' && (<>
         <div className="rt-sechead">
           <h4>Boarding map</h4>
-          <span className="rt-bm-hint">Build the deck, project it, then cast the overlays.</span>
+          <button type="button" className="rt-btn"
+            onClick={() => { setMapErr(''); setMapWindow(true); }}
+            disabled={mapWindow}>
+            {mapWindow ? 'Running in its own window' : 'Open in its own window'}
+          </button>
         </div>
-        <BattleMap map={battleMap} onChange={setBattleMap} />
+        {mapErr ? <p className="rt-warn">{mapErr}</p> : null}
+        {mapWindow ? (
+          <p className="rt-bm-hint">
+            The map is running in a second window so the dashboard and bridge data stay
+            here while you run the encounter. Closing that window brings it back.
+          </p>
+        ) : (
+          <BattleMap map={battleMap} onChange={setBattleMap} />
+        )}
       </>)}
 
       {gmTab === 'systems' && (<>

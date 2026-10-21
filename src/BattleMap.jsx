@@ -256,7 +256,7 @@ const BAND_COLOUR = {
   extreme: 'rgba(231,76,60,0.7)'
 };
 
-export default function BattleMap({ map, onChange }) {
+export default function BattleMap({ map, onChange, win = null }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = themeById(m.theme);
 
@@ -391,16 +391,20 @@ export default function BattleMap({ map, onChange }) {
     }
   };
 
+  // Bound to the window this is actually rendered in. When the map is
+  // portalled into its own window, a listener on the opener's window never
+  // sees the GM's keystrokes at all.
   useEffect(() => {
+    const target = win || window;
     const onKey = (e) => {
       if (e.key !== 'r' && e.key !== 'R') return;
       const tag = (e.target && e.target.tagName) || '';
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
       setRotation((r) => (r + 90) % 360);
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    target.addEventListener('keydown', onKey);
+    return () => target.removeEventListener('keydown', onKey);
+  }, [win]);
 
   /* ---- overlay geometry ---- */
 
@@ -712,7 +716,7 @@ export default function BattleMap({ map, onChange }) {
   const bar = calibrationBar(m, { targetMm: 100 });
 
   return (
-    <div className="rt-bm">
+    <div className={'rt-bm' + (win ? ' rt-bm-win' : '')}>
       <div className="rt-bm-bar">
         <select value={m.theme} onChange={(e) => patch({ theme: e.target.value })}>
           {MAP_THEMES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
+import BattleMap from './BattleMap.jsx';
+import { readMap as readBattleMap } from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
 import { parseGear, gearInfo, CRAFT, GEAR, availabilityOf } from './gear.js';
@@ -1888,6 +1890,22 @@ const CSS = `
 .rt-tn-parts{display:block;margin-top:3px;font-family:var(--mono);font-size:9.5px;
   letter-spacing:.04em;color:var(--dim);}
 .rt-gmtabbody{border-top:1px solid var(--brass);padding-top:12px;}
+/* ---- boarding battle map ---- */
+.rt-bm-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px;}
+.rt-bm-bar select{max-width:260px;}
+.rt-bm-mode.on{background:var(--brass);color:#2a1d04;border-color:var(--brass);}
+.rt-bm-num{display:flex;align-items:center;gap:4px;font-family:var(--mono);
+  font-size:10px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase;}
+.rt-bm-num input{width:62px;}
+.rt-bm-hint{font-size:11px;color:var(--dim);font-style:italic;}
+/* The canvas can be far wider than the dialog; scroll it rather than
+   squashing it, so a square stays the size the GM calibrated it to. */
+.rt-bm-stage{overflow:auto;max-height:62vh;border:1px solid var(--brass);
+  background:#05070a;padding:4px;}
+.rt-bm-stage canvas{display:block;max-width:none;}
+.rt-bm-measure{font-family:var(--mono);font-size:11px;padding:6px 8px;margin-bottom:8px;
+  border:1px solid var(--brass);background:rgba(212,175,55,.08);}
+.rt-bm-measure.blocked{border-color:#e74c3c;background:rgba(231,76,60,.12);}
 /* A section heading that carries its own action, so the field below it can
    run the full width of the panel and line up with every other one. */
 .rt-sechead{display:flex;align-items:center;justify-content:space-between;
@@ -7542,8 +7560,21 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     { id: 'events', label: 'Events', count: 0 },
     { id: 'encounters', label: 'Encounters', count: encounters.length },
     { id: 'endeavours', label: 'Endeavours', count: endeavours.length },
+    { id: 'map', label: 'Battle map', count: 0 },
     { id: 'systems', label: 'Systems', count: 0 }
   ];
+
+  /* ---- the boarding map ----
+     Geometry only. The fight is played with miniatures on the table and the
+     map is projected under them, so nothing here records who is standing
+     where — the models do that, and the ground-combat board holds their
+     Wounds and conditions as it already did. */
+  const groundState = (combat && combat.ground) || {};
+  const battleMap = readBattleMap(groundState.map);
+  const setBattleMap = (next) => setCombat({
+    ...combat,
+    ground: { ...groundState, npcs: groundState.npcs || [], map: next }
+  });
 
   const addHostile = (npc) => {
     if (!editing || editing.hostiles.length >= MAX_HOSTILES) return;
@@ -8564,6 +8595,14 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       )}
 
       </>)}
+      {gmTab === 'map' && (<>
+        <div className="rt-sechead">
+          <h4>Boarding map</h4>
+          <span className="rt-bm-hint">Build the deck, project it, then cast the overlays.</span>
+        </div>
+        <BattleMap map={battleMap} onChange={setBattleMap} />
+      </>)}
+
       {gmTab === 'systems' && (<>
       {/* ---- the system generator ----
           Stars of Inequity's system generation: the star decides which zones

@@ -45,39 +45,128 @@ const ARMED = Object.entries(GEAR)
    the edges and lies about where it stops; a gradient is sharp at any size,
    recolours per theme and costs nothing to load. */
 
-// A blast or an aura: bright core bleeding out to a hard rim, so the edge
-// the GM rules on is unambiguous while the middle still reads as an effect.
-function drawBurst(ctx, cx, cy, radiusPx, rgb, { rim = true } = {}) {
-  if (radiusPx <= 0) return;
-  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radiusPx);
-  g.addColorStop(0, `rgba(${rgb},0.55)`);
-  g.addColorStop(0.55, `rgba(${rgb},0.35)`);
-  g.addColorStop(0.92, `rgba(${rgb},0.12)`);
+// A soft glowing annulus. Canvas cannot blur a stroke, so the glow is a
+// radial gradient whose stops crowd around the radius — the ring IS the
+// gradient rather than a line with an effect on it.
+function glowRing(ctx, cx, cy, radiusPx, rgb, width = 0.14) {
+  const inner = Math.max(0, radiusPx * (1 - width));
+  const outer = radiusPx * (1 + width);
+  const g = ctx.createRadialGradient(cx, cy, inner, cx, cy, outer);
+  g.addColorStop(0, `rgba(${rgb},0)`);
+  g.addColorStop(0.5, `rgba(${rgb},0.7)`);
   g.addColorStop(1, `rgba(${rgb},0)`);
   ctx.fillStyle = g;
   ctx.beginPath();
-  ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
+  ctx.arc(cx, cy, outer, 0, Math.PI * 2);
   ctx.fill();
-  if (!rim) return;
-  ctx.strokeStyle = `rgba(${rgb},0.9)`;
+}
+
+// Cardinal ticks across a ring, so it can be read from any side of the
+// table rather than only where its label happens to sit.
+function ringTicks(ctx, cx, cy, radiusPx, len, colour) {
+  ctx.strokeStyle = colour;
   ctx.lineWidth = 1.5;
+  for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * (radiusPx - len), cy + Math.sin(a) * (radiusPx - len));
+    ctx.lineTo(cx + Math.cos(a) * (radiusPx + len), cy + Math.sin(a) * (radiusPx + len));
+    ctx.stroke();
+  }
+}
+
+// A grenade blast: a lethal core at the point of impact and a glowing
+// boundary ring at the edge of the radius, with clear air between them. The
+// two circles carry different information — where it lands and how far it
+// reaches — and one gradient blurring from the middle to the edge says
+// neither clearly.
+function drawBlast(ctx, cx, cy, radiusPx) {
+  if (radiusPx <= 0) return;
+  glowRing(ctx, cx, cy, radiusPx, '255,165,45', 0.13);
+  ctx.strokeStyle = 'rgba(225,95,25,0.95)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
+  ctx.stroke();
+  ringTicks(ctx, cx, cy, radiusPx, radiusPx * 0.09, 'rgba(255,215,120,0.95)');
+
+  const core = radiusPx * 0.34;
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, core);
+  g.addColorStop(0, 'rgba(255,236,190,0.85)');
+  g.addColorStop(0.45, 'rgba(255,186,70,0.7)');
+  g.addColorStop(0.85, 'rgba(240,120,40,0.35)');
+  g.addColorStop(1, 'rgba(240,120,40,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(cx, cy, core, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,200,110,0.8)';
+  ctx.lineWidth = 1;
   ctx.stroke();
 }
 
-// A shield aura: the rim is the thing that matters, so it is bright and the
-// fill stays faint enough to read models through.
+// A shield aura: a bright rim with a hex lattice inside it. The lattice is
+// what makes it read as a field rather than a puddle, and it stays faint
+// enough to see the models standing in it.
 function drawShield(ctx, cx, cy, radiusPx) {
   if (radiusPx <= 0) return;
-  const g = ctx.createRadialGradient(cx, cy, radiusPx * 0.2, cx, cy, radiusPx);
-  g.addColorStop(0, 'rgba(0,229,255,0.05)');
-  g.addColorStop(0.7, 'rgba(0,229,255,0.14)');
-  g.addColorStop(1, 'rgba(0,229,255,0.28)');
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
+  ctx.clip();
+
+  const s = Math.max(5, radiusPx / 5);          // hex circumradius
+  const stepX = s * 1.5;
+  const stepY = s * Math.sqrt(3);
+  const cols = Math.ceil(radiusPx / stepX) + 1;
+  const rows = Math.ceil(radiusPx / stepY) + 1;
+  ctx.lineWidth = 1;
+  for (let i = -cols; i <= cols; i++) {
+    for (let j = -rows; j <= rows; j++) {
+      const hx = cx + i * stepX;
+      const hy = cy + j * stepY + (i % 2 ? stepY / 2 : 0);
+      // Banded like the reference: brightest across the middle, fading top
+      // and bottom, so the field has depth instead of reading as wallpaper.
+      const fade = 1 - Math.min(1, Math.abs(hy - cy) / radiusPx);
+      if (fade <= 0.02) continue;
+      ctx.beginPath();
+      for (let k = 0; k < 6; k++) {
+        const a = (Math.PI / 3) * k;
+        const px2 = hx + s * 0.92 * Math.cos(a);
+        const py2 = hy + s * 0.92 * Math.sin(a);
+        if (k === 0) ctx.moveTo(px2, py2); else ctx.lineTo(px2, py2);
+      }
+      ctx.closePath();
+      ctx.fillStyle = `rgba(120,215,255,${0.1 * fade})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(0,229,255,${0.3 * fade})`;
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  ctx.strokeStyle = 'rgba(0,242,254,0.95)';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+// A gas cloud: poison, smoke, a vented coolant line. No hard core and no
+// ticks — the whole point of a cloud is that its edge is vague, which is
+// exactly the opposite of a blast and should not look like one.
+function drawCloud(ctx, cx, cy, radiusPx) {
+  if (radiusPx <= 0) return;
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radiusPx);
+  g.addColorStop(0, 'rgba(70,235,90,0.5)');
+  g.addColorStop(0.5, 'rgba(70,225,90,0.38)');
+  g.addColorStop(0.85, 'rgba(70,215,90,0.18)');
+  g.addColorStop(1, 'rgba(70,215,90,0.02)');
   ctx.fillStyle = g;
   ctx.beginPath();
   ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(0,242,254,0.95)';
-  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = 'rgba(100,245,110,0.7)';
+  ctx.lineWidth = 1;
   ctx.stroke();
 }
 
@@ -97,8 +186,23 @@ function drawCone(ctx, ox, oy, aimRad, reachPx, halfRad) {
   ctx.arc(ox, oy, reachPx, aimRad - halfRad, aimRad + halfRad);
   ctx.closePath();
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,190,80,0.85)';
+
+  // Thin edges down both sides and an arc across the mouth: the gradient
+  // fades out before the weapon's range does, so without these the template
+  // appears to stop short of where it actually reaches.
+  ctx.strokeStyle = 'rgba(255,170,60,0.75)';
+  ctx.lineWidth = 1;
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(ox, oy);
+    ctx.lineTo(ox + Math.cos(aimRad + s * halfRad) * reachPx,
+      oy + Math.sin(aimRad + s * halfRad) * reachPx);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(255,220,130,0.9)';
   ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(ox, oy, reachPx, aimRad - halfRad, aimRad + halfRad);
   ctx.stroke();
 }
 
@@ -117,9 +221,10 @@ function drawBeam(ctx, x1, y1, x2, y2, rgb) {
   ctx.strokeStyle = 'rgba(255,255,255,0.95)';
   ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-  // Arrowhead at the target end.
+  // Arrowhead at the target end, in a contrasting colour so the direction
+  // of the shot is readable at a glance across a lit table.
   const head = 11;
-  ctx.fillStyle = `rgba(${rgb},0.95)`;
+  ctx.fillStyle = 'rgba(0,229,255,0.95)';
   ctx.beginPath();
   ctx.moveTo(x2, y2);
   ctx.lineTo(x2 - head * Math.cos(ang - 0.42), y2 - head * Math.sin(ang - 0.42));
@@ -167,6 +272,7 @@ export default function BattleMap({ map, onChange }) {
   const [showLos, setShowLos] = useState(true);
   const [showRings, setShowRings] = useState(true);
   const [auraM, setAuraM] = useState(0);
+  const [auraKind, setAuraKind] = useState('shield');
   const [coneAngle, setConeAngle] = useState(15);
 
   const [showZones, setShowZones] = useState(false);
@@ -456,7 +562,7 @@ export default function BattleMap({ map, onChange }) {
       // smooth shape is what the table reads, but the GM still needs to see
       // exactly which squares are in it, and a gradient edge alone is a
       // thing to argue over.
-      fill(overlay.aura, 'rgba(0,229,255,0.10)');
+      fill(overlay.aura, auraKind === 'cloud' ? 'rgba(70,225,90,0.10)' : 'rgba(0,229,255,0.10)');
       fill(overlay.cone, 'rgba(255,170,40,0.12)');
       fill(overlay.blast, 'rgba(231,76,60,0.12)');
 
@@ -464,8 +570,9 @@ export default function BattleMap({ map, onChange }) {
       const inSquares = (metres) => (metres / (m.metresPerSquare || 1)) * px;
 
       if (overlay.aura.length && auraM > 0) {
-        clipToCells(ctx, overlay.aura, px,
-          () => drawShield(ctx, ox, oy, inSquares(auraM)));
+        clipToCells(ctx, overlay.aura, px, () => (auraKind === 'cloud'
+          ? drawCloud(ctx, ox, oy, inSquares(auraM))
+          : drawShield(ctx, ox, oy, inSquares(auraM))));
       }
       if (overlay.cone.length && target) {
         clipToCells(ctx, overlay.cone, px, () => drawCone(
@@ -476,9 +583,9 @@ export default function BattleMap({ map, onChange }) {
         ));
       }
       if (overlay.blast.length && target) {
-        clipToCells(ctx, overlay.blast, px, () => drawBurst(
+        clipToCells(ctx, overlay.blast, px, () => drawBlast(
           ctx, target.x * px + px / 2, target.y * px + px / 2,
-          inSquares(weapon.blastM), '255,120,40'
+          inSquares(weapon.blastM)
         ));
       }
 
@@ -492,16 +599,7 @@ export default function BattleMap({ map, onChange }) {
         ctx.setLineDash(ring.band === 'point_blank' ? [] : [7, 5]);
         ctx.stroke();
         ctx.setLineDash([]);
-        // Tick marks on the cardinals, so a ring can be read off at a glance
-        // from any side of the table rather than only where its label is.
-        ctx.lineWidth = 1.5;
-        for (const a of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
-          const t = px * 0.28;
-          ctx.beginPath();
-          ctx.moveTo(ox + Math.cos(a) * (rp - t), oy + Math.sin(a) * (rp - t));
-          ctx.lineTo(ox + Math.cos(a) * (rp + t), oy + Math.sin(a) * (rp + t));
-          ctx.stroke();
-        }
+        ringTicks(ctx, ox, oy, rp, px * 0.28, BAND_COLOUR[ring.band] || '#fff');
         // Label where the ring crosses due east, clipped to the canvas.
         const lx = ox + ring.radius * px;
         if (lx < w - 4 && ring.mod !== null) {
@@ -579,7 +677,7 @@ export default function BattleMap({ map, onChange }) {
       ctx.textAlign = 'left';
       ctx.fillText(bar.label, bx + 4, by - px * 0.3);
     }
-  }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin,
+  }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin, aim, weapon, auraKind, auraM, coneAngle,
       measureFrom, measureTo, measurement, showZones, showCalibration, showLos, textureTick]);
 
   /* ---- controls ---- */
@@ -671,7 +769,11 @@ export default function BattleMap({ map, onChange }) {
             onChange={(e) => setShowRings(e.target.checked)} /><span>Range bands</span></label>
           <label className="rt-bm-num"><input type="checkbox" checked={showLos}
             onChange={(e) => setShowLos(e.target.checked)} /><span>Line of sight</span></label>
-          {num('Aura m', auraM, setAuraM, 0, 50)}
+          <select value={auraKind} onChange={(e) => setAuraKind(e.target.value)}>
+            <option value="shield">Shield / field</option>
+            <option value="cloud">Gas cloud</option>
+          </select>
+          {num('Radius m', auraM, setAuraM, 0, 50)}
           {weapon && weapon.isFlame && num('Cone °', coneAngle, setConeAngle, 5, 90, 5)}
           <button type="button" className="rt-btn"
             onClick={() => { originRef.current = null; setOrigin(null); setAim(null); }}>Clear overlay</button>
@@ -687,7 +789,7 @@ export default function BattleMap({ map, onChange }) {
                 {weapon && weapon.range ? <span> · range {weapon.range} m</span> : <span> · no ranged profile</span>}
                 {weapon && weapon.blastM ? <span> · Blast {weapon.blastM} m — click a target square</span> : null}
                 {weapon && weapon.isFlame ? <span> · flame cone — click to aim</span> : null}
-                {auraM > 0 ? <span> · aura {auraM} m</span> : null}
+                {auraM > 0 ? <span> · {auraKind === 'cloud' ? 'gas cloud' : 'field'} {auraM} m</span> : null}
               </>}
         </div>
       )}

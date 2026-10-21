@@ -248,6 +248,29 @@ function clipToCells(ctx, cells, px, draw) {
   ctx.restore();
 }
 
+/* A shot: a beam from the firer to what they are shooting at. A clear lane
+   is one beam end to end; a blocked one stops dead at whatever stopped it
+   and continues as a thin dashed line, so the picture agrees with the label
+   instead of drawing confidently through a sealed bulkhead. */
+function drawShot(ctx, px, from, to, blocked) {
+  const x1 = from.x * px + px / 2, y1 = from.y * px + px / 2;
+  const x2 = to.x * px + px / 2, y2 = to.y * px + px / 2;
+  if (!blocked) {
+    drawBeam(ctx, x1, y1, x2, y2, '168,130,255');
+    return;
+  }
+  const bx = blocked.x * px + px / 2, by = blocked.y * px + px / 2;
+  drawBeam(ctx, x1, y1, bx, by, '231,76,60');
+  ctx.strokeStyle = 'rgba(231,76,60,0.9)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(x2, y2); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = '#e74c3c';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(blocked.x * px + 2, blocked.y * px + 2, px - 4, px - 4);
+}
+
 const BAND_COLOUR = {
   point_blank: 'rgba(46,204,113,0.85)',
   short: 'rgba(241,196,15,0.8)',
@@ -411,10 +434,20 @@ export default function BattleMap({ map, onChange, win = null }) {
   const overlay = useMemo(() => {
     if (mode !== 'overlay' || !origin) return null;
     const target = aim || hover;
+    // A flame weapon throws a cone and everything else throws a line. A
+    // lasgun shot is one lane between two squares, not an area, so a ranged
+    // weapon gets the beam and the band it lands in; only the flamer draws a
+    // wedge. A grenade keeps the beam too — it is still thrown at a point,
+    // and the line is what shows whether the throw lane is clear.
+    const shot = target && weapon && !weapon.isFlame
+      ? reachBetween({ from: origin, to: target, map: m, weaponRangeM: weapon.range })
+      : null;
     // Templates are trimmed to what they can actually reach: fire does not
     // cross a sealed bulkhead and a grenade does not blast through a wall.
     // The blast is trimmed from its own point of impact, not from the firer.
     return {
+      shot,
+      target,
       rings: showRings && weapon ? rangeRings(weapon.range, m) : [],
       los: showLos ? visibleCells(m, origin, weapon && weapon.range ? weapon.range * 3 : null) : [],
       blast: weapon && weapon.blastM && target
@@ -614,6 +647,11 @@ export default function BattleMap({ map, onChange, win = null }) {
         }
       }
 
+      // The shot itself, over the rings so the lane is not lost under them.
+      if (overlay.shot && overlay.target) {
+        drawShot(ctx, px, origin, overlay.target, overlay.shot.blocked);
+      }
+
       // The firing square itself.
       ctx.beginPath();
       ctx.arc(ox, oy, px * 0.3, 0, Math.PI * 2);
@@ -637,28 +675,7 @@ export default function BattleMap({ map, onChange, win = null }) {
 
     // 9. The measuring tape.
     if (measureFrom && measureTo && measurement) {
-      const x1 = measureFrom.x * px + px / 2, y1 = measureFrom.y * px + px / 2;
-      const x2 = measureTo.x * px + px / 2, y2 = measureTo.y * px + px / 2;
-      // A clear lane is a beam; a blocked one stops dead at what stopped it,
-      // so the line itself shows where the shot died rather than drawing
-      // through the bulkhead and contradicting the label underneath.
-      if (measurement.blocked) {
-        const b = measurement.blocked;
-        const bx = b.x * px + px / 2, by = b.y * px + px / 2;
-        drawBeam(ctx, x1, y1, bx, by, '231,76,60');
-        ctx.strokeStyle = 'rgba(231,76,60,0.9)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(x2, y2); ctx.stroke();
-        ctx.setLineDash([]);
-      } else {
-        drawBeam(ctx, x1, y1, x2, y2, '168,130,255');
-      }
-      if (measurement.blocked) {
-        const b = measurement.blocked;
-        ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 3;
-        ctx.strokeRect(b.x * px + 2, b.y * px + 2, px - 4, px - 4);
-      }
+      drawShot(ctx, px, measureFrom, measureTo, measurement.blocked);
     }
 
     // 10. The calibration bar. Drawn last and over everything, because its
@@ -791,8 +808,22 @@ export default function BattleMap({ map, onChange, win = null }) {
             : <>
                 <strong>Firing from {origin.x},{origin.y}</strong>
                 {weapon && weapon.range ? <span> · range {weapon.range} m</span> : <span> · no ranged profile</span>}
-                {weapon && weapon.blastM ? <span> · Blast {weapon.blastM} m — click a target square</span> : null}
+                {weapon && weapon.blastM ? <span> · Blast {weapon.blastM} m</span> : null}
                 {weapon && weapon.isFlame ? <span> · flame cone — click to aim</span> : null}
+                {/* The shot the GM is actually about to roll, so the band and
+                    its modifier are on screen without switching to Measure. */}
+                {overlay && overlay.shot ? (
+                  <span>
+                    {' · '}{overlay.shot.metres} m — {overlay.shot.band.replace('_', ' ')}
+                    {' ('}{overlay.shot.mod === null
+                      ? 'out of range'
+                      : `${overlay.shot.mod >= 0 ? '+' : ''}${overlay.shot.mod} to hit`}{')'}
+                    {overlay.shot.blocked ? (
+                      <strong> · blocked by {overlay.shot.blocked.reason === 'door'
+                        ? `a ${overlay.shot.blocked.state} bulkhead` : 'a wall'}</strong>
+                    ) : null}
+                  </span>
+                ) : null}
                 {auraM > 0 ? <span> · {auraKind === 'cloud' ? 'gas cloud' : 'field'} {auraM} m</span> : null}
               </>}
         </div>

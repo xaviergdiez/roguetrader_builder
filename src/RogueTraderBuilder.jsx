@@ -68,7 +68,8 @@ import {
   /* the read-only view the players get */
   readLibrary as readEndeavours, newEndeavour, newMission, newObjective,
   readEndeavour, objectiveTarget, objectiveComplete, missionProgress,
-  endeavourProgress, describeEndeavour
+  endeavourProgress, describeEndeavour,
+  endeavourName, missionName, objectiveName
 } from './endeavours.js';
 import {
   readLibrary as readEncounters, newEncounter, readHostile, toNpcAdd,
@@ -7396,7 +7397,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
             return (
               <>
                 <div className="rt-conds-h">
-                  {end.name}
+                  {endeavourName(end)}
                   {end.status && end.status !== 'active'
                     ? ' \u00B7 ' + (STATUSES.find((x) => x.id === end.status) || {}).name
                     : ''}
@@ -7414,7 +7415,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                   return (
                     <div key={m.id}>
                       <div className="rt-conds-h">
-                        {m.name}{mp.complete ? ' \u00B7 complete' : ''}
+                        {missionName(m)}{mp.complete ? ' \u00B7 complete' : ''}
                       </div>
                       {m.note && <p className="rt-vox-hint">{m.note}</p>}
                       <ul className="rt-list">
@@ -7424,7 +7425,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                           return (
                             <li key={o.id} className={'rt-entry' + (done ? ' rt-gmdead' : '')}>
                               <span className="rt-entry-t">
-                                {(kindById(o.kind) || {}).name} {'\u00B7'} {o.name}
+                                {(kindById(o.kind) || {}).name} {'\u00B7'} {objectiveName(o)}
                               </span>
                               <span className="rt-entry-c">
                                 {done ? 'done' : (target > 0 ? `${o.earned}/${target} AP` : 'open')}
@@ -7643,7 +7644,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     setPublished('Publishing\u2026');
     return writeBridge({
       code: bridgeCode, doc: { endeavour: journal },
-      log: `The GM published "${journal.name}" to the table.`
+      log: `The GM published "${endeavourName(journal)}" to the table.`
     })
       .then(() => setPublished('The table can read it.'))
       .catch((e) => setPublished(e.message || 'The bridge refused that.'));
@@ -8179,7 +8180,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           <option value="">{'\u2014 pick an endeavour \u2014'}</option>
           {endeavours.map((e) => (
             <option key={e.id} value={e.id}>
-              {e.name} {'\u00B7'} {describeEndeavour(e)}
+              {endeavourName(e)} {'\u00B7'} {describeEndeavour(e)}
             </option>
           ))}
         </select>
@@ -8261,7 +8262,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                         return (
                           <li key={o.id} className={'rt-entry' + (done ? ' rt-gmdead' : '')}>
                             <span className="rt-entry-t">
-                              {(kindById(o.kind) || {}).name} {'\u00B7'} {o.name}
+                              {(kindById(o.kind) || {}).name} {'\u00B7'} {objectiveName(o)}
                             </span>
                             <span className="rt-entry-c">
                               {target > 0 ? `${o.earned}/${target} AP` : 'no points set'}
@@ -8330,7 +8331,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                               </label>
                               <button className="rt-rm" onClick={() => editMission(m.id,
                                 (x) => ({ ...x, objectives: x.objectives.filter((y) => y.id !== o.id) }))}
-                                aria-label={'Remove ' + o.name}>&times;</button>
+                                aria-label={'Remove ' + objectiveName(o)}>&times;</button>
                             </div>
                           </li>
                         );

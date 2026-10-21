@@ -69,7 +69,7 @@ export function readObjective(o) {
   return {
     id: (src && typeof src.id === 'string' && src.id) || newId('obj'),
     kind,
-    name: str(src && src.name, 120) || 'Objective',
+    name: str(src && src.name, 120),
     note: str(src && src.note, 400),
     // What completing it is worth, and what has been earned so far. Both
     // the GM's to set: see the note at the top of this file.
@@ -94,7 +94,7 @@ export function readMission(m) {
   const objectives = Array.isArray(src && src.objectives) ? src.objectives : [];
   return {
     id: (src && typeof src.id === 'string' && src.id) || newId('mis'),
-    name: str(src && src.name, 120) || 'Mission',
+    name: str(src && src.name, 120),
     note: str(src && src.note, 400),
     objectives: objectives.filter((o) => o && typeof o === 'object').map(readObjective)
   };
@@ -105,7 +105,7 @@ export function readEndeavour(e) {
   const missions = Array.isArray(src && src.missions) ? src.missions : [];
   return {
     id: (src && typeof src.id === 'string' && src.id) || newId('end'),
-    name: str(src && src.name, 120) || 'Endeavour',
+    name: str(src && src.name, 120),
     note: str(src && src.note, 600),
     status: statusById(src && src.status).id,
     profitFactorReward: Math.max(0, int(src && src.profitFactorReward, 0)),
@@ -116,6 +116,23 @@ export function readEndeavour(e) {
     missions: missions.filter((m) => m && typeof m === 'object').map(readMission)
   };
 }
+
+/* A name is stored exactly as it was typed, EMPTY INCLUDED, and the fallback
+   is supplied here when something is drawn.
+
+   These read functions run on every keystroke — an edit rebuilds the whole
+   Endeavour and hands it back through readEndeavour — so a default applied
+   on read does not fill a blank, it overwrites the GM mid-sentence: clearing
+   the field to retype it put "Endeavour" back under the cursor. A name the
+   user is halfway through deleting is a legitimate value; only the rendering
+   of it needs a word to show. */
+export const nameOf = (x, fallback) => {
+  const n = x && typeof x.name === 'string' ? x.name.trim() : '';
+  return n || fallback;
+};
+export const endeavourName = (e) => nameOf(e, 'Untitled endeavour');
+export const missionName = (m) => nameOf(m, 'Untitled mission');
+export const objectiveName = (o) => nameOf(o, 'Untitled objective');
 
 export const readLibrary = (list) =>
   (Array.isArray(list) ? list : []).map(readEndeavour);

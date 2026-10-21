@@ -6,7 +6,8 @@ import {
   newEndeavour, newMission, newObjective,
   objectiveTarget, objectiveComplete, missionProgress, endeavourProgress,
   describeEndeavour, encounterIdsIn
-} from './endeavours.js';
+,
+  nameOf, endeavourName, missionName, objectiveName} from './endeavours.js';
 
 /* ---- the vocabulary ---- */
 
@@ -26,12 +27,52 @@ import {
   assert.equal(statusById(undefined).id, 'planned');
 }
 
+/* ---- a name is kept exactly as it was typed ---- */
+
+{
+  // THE BUG THIS PREVENTS: these read functions run on every keystroke,
+  // because an edit rebuilds the whole Endeavour and hands it back through
+  // readEndeavour. A default applied HERE does not fill a blank field — it
+  // overwrites the GM mid-sentence, putting "Endeavour" back under the
+  // cursor the moment they clear the field to retype it.
+  assert.equal(readEndeavour({ name: '' }).name, '');
+  assert.equal(readMission({ name: '' }).name, '');
+  assert.equal(readObjective({ name: '' }).name, '');
+  assert.equal(readEndeavour({}).name, '');
+
+  // Clearing the field and typing again survives the round trip, one
+  // keystroke at a time, with nothing injected in front of what was typed.
+  let end = readEndeavour({ name: 'Endeavour 1' });
+  end = readEndeavour({ ...end, name: '' });           // select-all, delete
+  assert.equal(end.name, '');
+  for (const ch of 'Endeavour test') {
+    end = readEndeavour({ ...end, name: end.name + ch });
+  }
+  assert.equal(end.name, 'Endeavour test', 'the typed name arrived intact');
+
+  // A name the GM did set is still kept, and still trimmed to length.
+  assert.equal(readEndeavour({ name: 'The Cloud-Fane' }).name, 'The Cloud-Fane');
+  assert.equal(readEndeavour({ name: 'x'.repeat(500) }).name.length, 120);
+  assert.equal(readEndeavour({ name: null }).name, '');
+  assert.equal(readEndeavour({ name: 42 }).name, '42');
+
+  // The fallback lives at display time instead, which is the only place it
+  // was ever wanted.
+  assert.equal(endeavourName({ name: '' }), 'Untitled endeavour');
+  assert.equal(endeavourName({ name: '   ' }), 'Untitled endeavour', 'blanks are not a name');
+  assert.equal(endeavourName({ name: 'The Cloud-Fane' }), 'The Cloud-Fane');
+  assert.equal(endeavourName(null), 'Untitled endeavour');
+  assert.equal(missionName({ name: '' }), 'Untitled mission');
+  assert.equal(objectiveName({ name: '' }), 'Untitled objective');
+  assert.equal(nameOf({ name: 'Kept' }, 'fallback'), 'Kept');
+}
+
 /* ---- reading a stored blob ---- */
 
 {
   for (const junk of [undefined, null, 0, 'no', [], { missions: 'no' }]) {
     const e = readEndeavour(junk);
-    assert.ok(e.id && e.name && Array.isArray(e.missions));
+    assert.ok(e.id && typeof e.name === 'string' && Array.isArray(e.missions));
     assert.equal(e.status, 'planned');
   }
   assert.deepEqual(readEndeavour({ missions: [null, 3, 'x'] }).missions, []);

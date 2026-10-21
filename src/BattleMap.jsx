@@ -5,6 +5,7 @@ import {
   wallMask, cornerPillar, WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
+  overlayKindFor, onDeck,
   weaponOverlay, calibrationBar, deploymentRows
 } from './battlemap.js';
 import { GEAR } from './gear.js';
@@ -151,25 +152,6 @@ function drawShield(ctx, cx, cy, radiusPx) {
   ctx.stroke();
 }
 
-// A gas cloud: poison, smoke, a vented coolant line. No hard core and no
-// ticks — the whole point of a cloud is that its edge is vague, which is
-// exactly the opposite of a blast and should not look like one.
-function drawCloud(ctx, cx, cy, radiusPx) {
-  if (radiusPx <= 0) return;
-  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radiusPx);
-  g.addColorStop(0, 'rgba(70,235,90,0.5)');
-  g.addColorStop(0.5, 'rgba(70,225,90,0.38)');
-  g.addColorStop(0.85, 'rgba(70,215,90,0.18)');
-  g.addColorStop(1, 'rgba(70,215,90,0.02)');
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radiusPx, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(100,245,110,0.7)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-}
-
 // A flame cone: hottest at the nozzle, fading to the limit of its reach,
 // with the edges and the end arc drawn so the template has a readable
 // boundary rather than dissolving into haze.
@@ -294,8 +276,6 @@ export default function BattleMap({ map, onChange, win = null }) {
   const [aim, setAim] = useState(null);
   const [showLos, setShowLos] = useState(true);
   const [showRings, setShowRings] = useState(true);
-  const [auraM, setAuraM] = useState(0);
-  const [auraKind, setAuraKind] = useState('shield');
   const [coneAngle, setConeAngle] = useState(15);
 
   const [showZones, setShowZones] = useState(false);
@@ -439,24 +419,27 @@ export default function BattleMap({ map, onChange, win = null }) {
     // weapon gets the beam and the band it lands in; only the flamer draws a
     // wedge. A grenade keeps the beam too — it is still thrown at a point,
     // and the line is what shows whether the throw lane is clear.
-    const shot = target && weapon && !weapon.isFlame
+    const kind = overlayKindFor(weapon);
+    const shot = target && kind === 'beam'
       ? reachBetween({ from: origin, to: target, map: m, weaponRangeM: weapon.range })
       : null;
     // Templates are trimmed to what they can actually reach: fire does not
     // cross a sealed bulkhead and a grenade does not blast through a wall.
     // The blast is trimmed from its own point of impact, not from the firer.
     return {
+      kind,
       shot,
       target,
-      rings: showRings && weapon ? rangeRings(weapon.range, m) : [],
+      rings: showRings && weapon && !weapon.isField ? rangeRings(weapon.range, m) : [],
       los: showLos ? visibleCells(m, origin, weapon && weapon.range ? weapon.range * 3 : null) : [],
       blast: weapon && weapon.blastM && target
-        ? unobstructed(m, target, areaCells(m, target, weapon.blastM)) : [],
+        ? onDeck(m, unobstructed(m, target, areaCells(m, target, weapon.blastM))) : [],
       cone: weapon && weapon.isFlame && target
-        ? unobstructed(m, origin, coneCells(m, origin, target, weapon.range, coneAngle)) : [],
-      aura: auraM > 0 ? unobstructed(m, origin, areaCells(m, origin, auraM)) : []
+        ? onDeck(m, unobstructed(m, origin, coneCells(m, origin, target, weapon.range, coneAngle))) : [],
+      aura: kind === 'field'
+        ? onDeck(m, unobstructed(m, origin, areaCells(m, origin, weapon.auraM))) : []
     };
-  }, [mode, origin, aim, hover, weapon, showRings, showLos, auraM, coneAngle, m]);
+  }, [mode, origin, aim, hover, weapon, showRings, showLos, coneAngle, m]);
 
   /* ---- rendering ---- */
 
@@ -599,17 +582,16 @@ export default function BattleMap({ map, onChange, win = null }) {
       // smooth shape is what the table reads, but the GM still needs to see
       // exactly which squares are in it, and a gradient edge alone is a
       // thing to argue over.
-      fill(overlay.aura, auraKind === 'cloud' ? 'rgba(70,225,90,0.10)' : 'rgba(0,229,255,0.10)');
+      fill(overlay.aura, 'rgba(0,229,255,0.10)');
       fill(overlay.cone, 'rgba(255,170,40,0.12)');
       fill(overlay.blast, 'rgba(231,76,60,0.12)');
 
       const target = aim || hover;
       const inSquares = (metres) => (metres / (m.metresPerSquare || 1)) * px;
 
-      if (overlay.aura.length && auraM > 0) {
-        clipToCells(ctx, overlay.aura, px, () => (auraKind === 'cloud'
-          ? drawCloud(ctx, ox, oy, inSquares(auraM))
-          : drawShield(ctx, ox, oy, inSquares(auraM))));
+      if (overlay.aura.length) {
+        clipToCells(ctx, overlay.aura, px,
+          () => drawShield(ctx, ox, oy, inSquares(weapon.auraM)));
       }
       if (overlay.cone.length && target) {
         clipToCells(ctx, overlay.cone, px, () => drawCone(
@@ -698,7 +680,7 @@ export default function BattleMap({ map, onChange, win = null }) {
       ctx.textAlign = 'left';
       ctx.fillText(bar.label, bx + 4, by - px * 0.3);
     }
-  }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin, aim, weapon, auraKind, auraM, coneAngle,
+  }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin, aim, weapon, coneAngle,
       measureFrom, measureTo, measurement, showZones, showCalibration, showLos, textureTick]);
 
   /* ---- controls ---- */
@@ -786,15 +768,14 @@ export default function BattleMap({ map, onChange, win = null }) {
         )}
 
         {mode === 'overlay' && (<>
-          <label className="rt-bm-num"><input type="checkbox" checked={showRings}
-            onChange={(e) => setShowRings(e.target.checked)} /><span>Range bands</span></label>
+          {/* A force field has no range bands, so the toggle for them is not
+              offered rather than sitting there doing nothing. */}
+          {!(weapon && weapon.isField) && (
+            <label className="rt-bm-num"><input type="checkbox" checked={showRings}
+              onChange={(e) => setShowRings(e.target.checked)} /><span>Range bands</span></label>
+          )}
           <label className="rt-bm-num"><input type="checkbox" checked={showLos}
             onChange={(e) => setShowLos(e.target.checked)} /><span>Line of sight</span></label>
-          <select value={auraKind} onChange={(e) => setAuraKind(e.target.value)}>
-            <option value="shield">Shield / field</option>
-            <option value="cloud">Gas cloud</option>
-          </select>
-          {num('Radius m', auraM, setAuraM, 0, 50)}
           {weapon && weapon.isFlame && num('Cone °', coneAngle, setConeAngle, 5, 90, 5)}
           <button type="button" className="rt-btn"
             onClick={() => { originRef.current = null; setOrigin(null); setAim(null); }}>Clear overlay</button>
@@ -807,7 +788,9 @@ export default function BattleMap({ map, onChange, win = null }) {
             ? 'Click the square the firer is standing in. Click it again to clear.'
             : <>
                 <strong>Firing from {origin.x},{origin.y}</strong>
-                {weapon && weapon.range ? <span> · range {weapon.range} m</span> : <span> · no ranged profile</span>}
+                {weapon && weapon.range ? <span> · range {weapon.range} m</span> : null}
+                {weapon && !weapon.range && !weapon.isField
+                  ? <span> · no ranged profile</span> : null}
                 {weapon && weapon.blastM ? <span> · Blast {weapon.blastM} m</span> : null}
                 {weapon && weapon.isFlame ? <span> · flame cone — click to aim</span> : null}
                 {/* The shot the GM is actually about to roll, so the band and
@@ -824,7 +807,10 @@ export default function BattleMap({ map, onChange, win = null }) {
                     ) : null}
                   </span>
                 ) : null}
-                {auraM > 0 ? <span> · {auraKind === 'cloud' ? 'gas cloud' : 'field'} {auraM} m</span> : null}
+                {weapon && weapon.isField ? (
+                  <span> · field, Protection Rating {weapon.protectionRating}
+                    {weapon.auraM > 1 ? ` — covers ${weapon.auraM} m` : ' — covers the bearer only'}</span>
+                ) : null}
               </>}
         </div>
       )}

@@ -468,6 +468,16 @@ export function unobstructed(map, centre, cells) {
     (c.x === centre.x && c.y === centre.y) || !walkLine(m, centre, c));
 }
 
+/* Keeps a template on the deck. A blast or a field spilling into the void
+   beside a corridor is drawn over squares that are not part of the map at
+   all, which on a projector reads as the template covering a wall. On an
+   unpainted map there is no deck to stay on, so everything passes. */
+export function onDeck(map, cells) {
+  const m = readMap(map);
+  if (isEmpty(m.floor)) return cells || [];
+  return (cells || []).filter((c) => m.floor[cellKey(c.x, c.y)]);
+}
+
 /* What can be seen from a square: every cell within a radius that has an
    unblocked lane to the origin. Uses the same lineBlocked() the measuring
    tape does, so the overlay and the ruler can never disagree about whether a
@@ -496,16 +506,39 @@ export function visibleCells(map, origin, radiusM = null) {
    so a flamer's reach and a grenade's Blast come from the same string the
    damage does rather than being typed in again. */
 export function weaponOverlay(stats) {
+  // The field figures are read off the raw line rather than the parsed
+  // qualities: parseWeaponStats splits a segment on ", " as well as on the
+  // separator, which cuts "aura, 5 m" into two useless halves.
+  const text = String(stats || '');
   const parsed = parseWeaponStats(stats);
   const qualities = (parsed.qualities || []).join(' ');
   const blast = /blast\s*\((\d+)\)/i.exec(qualities);
+  const rating = /protection rating\s*(\d+)/i.exec(text);
+  const aura = /aura,?\s*(\d+)\s*m/i.exec(text);
   return {
     range: parsed.range,
     // Blast (X) is a radius in metres from the point of impact.
     blastM: blast ? Number(blast[1]) : null,
     isFlame: /flame/i.test(qualities),
+    // A force field, which is not a weapon and never draws a shot.
+    isField: Boolean(rating),
+    protectionRating: rating ? Number(rating[1]) : null,
+    // A field with no aura figure covers its bearer and nobody else, which
+    // is one square — not nothing, or it would draw no overlay at all.
+    auraM: rating ? (aura ? Number(aura[1]) : 1) : null,
     qualities: parsed.qualities || []
   };
+}
+
+/* Which overlay a thing gets, decided by the thing itself. There is no
+   picker for this: a flamer throws a cone and a lasgun throws a line
+   whatever anyone selects from a menu, and asking the GM to say so again is
+   a chance to say it wrong in front of the table. */
+export function overlayKindFor(ov) {
+  if (!ov) return null;
+  if (ov.isField) return 'field';
+  if (ov.isFlame) return 'cone';
+  return 'beam';            // blast weapons draw a beam AND a burst
 }
 
 /* Deployment zones are drawn, not occupied: a shaded band at each end of the

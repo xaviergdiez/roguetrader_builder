@@ -4,6 +4,7 @@ import {
   MAP_THEMES, DEFAULT_THEME, themeById, EMPTY_MAP, readMap,
   distanceSquares, distanceMetres, reachBetween, deploymentRows, calibrationBar,
   rangeRings, areaCells, coneCells, visibleCells, weaponOverlay, unobstructed,
+  overlayKindFor, onDeck,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -507,6 +508,22 @@ import { GEAR } from './gear.js';
     assert.ok(ms < 2000, `five full-board visibility passes took ${ms}ms`);
   }
 
+  /* templates stay on the deck */
+  {
+    const cells = [];
+    for (let x = 0; x < 10; x++) cells.push({ x, y: 5 });
+    const corridor = readMap({ cols: 20, rows: 12, floor: paintCells({}, cells) });
+    const burst = areaCells(corridor, { x: 5, y: 5 }, 3);
+    assert.ok(burst.some((c) => c.y !== 5), 'the raw radius reaches off the corridor');
+    const kept = onDeck(corridor, burst);
+    assert.ok(kept.length > 0);
+    assert.ok(kept.every((c) => c.y === 5), 'but only deck squares are drawn on');
+    // An unpainted map is open ground: there is no deck to stay on, so
+    // nothing is filtered and the GM can still measure and template freely.
+    assert.equal(onDeck(readMap({ cols: 20, rows: 12 }), burst).length, burst.length);
+    assert.deepEqual(onDeck(corridor, null), []);
+  }
+
   /* line of sight */
   // A corridor along y=5 with a shut bulkhead partway down it.
   const cells = [];
@@ -554,6 +571,46 @@ import { GEAR } from './gear.js';
 
   assert.deepEqual(weaponOverlay(null).range, null);
   assert.deepEqual(weaponOverlay('').blastM, null);
+
+  /* the overlay is decided by the item, never by a picker */
+  {
+    // A force field is not a weapon: it has an aura and never draws a shot.
+    const kustom = weaponOverlay(GEAR['kustom force field'].stats);
+    assert.equal(kustom.isField, true);
+    assert.equal(kustom.protectionRating, 45);
+    assert.equal(kustom.auraM, 5, 'the Mek field covers everything within 5m');
+    assert.equal(kustom.range, null);
+    assert.equal(overlayKindFor(kustom), 'field');
+
+    // A personal field covers its bearer and nobody else. One square, not
+    // zero — zero would read as "no field" and draw nothing at all.
+    const refractor = weaponOverlay(GEAR['refractor field'].stats);
+    assert.equal(refractor.isField, true);
+    assert.equal(refractor.protectionRating, 30);
+    assert.equal(refractor.auraM, 1);
+    assert.equal(overlayKindFor(refractor), 'field');
+
+    // "aura, 5 m" survives: parseWeaponStats splits segments on ", " too, so
+    // reading the aura off the parsed qualities would cut it in half.
+    assert.match(GEAR['kustom force field'].stats, /aura, 5 m/);
+
+    // And the weapons each pick their own template.
+    assert.equal(overlayKindFor(weaponOverlay(GEAR['flamer'].stats)), 'cone');
+    assert.equal(overlayKindFor(weaponOverlay(GEAR['lasgun'].stats)), 'beam');
+    // A grenade is a beam that also bursts — the line shows whether the
+    // throw can even get there.
+    const bomb = weaponOverlay(GEAR['stikkbomb'].stats);
+    assert.equal(overlayKindFor(bomb), 'beam');
+    assert.equal(bomb.blastM, 3);
+    assert.equal(bomb.isField, false);
+    assert.equal(bomb.auraM, null);
+
+    assert.equal(overlayKindFor(null), null);
+    // A weapon is never mistaken for a field, which would stop it shooting.
+    for (const k of ['lasgun', 'flamer', 'stikkbomb', 'power sword', 'heavy bolter']) {
+      assert.equal(weaponOverlay(GEAR[k].stats).isField, false, k + ' is not a force field');
+    }
+  }
 }
 
 /* ---- the two scales are different things ---- */

@@ -5,7 +5,7 @@ import {
   wallMask, cornerPillar, WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
-  overlayKindFor, onDeck, revealArea,
+  overlayKindFor, onDeck, revealArea, concealArea, visibleExplored,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   weaponOverlay, calibrationBar, deploymentRows
@@ -361,7 +361,7 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
     return { x, y };
   };
 
-  const applyAt = (pos, dragging = false, sweep = false, lineOfSight = false) => {
+  const applyAt = (pos, dragging = false, sweep = false, lineOfSight = false, conceal = false) => {
     if (!pos) return;
     const k = cellKey(pos.x, pos.y);
 
@@ -442,10 +442,19 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
         patch({ explored });
         return;
       }
+      if (conceal) {
+        patch({ explored: concealArea(m, pos) });
+        return;
+      }
       // A PLACE at a time, which is the reveal the table expects: click
       // inside a room and the room is there; click a door or a hatch and
       // what it joins comes in with it.
-      patch({ explored: revealArea(m, pos) });
+      //
+      // The clicked square also becomes the viewpoint — where the party is
+      // standing — because that is what it means in practice: the GM
+      // reveals where they have got to. From then on, shutting a door takes
+      // what is beyond it off the board.
+      patch({ explored: revealArea(m, pos), viewpoint: pos });
       return;
     }
     if (mode === 'marker') {
@@ -713,10 +722,14 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
     //     the deck and reaching for the next square to reveal, and a tool you
     //     cannot see to aim is no tool.
     if (m.fog) {
+      // What is DRAWN is what they have seen and can still reach through
+      // open doors, so shutting a bulkhead takes the room beyond it off the
+      // board without forgetting it was ever found.
+      const shown = visibleExplored(m);
       ctx.fillStyle = projecting ? 'rgb(3,4,6)' : 'rgba(3,4,6,0.82)';
       for (let x = 0; x < m.cols; x++) {
         for (let y = 0; y < m.rows; y++) {
-          if (!m.explored[cellKey(x, y)]) ctx.fillRect(x * px, y * px, px, px);
+          if (!shown[cellKey(x, y)]) ctx.fillRect(x * px, y * px, px, px);
         }
       }
     }
@@ -1023,10 +1036,13 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
           {num('Auspex m', auspexM, setAuspexM, 1, 500, 5)}
           <span className="rt-bm-hint">
             Click a room to reveal it, or a door to bring in what it joins — a door
-            bounds a place whether it is open or shut. Drag to reveal by hand,
-            alt-click for line of sight from a square, and shift-click for an auspex
-            sweep, which reads through bulkheads and pings contacts without opening
-            the deck.
+            bounds a place whether it is open or shut. The square you click is where
+            the party is standing, so shutting a door afterwards takes what is beyond
+            it off the board, and opening it again brings it straight back.
+            Ctrl-click takes a place back by hand, drag reveals square by square,
+            alt-click reveals line of sight from a square, and shift-click is an
+            auspex sweep — it reads through bulkheads and pings contacts without
+            opening the deck.
           </span>
         </>)}
 
@@ -1133,7 +1149,7 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
           }}
           onMouseLeave={() => setHover(null)}
           onMouseDown={(e) => {
-            if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey);
+            if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
           }}
           style={{ cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
         />

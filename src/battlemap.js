@@ -117,7 +117,13 @@ export const EMPTY_MAP = {
   // Fog of war. `explored` is what the party has seen; `fog` is whether the
   // map is drawn with it. The two are separate so turning fog off to check
   // something does not throw away what was explored.
-  explored: {},         // { 'x,y': true }
+  explored: {},         // { 'x,y': true } — everywhere the party has EVER seen
+  // Where they are now, set by the last reveal. What is DRAWN is `explored`
+  // narrowed to what can still be walked to from here through open doors, so
+  // shutting a bulkhead takes the room beyond it off the board and opening
+  // it again brings the room back. Nothing is forgotten to do that — see
+  // visibleExplored.
+  viewpoint: null,
   fog: false,
   /* Hostiles placed from a saved encounter. THESE ARE NOT TOKENS: the fight
      is played with miniatures, and a model standing on a square the party
@@ -274,6 +280,12 @@ export function readMap(m) {
     pxPerSquare: int(src.pxPerSquare, EMPTY_MAP.pxPerSquare, 10, 200),
     mmPerSquare: int(src.mmPerSquare, EMPTY_MAP.mmPerSquare, 5, 100),
     fog: Boolean(src.fog),
+    viewpoint: (() => {
+      const v = src.viewpoint;
+      if (!v || typeof v !== 'object') return null;
+      const x = Math.round(Number(v.x)), y = Math.round(Number(v.y));
+      return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+    })(),
     floor, doors, cover, hazards, markers, explored, contacts
   };
 }
@@ -431,6 +443,63 @@ export function revealArea(map, pos) {
   return explored;
 }
 
+/* ----------------------- what is still in view -----------------------
+   `explored` is everywhere the party has ever seen, and it is never taken
+   away. What the map DRAWS is that set narrowed to what can still be reached
+   from where they are standing, passing through doors only while those doors
+   are open.
+
+   So shutting a bulkhead takes the room beyond it off the board, and opening
+   it again brings the room back exactly as it was. Doing this by deleting
+   squares from `explored` would work once and then lose the deck: reopening
+   the door would show a room nobody had ever been in. Derived, it is free
+   and reversible.
+
+   With no viewpoint set — a deck being built, or one revealed by hand —
+   everything explored is drawn, because there is nobody to be cut off from. */
+
+export function openReach(map, from) {
+  const m = readMap(map);
+  const out = new Set();
+  if (!from) return out;
+  const start = cellKey(from.x, from.y);
+  if (!m.floor[start]) return out;
+  out.add(start);
+  const queue = [from];
+  // The square they stand on may itself be a doorway; they can still see out
+  // of it either way, so the walk starts regardless of that door's state.
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+      const x = cur.x + dx, y = cur.y + dy;
+      const k = cellKey(x, y);
+      if (out.has(k) || !m.floor[k]) continue;
+      out.add(k);
+      const d = m.doors[k];
+      // A shut door is seen from the side you are on and goes no further.
+      if (!d || d.state === 'open') queue.push({ x, y });
+    }
+  }
+  return out;
+}
+
+export function visibleExplored(map) {
+  const m = readMap(map);
+  if (!m.viewpoint) return m.explored;
+  const reach = openReach(m, m.viewpoint);
+  const out = {};
+  for (const k of Object.keys(m.explored)) if (reach.has(k)) out[k] = true;
+  return out;
+}
+
+/* The mirror of revealArea, for a place the GM wants taken back by hand. */
+export function concealArea(map, pos) {
+  const m = readMap(map);
+  const explored = { ...m.explored };
+  for (const c of regionAt(m, pos)) delete explored[cellKey(c.x, c.y)];
+  return explored;
+}
+
 /* ------------------------- the saved map library -------------------------
    A GM builds decks between sessions and plays them later, so a map is a
    thing you keep, not a thing you have. The library is the GM's own, beside
@@ -461,6 +530,7 @@ export function publishMap(saved) {
     ...s.map,
     fog: true,
     explored: {},
+    viewpoint: null,
     contacts: Object.fromEntries(
       Object.entries(s.map.contacts).map(([k, c]) => [k, { ...c, state: 'hidden' }])
     )

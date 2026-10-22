@@ -9,7 +9,7 @@ import {
   HAZARD_TYPES, hazardById,
   CONTACT_STATES, nextContactState, readContact, auspexSweep, fogStateAt,
   readSavedMap, readMapLibrary, newBattleMap, publishMap,
-  regionAt, regionsAroundDoor, revealArea,
+  regionAt, regionsAroundDoor, revealArea, concealArea, openReach, visibleExplored,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -895,6 +895,83 @@ import { GEAR } from './gear.js';
   // A room with no doors at all is still one region, not an infinite walk.
   const sealed = readMap({ cols: 6, rows: 6, floor: paintCells({}, [{ x: 1, y: 1 }, { x: 1, y: 2 }]) });
   assert.equal(regionAt(sealed, { x: 1, y: 1 }).length, 2);
+}
+
+/* ---- shutting a door takes the room back ---- */
+
+{
+  // Room A, a corridor, hall B, with a door at each junction.
+  const floor = {};
+  const add = (x, y) => { floor[`${x},${y}`] = true; };
+  for (let x = 0; x < 3; x++) for (let y = 0; y < 3; y++) add(x, y);
+  for (let x = 3; x < 8; x++) add(x, 1);
+  for (let x = 8; x < 11; x++) for (let y = 0; y < 3; y++) add(x, y);
+
+  const base = {
+    cols: 14, rows: 6, floor, fog: true,
+    doors: { '3,1': { kind: 'bulkhead', state: 'open' }, '7,1': { kind: 'hatch', state: 'open' } }
+  };
+  // The party has walked the whole deck and is standing in the corridor.
+  const everywhere = {};
+  for (const k of Object.keys(floor)) everywhere[k] = true;
+  const walked = readMap({ ...base, explored: everywhere, viewpoint: { x: 5, y: 1 } });
+
+  // Both doors open: everything they have seen is on the board.
+  assert.equal(Object.keys(visibleExplored(walked)).length, Object.keys(everywhere).length);
+
+  // Shut the bulkhead behind them and room A goes off the board.
+  const shut = readMap({
+    ...base, explored: everywhere, viewpoint: { x: 5, y: 1 },
+    doors: { '3,1': { kind: 'bulkhead', state: 'closed' }, '7,1': { kind: 'hatch', state: 'open' } }
+  });
+  const seen = visibleExplored(shut);
+  assert.equal(seen['1,1'], undefined, 'the room behind the shut door is gone');
+  assert.equal(seen['3,1'], true, 'but the door itself is still there to be seen');
+  assert.equal(seen['5,1'], true, 'the corridor they stand in stays');
+  assert.equal(seen['9,1'], true, 'and the hall through the OPEN hatch stays too');
+
+  // A jammed door seals exactly as a closed one does.
+  const jammed = readMap({ ...shut, doors: { ...shut.doors, '3,1': { kind: 'bulkhead', state: 'jammed' } } });
+  assert.equal(visibleExplored(jammed)['1,1'], undefined);
+
+  // NOTHING IS FORGOTTEN. Open it again and the room comes back exactly as
+  // it was. Doing this by deleting squares from `explored` would work once
+  // and then lose the deck.
+  assert.equal(visibleExplored(walked)['1,1'], true, 'reopening restores it');
+  assert.equal(shut.explored['1,1'], true, 'explored still holds it while it is hidden');
+
+  // Standing on the far side flips which room is cut off — it is about
+  // where they are, not which door it is.
+  const fromRoomA = readMap({ ...shut, viewpoint: { x: 1, y: 1 } });
+  const seenA = visibleExplored(fromRoomA);
+  assert.equal(seenA['1,1'], true, 'the room they are in');
+  assert.equal(seenA['5,1'], undefined, 'and the corridor is what is now sealed off');
+
+  // Shutting BOTH doors leaves them the corridor and its two doorways.
+  const boxedIn = readMap({
+    ...base, explored: everywhere, viewpoint: { x: 5, y: 1 },
+    doors: { '3,1': { kind: 'bulkhead', state: 'closed' }, '7,1': { kind: 'hatch', state: 'closed' } }
+  });
+  assert.deepEqual(Object.keys(visibleExplored(boxedIn)).sort(),
+    ['3,1', '4,1', '5,1', '6,1', '7,1'].sort());
+
+  // No viewpoint — a deck being built, or revealed by hand — draws
+  // everything explored: there is nobody to be cut off from.
+  const building = readMap({ ...base, explored: everywhere, viewpoint: null });
+  assert.equal(Object.keys(visibleExplored(building)).length, Object.keys(everywhere).length);
+
+  // A viewpoint standing in void shows nothing rather than everything.
+  assert.deepEqual(visibleExplored(readMap({ ...base, explored: everywhere, viewpoint: { x: 13, y: 5 } })), {});
+  assert.equal(openReach(walked, null).size, 0);
+
+  // Conceal is the by-hand mirror of reveal.
+  const after = concealArea(walked, { x: 1, y: 1 });
+  assert.equal(after['1,1'], undefined);
+  assert.equal(after['5,1'], true, 'only that place');
+  assert.deepEqual(concealArea(walked, { x: 13, y: 5 }), walked.explored, 'void conceals nothing');
+
+  // Publishing clears the viewpoint with everything else.
+  assert.equal(publishMap({ name: 'x', map: walked }).viewpoint, null);
 }
 
 /* ---- fog is a view, and publishing is what starts a game ---- */

@@ -6,13 +6,14 @@ import {
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid,
+  resolveTheme, themeNumbersFor,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   weaponOverlay, calibrationBar, deploymentRows
 } from './battlemap.js';
 import { GEAR } from './gear.js';
 import { shrinkToDataUrl } from './imageshrink.js';
-import { ENVIRONMENTS, CONDITIONS } from '../lib/mapprompt.js';
+import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
 /* The boarding map, projected under physical miniatures.
 
@@ -269,9 +270,11 @@ const BAND_COLOUR = {
   extreme: 'rgba(231,76,60,0.7)'
 };
 
-export default function BattleMap({ map, onChange, win = null, encounters = [] }) {
+export default function BattleMap({
+  map, onChange, win = null, encounters = [], customThemes = [], onSaveTheme = null
+}) {
   const m = useMemo(() => readMap(map), [map]);
-  const theme = themeById(m.theme);
+  const theme = resolveTheme(m.theme, customThemes);
 
   const [mode, setMode] = useState('stamp');
   const [tileId, setTileId] = useState('corridor_1x5');
@@ -284,10 +287,15 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
   const [contactHostile, setContactHostile] = useState('');
   const [auspexM, setAuspexM] = useState(AUSPEX_RANGE_M);
   const [genOpen, setGenOpen] = useState(false);
-  const [genEnv, setGenEnv] = useState(ENVIRONMENTS[0].id);
+  const [genDescribe, setGenDescribe] = useState('');
+  const [genCover, setGenCover] = useState('');
   const [genCond, setGenCond] = useState('none');
+  const [genName, setGenName] = useState('');
   const [genBusy, setGenBusy] = useState(false);
   const [genErr, setGenErr] = useState('');
+  // What came back, held here rather than written to the deck: nothing is
+  // kept until the GM says they are happy with it.
+  const [preview, setPreview] = useState(null);
   const [hover, setHover] = useState(null);
 
   const [weaponKey, setWeaponKey] = useState('lasgun');
@@ -1013,31 +1021,76 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
   };
 
   /* Generates a floor with the same Gemini pipeline the portraits use. The
-     prompt is built on the server from the two ids below, so the grimdark
-     rules every other deck in the set follows are enforced there rather than
-     left to whoever is typing — and the endpoint cannot be turned into a
-     general-purpose image generator on the owner's key. */
+     GM describes the ground; the server wraps that in the clauses that make
+     it a floor rather than a picture (top-down, seamless, flat light, no grid
+     of its own) — so what is ON the ground is theirs and the shot is ours.
+
+     Nothing is written to the deck here. The result is held as a preview
+     until they say they are happy with it, because the first attempt usually
+     is not the one you keep. */
   const generateGround = async () => {
     setGenErr(''); setGenBusy(true);
     try {
       const res = await fetch('/api/generate-texture', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ environment: genEnv, condition: genCond })
+        body: JSON.stringify({
+          describe: genDescribe, cover: genCover, condition: genCond
+        })
       });
       if (!res.ok) {
         let why = `Generation failed (${res.status})`;
         try { why = (await res.json()).error || why; } catch { /* not json */ }
         throw new Error(why);
       }
-      // Shrunk here, as a portrait is: it is stored on the saved deck, and
-      // the bytes Gemini returns are far more than a tiling floor needs.
-      patch({ customTexture: await shrinkToDataUrl(await res.blob(), 768, 0.8) });
+      // Shrunk here, as a portrait is: it is kept on a saved record, and the
+      // bytes Gemini returns are far more than a tiling floor needs.
+      const texture = await shrinkToDataUrl(await res.blob(), 768, 0.8);
+      setPreview({ texture, numbers: await sampleNumbers(texture) });
     } catch (e) {
       setGenErr(e.message || 'Generation failed');
     } finally {
       setGenBusy(false);
     }
+  };
+
+  /* Reads the generated floor back to work out its five numbers. Drawn small
+     on purpose — this wants the average of the whole floor, not its
+     detail, and 64x64 is plenty for that. */
+  const sampleNumbers = (dataUrl) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = 64; c.height = 64;
+      const g = c.getContext('2d');
+      g.drawImage(img, 0, 0, 64, 64);
+      const d = g.getImageData(0, 0, 64, 64).data;
+      let r = 0, gg = 0, b = 0;
+      for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; }
+      const n = d.length / 4;
+      resolve(themeNumbersFor({ r: r / n, g: gg / n, b: b / n }));
+    };
+    // A floor we cannot read gets the neutral set rather than no theme.
+    img.onerror = () => resolve(themeNumbersFor({}));
+    img.src = dataUrl;
+  });
+
+  /* Keeps it. The preview becomes a named environment in the GM's own
+     library, the map switches to it, and it is in the picker from then on
+     beside the nine built in. */
+  const saveGround = () => {
+    if (!preview || !onSaveTheme) return;
+    const saved = onSaveTheme({
+      name: genName.trim() || 'Saved ground',
+      texture: preview.texture,
+      prompt: [genDescribe, genCover].filter(Boolean).join(' / '),
+      subtitle: genCover ? `with ${genCover}` : '',
+      ...preview.numbers
+    });
+    if (saved && saved.id) patch({ theme: saved.id, customTexture: null });
+    setPreview(null);
+    setGenName('');
+    setGenOpen(false);
   };
 
   const exportPng = () => {
@@ -1054,8 +1107,16 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
   return (
     <div className={'rt-bm' + (win ? ' rt-bm-win' : '')}>
       <div className="rt-bm-bar">
-        <select value={m.theme} onChange={(e) => patch({ theme: e.target.value })}>
-          {MAP_THEMES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        <select value={m.theme}
+          onChange={(e) => patch({ theme: e.target.value, customTexture: null })}>
+          <optgroup label="Built in">
+            {MAP_THEMES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </optgroup>
+          {customThemes.length > 0 && (
+            <optgroup label="My grounds">
+              {customThemes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </optgroup>
+          )}
         </select>
         <button type="button"
           className={'rt-btn rt-bm-mode' + (genOpen ? ' on' : '')}
@@ -1072,26 +1133,76 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
       </div>
 
       {genOpen && (
-        <div className="rt-bm-bar">
-          <select value={genEnv} onChange={(e) => setGenEnv(e.target.value)} disabled={genBusy}>
-            {ENVIRONMENTS.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
-          </select>
-          <select value={genCond} onChange={(e) => setGenCond(e.target.value)} disabled={genBusy}>
-            {CONDITIONS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          <button type="button" className="rt-btn" onClick={generateGround} disabled={genBusy}>
-            {genBusy ? 'Generating\u2026' : 'Generate ground'}
-          </button>
-          {m.customTexture && (
+        <div className="rt-bm-gen">
+          <div className="rt-sechead">
+            <h4>Generate a ground</h4>
             <button type="button" className="rt-btn ghost"
-              onClick={() => patch({ customTexture: null })} disabled={genBusy}>
-              Back to the theme
+              onClick={() => { setGenOpen(false); setPreview(null); setGenErr(''); }}>Close</button>
+          </div>
+
+          <label className="rt-bm-field">
+            <span className="rt-der-k">The ground itself</span>
+            <textarea rows={3} maxLength={MAX_DESCRIBE} value={genDescribe}
+              disabled={genBusy}
+              placeholder="A flooded promethium refinery floor, oil slick on standing water, rusted deck plate underneath"
+              onChange={(e) => setGenDescribe(e.target.value)} />
+          </label>
+
+          <label className="rt-bm-field">
+            <span className="rt-der-k">Terrain and cover on it</span>
+            <textarea rows={2} maxLength={MAX_DESCRIBE} value={genCover}
+              disabled={genBusy}
+              placeholder="Burst promethium drums, fallen gantry sections, a toppled cogitator bank"
+              onChange={(e) => setGenCover(e.target.value)} />
+          </label>
+
+          <div className="rt-bm-bar">
+            <select value={genCond} onChange={(e) => setGenCond(e.target.value)} disabled={genBusy}>
+              {CONDITIONS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {/* The built-in grounds fill the box rather than restricting it:
+                a starting point to edit, which beats a blank page. */}
+            <select value="" disabled={genBusy}
+              onChange={(e) => {
+                const env = ENVIRONMENTS.find((x) => x.id === e.target.value);
+                if (!env) return;
+                setGenDescribe(env.surface);
+                setGenCover(env.detail);
+              }}>
+              <option value="">Start from…</option>
+              {ENVIRONMENTS.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
+            <button type="button" className="rt-btn" onClick={generateGround} disabled={genBusy}>
+              {genBusy ? 'Generating…' : preview ? 'Generate again' : 'Generate'}
             </button>
-          )}
-          <span className="rt-bm-hint">
-            Drawn to the same rules as the nine built in, and kept on this deck — the
-            theme still supplies the grid and the wash, so switch theme to re-tune them.
-          </span>
+          </div>
+
+          {genErr ? <p className="rt-warn">{genErr}</p> : null}
+
+          {preview && (<>
+            {/* Shown tiled 2x2, because a floor is judged on how it repeats
+                and a single copy hides every seam. */}
+            <div className="rt-bm-preview"
+              style={{ backgroundImage: `url(${preview.texture})` }} />
+            <div className="rt-bm-bar">
+              <label className="rt-bm-num">
+                <span>Name it</span>
+                <input value={genName} maxLength={60} placeholder="Refinery floor"
+                  onChange={(e) => setGenName(e.target.value)} />
+              </label>
+              <button type="button" className="rt-btn" onClick={saveGround} disabled={!onSaveTheme}>
+                Save to my grounds
+              </button>
+              <button type="button" className="rt-btn ghost"
+                onClick={() => patch({ customTexture: preview.texture })}>
+                Try it on this deck
+              </button>
+              <span className="rt-bm-hint">
+                Saving adds it to the ground picker and switches this deck to it.
+                Its grid and wash are read off the image.
+              </span>
+            </div>
+          </>)}
         </div>
       )}
       {genErr ? <p className="rt-warn">{genErr}</p> : null}

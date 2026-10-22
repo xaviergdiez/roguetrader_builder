@@ -12,6 +12,7 @@ import {
   readSavedMap, readMapLibrary, newBattleMap, publishMap,
   regionAt, regionsAroundDoor, revealArea, concealArea, openReach, visibleExplored,
   fitGrid, MAX_CUSTOM_TEXTURE,
+  themeNumbersFor, BRIGHT_FLOOR, readCustomTheme, readThemeLibrary, resolveTheme,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -61,6 +62,16 @@ import { GEAR } from './gear.js';
   assert.equal(themeById(null).id, DEFAULT_THEME);
   assert.equal(EMPTY_MAP.theme, DEFAULT_THEME);
   assert.equal(readMap({}).theme, DEFAULT_THEME);
+  // AN UNKNOWN THEME ID IS KEPT. A saved ground's id is unknown to this
+  // module by design; matching it against the built-in list here moved every
+  // deck built on one back to the default, and the picker then correctly
+  // showed the default while the GM thought they were on their own ground.
+  assert.equal(readMap({ theme: 'env-abc123-0' }).theme, 'env-abc123-0');
+  assert.equal(readMap({ theme: '  env-abc123-0  ' }).theme, 'env-abc123-0');
+  assert.equal(readMap({ theme: '' }).theme, DEFAULT_THEME);
+  assert.equal(readMap({ theme: 42 }).theme, DEFAULT_THEME);
+  // resolveTheme is what makes that safe, where the library is in hand.
+  assert.equal(resolveTheme(readMap({ theme: 'env-gone' }).theme, []).id, DEFAULT_THEME);
   assert.equal(themeById('blackstone_fortress').name, 'Blackstone Citadel');
   assert.equal(themeById('tau_station').name, 'T\u2019au Void Station');
   // The bright station deck is washed less than the dim hulk plate, or it
@@ -260,6 +271,85 @@ import { GEAR } from './gear.js';
   // A door state the renderer cannot draw is dropped on read.
   assert.deepEqual(readMap({ doors: { '1,1': 'open', '2,2': 'ajar', 'x,y': 'open' } }).doors,
     { '1,1': { kind: 'bulkhead', state: 'open' } });
+}
+
+/* ---- a saved environment derives its own numbers ---- */
+
+{
+  // THE POINT: a GM who generated a ground should not then be asked for a
+  // grid colour, a wash and a grid strength. The rules the nine built-ins
+  // were hand-tuned by are applied to the image instead.
+  const bright = themeNumbersFor({ r: 200, g: 195, b: 185, luminance: 193 });
+  const dark = themeNumbersFor({ r: 40, g: 45, b: 35, luminance: 40 });
+
+  const lumOf = (h) => {
+    const n = parseInt(h.slice(1), 16);
+    return (((n >> 16) & 255) + ((n >> 8) & 255) + (n & 255)) / 3;
+  };
+  // A dark line on a bright floor, a pale one on a dark floor.
+  assert.ok(lumOf(bright.grid) < 193, 'a bright floor takes a dark grid');
+  assert.ok(lumOf(dark.grid) > 40, 'a dark floor takes a pale one');
+  // Less knock-back on a bright deck, because washing it only turns it grey;
+  // more ink in the grid where it has to fight a bright texture.
+  assert.ok(bright.wash < dark.wash);
+  assert.ok(bright.gridAlpha > dark.gridAlpha);
+  // And the fallback is the floor's own average, so a 404 looks like the
+  // floor rather than like a different theme.
+  assert.equal(bright.fallback, '#c8c3b9');
+
+  // Whatever it is handed, the numbers come out inside the bounds the theme
+  // check enforces on the built-ins.
+  for (const sample of [{}, null, { r: -50, g: 999, b: NaN }, { luminance: 'x' }]) {
+    const n = themeNumbersFor(sample);
+    assert.match(n.grid, /^#[0-9a-f]{6}$/i);
+    assert.match(n.accent, /^#[0-9a-f]{6}$/i);
+    assert.match(n.fallback, /^#[0-9a-f]{6}$/i);
+    assert.ok(n.wash >= 0 && n.wash <= 0.5, 'wash out of bounds for ' + JSON.stringify(sample));
+    assert.ok(n.gridAlpha > 0.1 && n.gridAlpha <= 1);
+  }
+  assert.equal(themeNumbersFor({ luminance: BRIGHT_FLOOR }).wash,
+    themeNumbersFor({ luminance: 255 }).wash, 'the threshold is inclusive');
+}
+
+/* ---- the saved environment library ---- */
+
+{
+  const img = 'data:image/jpeg;base64,' + 'A'.repeat(400);
+
+  const t = readCustomTheme({ name: 'Refinery floor', texture: img, prompt: 'oil on water' });
+  assert.ok(t.id.startsWith('env-'));
+  assert.equal(t.name, 'Refinery floor');
+  assert.equal(t.custom, true, 'it must declare itself, so the picker can group it');
+  assert.equal(t.prompt, 'oil on water', 'kept, so it can be generated again');
+  assert.match(t.grid, /^#[0-9a-f]{6}$/i, 'numbers are filled in when absent');
+
+  // A theme with no floor is not a theme. Keeping one would put an entry in
+  // the picker that renders nothing.
+  assert.equal(readCustomTheme({ name: 'Nothing' }), null);
+  assert.equal(readCustomTheme({ name: 'x', texture: 'https://example.com/a.jpg' }), null);
+  assert.equal(readCustomTheme(null), null);
+  assert.equal(readCustomTheme({ texture: 'data:image/jpeg;base64,' + 'A'.repeat(MAX_CUSTOM_TEXTURE) }), null);
+  assert.equal(readCustomTheme({ texture: img }).name, 'Saved ground', 'an unnamed one still reads');
+
+  // Out-of-range numbers are clamped rather than trusted, the same as the map's.
+  const wild = readCustomTheme({ texture: img, wash: 9, gridAlpha: -1, grid: 'red' });
+  assert.ok(wild.wash <= 0.5 && wild.gridAlpha > 0.1);
+  assert.match(wild.grid, /^#[0-9a-f]{6}$/i, 'a colour name is not a hex colour');
+
+  assert.deepEqual(readThemeLibrary(null), []);
+  assert.equal(readThemeLibrary([{ texture: img }, { name: 'junk' }, null]).length, 1,
+    'unusable entries are dropped, not kept as blanks');
+  const two = readThemeLibrary([{ texture: img }, { texture: img }]);
+  assert.notEqual(two[0].id, two[1].id, 'two saved in the same millisecond are still two');
+
+  // Resolution: a saved environment wins, and one that has since been deleted
+  // falls back to a built-in rather than leaving the renderer colourless.
+  const lib = [t];
+  assert.equal(resolveTheme(t.id, lib).name, 'Refinery floor');
+  assert.equal(resolveTheme('space_hulk', lib).id, 'space_hulk');
+  assert.equal(resolveTheme('env-deleted-1', lib).id, DEFAULT_THEME);
+  assert.equal(resolveTheme(t.id, null).id, DEFAULT_THEME);
+  assert.ok(resolveTheme(t.id, lib).texture.startsWith('data:image/'));
 }
 
 /* ---- a generated ground ---- */

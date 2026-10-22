@@ -93,6 +93,87 @@ export const MAP_THEMES = [
 
 export const DEFAULT_THEME = 'space_hulk';
 
+/* ---------------- a saved environment, and its five numbers ----------------
+   A GM who generates a ground should not then be asked for a grid colour, a
+   wash and a grid strength. They are derived from the image itself, using the
+   same reasoning the nine built-in themes were tuned by hand with (see
+   TEXTURES.md): a dark line on a bright floor and a pale one on a dark floor,
+   less knock-back on a bright deck because washing it only turns it grey, and
+   more ink in the grid where it has to fight a bright texture.
+
+   The caller samples the image; this decides what the numbers are, so the
+   decision is testable without a canvas. */
+
+const byte = (v) => Math.max(0, Math.min(255, Math.round(Number(v) || 0)));
+const hex = (r, g, b) =>
+  '#' + [r, g, b].map((v) => byte(v).toString(16).padStart(2, '0')).join('');
+
+// Above this the floor is treated as bright. 110 of 255 is where a dark grid
+// line starts reading better than a pale one.
+export const BRIGHT_FLOOR = 110;
+
+export function themeNumbersFor(sample) {
+  const s = sample && typeof sample === 'object' ? sample : {};
+  const r = byte(s.r), g = byte(s.g), b = byte(s.b);
+  const lum = Number.isFinite(Number(s.luminance)) ? Number(s.luminance) : (r + g + b) / 3;
+  const bright = lum >= BRIGHT_FLOOR;
+  return {
+    fallback: hex(r, g, b),
+    grid: bright ? hex(r * 0.22, g * 0.24, b * 0.3) : hex(132 + r * 0.34, 142 + g * 0.34, 118 + b * 0.34),
+    accent: bright ? hex(r * 0.5, g * 0.46, b * 0.42) : hex(92 + r * 0.5, 96 + g * 0.5, 78 + b * 0.5),
+    wash: bright ? 0.14 : 0.22,
+    gridAlpha: bright ? 0.52 : 0.34
+  };
+}
+
+/* An environment the GM generated and kept. It is a theme like any other
+   except that its texture is a data URL on the saved record rather than a
+   file in public/maps \u2014 there is no build to drop a file into at the
+   table. */
+export function readCustomTheme(x) {
+  const src = x && typeof x === 'object' ? x : null;
+  if (!src) return null;
+  const texture = typeof src.texture === 'string'
+    && /^data:image\/(png|jpeg|webp);base64,/.test(src.texture)
+    && src.texture.length <= MAX_CUSTOM_TEXTURE ? src.texture : null;
+  if (!texture) return null;          // a theme with no floor is not a theme
+  const n = themeNumbersFor({});
+  const col = (v, fallback) =>
+    (typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v)) ? v : fallback;
+  const num = (v, fallback, lo, hi) => {
+    const x2 = Number(v);
+    return Number.isFinite(x2) ? Math.min(hi, Math.max(lo, x2)) : fallback;
+  };
+  return {
+    id: (typeof src.id === 'string' && src.id) || newThemeId(),
+    name: String(src.name || '').slice(0, 60) || 'Saved ground',
+    subtitle: String(src.subtitle || '').slice(0, 120),
+    desc: String(src.desc || '').slice(0, 300),
+    // What it was asked for, kept so it can be generated again or adjusted.
+    prompt: String(src.prompt || '').slice(0, 800),
+    texture,
+    custom: true,
+    grid: col(src.grid, n.grid),
+    accent: col(src.accent, n.accent),
+    fallback: col(src.fallback, n.fallback),
+    wash: num(src.wash, 0.2, 0, 0.5),
+    gridAlpha: num(src.gridAlpha, 0.35, 0.11, 1)
+  };
+}
+
+let themeSeq = 0;
+const newThemeId = () => 'env-' + Date.now().toString(36) + '-' + (themeSeq++).toString(36);
+
+export const readThemeLibrary = (list) =>
+  (Array.isArray(list) ? list : []).map(readCustomTheme).filter(Boolean);
+
+/* The theme a map is using, built-in or saved. A saved one that has since
+   been deleted falls back to a built-in rather than leaving the renderer
+   without colours. */
+export const resolveTheme = (id, custom) =>
+  (Array.isArray(custom) ? custom.find((t) => t.id === id) : null) || themeById(id);
+
+
 // Falls back to the default rather than returning undefined: the renderer
 // reads theme.grid straight off this, and an undefined would crash the canvas
 // rather than merely looking wrong.
@@ -315,7 +396,13 @@ export function readMap(m) {
     markers[k] = { type: markerTypeById(v.type).id, label: String(v.label || '') };
   }
   return {
-    theme: themeById(src.theme).id,
+    /* KEPT AS WRITTEN, not matched against the built-in list. A saved
+       ground's id is unknown to this module by design, and coercing it here
+       silently moved every deck built on one back to the default theme.
+       resolveTheme() is what makes an unresolvable id safe, at the point of
+       drawing, where the saved library is actually in hand. */
+    theme: (typeof src.theme === 'string' && src.theme.trim())
+      ? src.theme.trim().slice(0, 64) : DEFAULT_THEME,
     cols: int(src.cols, EMPTY_MAP.cols, 5, 100),
     rows: int(src.rows, EMPTY_MAP.rows, 5, 100),
     // Half-metre squares are legitimate (a cramped gun deck), so this one is

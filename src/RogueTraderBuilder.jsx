@@ -4,7 +4,8 @@ import BattleMap from './BattleMap.jsx';
 import { shrinkToDataUrl } from './imageshrink.js';
 import MapWindow from './MapWindow.jsx';
 import {
-  readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap
+  readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap,
+  readThemeLibrary, readCustomTheme
 } from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
@@ -1923,6 +1924,17 @@ const CSS = `
 .rt-bm-measure{font-family:var(--mono);font-size:11px;padding:6px 8px;margin-bottom:8px;
   border:1px solid var(--brass);background:rgba(212,175,55,.08);}
 .rt-bm-measure.blocked{border-color:#e74c3c;background:rgba(231,76,60,.12);}
+/* ---- generating a ground ---- */
+.rt-bm-gen{border:1px solid var(--brass);background:rgba(0,0,0,.25);padding:10px 12px;
+  margin-bottom:10px;}
+.rt-bm-field{display:block;margin-bottom:8px;}
+.rt-bm-field textarea{display:block;width:100%;margin-top:3px;background:var(--well);
+  color:var(--text);border:1px solid var(--brass-dim);padding:6px 8px;
+  font-family:var(--serif);font-size:13px;line-height:1.45;resize:vertical;}
+/* Tiled 2x2 at 50%: a floor is judged on how it REPEATS, and a single copy
+   hides every seam it has. */
+.rt-bm-preview{height:260px;border:1px solid var(--brass);margin-bottom:8px;
+  background-repeat:repeat;background-size:50% 50%;}
 /* A section heading that carries its own action, so the field below it can
    run the full width of the panel and line up with every other one. */
 .rt-sechead{display:flex;align-items:center;justify-content:space-between;
@@ -3588,6 +3600,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
                 }
               })}
               win={win}
+              /* The projector needs the saved grounds too, or a deck built on
+                 one would quietly fall back to a built-in theme out there. */
+              customThemes={readThemeLibrary(homebrew && homebrew.mapgrounds)}
             />
           )}
         </MapWindow>
@@ -7619,6 +7634,15 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   // The window itself is owned by the component above, so neither switching
   // tabs nor closing this dashboard shuts the map the table is playing on.
   const decks = readMapLibrary(homebrew && homebrew.battlemaps);
+  /* Generated grounds, kept beside the decks. They are themes the GM made,
+     so they belong in their library rather than in the build. */
+  const grounds = readThemeLibrary(homebrew && homebrew.mapgrounds);
+  const saveGround = (t) => {
+    const ready = readCustomTheme(t);
+    if (!ready) return null;
+    setHomebrew({ ...(homebrew || {}), mapgrounds: [...grounds, ready] });
+    return ready;
+  };
   const saveDecks = (list) => setHomebrew({ ...(homebrew || {}), battlemaps: list });
   const putDeck = (d) => saveDecks(decks.map((x) => (x.id === d.id ? d : x)));
   const [deckId, setDeckId] = useState(null);
@@ -8718,6 +8742,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
               ? setBattleMap
               : (next) => putDeck({ ...deck, map: next })}
             encounters={encounters}
+            customThemes={grounds}
+            onSaveTheme={saveGround}
           />
         )}
       </>)}

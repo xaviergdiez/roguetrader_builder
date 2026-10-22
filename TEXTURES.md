@@ -12,22 +12,40 @@ over it.
 ## Two ways in
 
 **From inside the app**, which is the one a GM uses: **Ground** on the battle
-map's toolbar, pick an environment and a condition, **Generate ground**. It
-goes through `/api/generate-texture` — the same Gemini key and the same shape
-as the portrait endpoint — and the result is shrunk client-side and kept on
-that deck as a data URL. No build, no deploy: a fen generated for tonight is
-usable tonight.
+map's toolbar opens a window. Describe the ground and the terrain and cover on
+it in your own words, **Generate**, and judge the result in the preview — which
+is tiled 2x2 on purpose, because a floor is judged on how it repeats and a
+single copy hides every seam. **Generate again** until it is right, then name
+it and **Save to my grounds**: it joins the ground picker beside the nine built
+in, and this deck switches to it.
 
-The prompt is assembled **on the server**, in `lib/mapprompt.js`, from an
-environment id and a condition id and nothing else. Two reasons, and both
-matter: the endpoint spends the owner's money, so a signed-in caller must not
-be able to turn it into a general-purpose image generator; and the rules below
-are then enforced in code rather than left to whoever is typing. 12
-environments x 8 conditions.
+Nothing is written to the deck until you save, because the first attempt is
+rarely the one you keep. **Try it on this deck** puts a preview on the map
+without saving it.
 
-A generated ground overrides the theme's texture only. The theme still
-supplies the grid colour, the accent, the wash and the grid strength — switch
-theme to re-tune them over a generated floor.
+It goes through `/api/generate-texture` — the same Gemini key and the same
+shape as the portrait endpoint — and the result is shrunk client-side and kept
+on the saved record as a data URL. No build, no deploy: a fen generated for
+tonight is usable tonight.
+
+**The fixed clauses are wrapped around your description, never replaced by
+it.** `lib/mapprompt.js` adds the shot, the lighting, the palette and the
+prohibitions; what is ON the ground is yours to say. So the rules below are
+still enforced in code rather than left to whoever is typing.
+
+What that gives up, stated plainly: the portrait endpoint next door builds its
+prompt entirely from the character sheet, so a signed-in caller cannot turn the
+owner's Gemini key into a general-purpose image generator. Accepting a
+description gives that up — the wrapper constrains the shot, not the subject.
+Sign-in and a 600-character cap are the limit of what the code can do about it;
+the real control is setting `OWNER_EMAIL`, so signing in is not open to anyone.
+
+**The five numbers are read off the image.** A GM who just described a ground
+should not then be asked for a grid colour and a wash, so `themeNumbersFor()`
+derives them from the generated floor's average — a dark grid on a bright
+floor and a pale one on a dark floor, less knock-back where the deck is
+already bright. Switch theme afterwards if you want a built-in's numbers
+instead.
 
 **From the command line**, for a texture that is to ship with the app as one
 of the built-in themes:

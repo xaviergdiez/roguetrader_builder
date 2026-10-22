@@ -46,6 +46,62 @@ const ARMED = Object.entries(GEAR)
   .map(([k, v]) => ({ key: k, label: k.replace(/\b\w/g, (c) => c.toUpperCase()), kind: v.kind, stats: v.stats }))
   .sort((a, b) => a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label));
 
+/* A clean station deck, drawn rather than photographed: large composite
+   panels, fine seams, a chamfer catching the light at one corner and the
+   occasional service plate. Tiles at 192px, which is deliberately not a
+   multiple of any square size — a seam landing on every grid line would
+   read as the grid rather than as the floor. */
+function panelTile(theme) {
+  const S = 192;
+  const c = document.createElement('canvas');
+  c.width = S; c.height = S;
+  const g = c.getContext('2d');
+
+  g.fillStyle = theme.fallback;
+  g.fillRect(0, 0, S, S);
+
+  const seam = 'rgba(45,62,70,0.55)';
+  const lit = 'rgba(255,255,255,0.55)';
+  const shade = 'rgba(40,55,62,0.18)';
+
+  // Two panel sizes, offset, so the deck does not read as graph paper.
+  const panels = [
+    [0, 0, 112, 112], [112, 0, 80, 56], [112, 56, 80, 56],
+    [0, 112, 56, 80], [56, 112, 56, 80], [112, 112, 80, 80]
+  ];
+  for (const [x, y, w, h] of panels) {
+    g.fillStyle = shade;
+    g.fillRect(x + 3, y + 3, w - 6, h - 6);
+    g.strokeStyle = seam;
+    g.lineWidth = 1.5;
+    g.strokeRect(x + 3.5, y + 3.5, w - 7, h - 7);
+    // A lit chamfer along the top and left edges: the light on these decks
+    // comes from above, and without it the panels read as flat paint.
+    g.strokeStyle = lit;
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(x + 4, y + h - 5); g.lineTo(x + 4, y + 4); g.lineTo(x + w - 5, y + 4);
+    g.stroke();
+  }
+
+  // A service plate with fasteners, and one accent strip — enough to make
+  // the tile read as somewhere maintained rather than somewhere printed.
+  g.fillStyle = 'rgba(40,55,62,0.1)';
+  g.fillRect(20, 20, 46, 30);
+  g.fillStyle = seam;
+  for (const [fx, fy] of [[24, 24], [60, 24], [24, 44], [60, 44]]) {
+    g.beginPath(); g.arc(fx, fy, 1.6, 0, Math.PI * 2); g.fill();
+  }
+  g.fillStyle = theme.accent;
+  g.globalAlpha = 0.5;
+  g.fillRect(119, 126, 66, 5);
+  g.globalAlpha = 1;
+
+  return c;
+}
+
+const TILE_PAINTERS = { panels: panelTile };
+
 /* ---- overlay art ----
    Drawn rather than blitted. A template has to be whatever radius or length
    the weapon says, and a bitmap stretched from 3 metres to 60 goes soft at
@@ -331,6 +387,13 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
 
   /* ---- the floor texture, loaded once per theme ---- */
   useEffect(() => {
+    // A drawn theme needs no network at all: build the tile and go.
+    const painter = TILE_PAINTERS[theme.pattern];
+    if (painter) {
+      textureRef.current = painter(theme);
+      setTextureTick((t) => t + 1);
+      return () => { textureRef.current = null; };
+    }
     let cancelled = false;
     const img = new Image();
     img.onload = () => { if (!cancelled) { textureRef.current = img; setTextureTick((t) => t + 1); } };
@@ -340,7 +403,7 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
     img.onerror = () => { if (!cancelled) { textureRef.current = null; setTextureTick((t) => t + 1); } };
     img.src = theme.texture;
     return () => { cancelled = true; textureRef.current = null; };
-  }, [theme.texture]);
+  }, [theme]);
 
   const measurement = useMemo(() => {
     if (!measureFrom || !measureTo) return null;
@@ -570,7 +633,11 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
       const img = textureRef.current;
       ctx.fillStyle = img ? (ctx.createPattern(img, 'repeat') || theme.fallback) : theme.fallback;
       ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      // The wash knocks a busy photographic deck back so tokens, the grid
+      // and the templates read over it. A pale drawn deck has none of that
+      // noise and a dark grid of its own, so washing it would only turn a
+      // deliberately clean floor grey.
+      ctx.fillStyle = theme.pattern ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.25)';
       ctx.fillRect(0, 0, w, h);
       ctx.restore();
     }

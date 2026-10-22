@@ -27,10 +27,14 @@ import { GEAR } from './gear.js';
   assert.equal(new Set(ids).size, ids.length, 'duplicate theme id');
   for (const t of MAP_THEMES) {
     assert.ok(t.name && t.subtitle && t.desc, t.id + ': incomplete theme');
-    // The texture is a static file, not a bundled import, and every theme
-    // must name one that exists on disk — a 404 silently renders the flat
-    // fallback colour and looks like a styling bug rather than a missing file.
-    assert.equal(t.texture, `/maps/${t.id}.jpg`);
+    // A theme is EITHER a file on disk or a drawn pattern, never both and
+    // never neither — a theme with no fill at all renders as the flat
+    // fallback and reads as a styling bug rather than a missing texture.
+    if (t.pattern) {
+      assert.equal(t.texture, null, t.id + ': a drawn theme fetches nothing');
+    } else {
+      assert.equal(t.texture, `/maps/${t.id}.jpg`);
+    }
     assert.match(t.grid, /^#[0-9a-f]{6}$/i, t.id + ': grid colour');
     assert.match(t.fallback, /^#[0-9a-f]{6}$/i, t.id + ': fallback colour');
   }
@@ -43,6 +47,10 @@ import { GEAR } from './gear.js';
   assert.equal(EMPTY_MAP.theme, DEFAULT_THEME);
   assert.equal(readMap({}).theme, DEFAULT_THEME);
   assert.equal(themeById('blackstone_fortress').name, 'Blackstone Citadel');
+  // The clean deck is drawn, not downloaded.
+  assert.equal(themeById('tau_station').pattern, 'panels');
+  assert.equal(themeById('tau_station').texture, null);
+  assert.ok(MAP_THEMES.some((t) => !t.pattern), 'the photographed decks are still here');
 }
 
 /* ---- reading a stored map ---- */

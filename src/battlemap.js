@@ -30,13 +30,18 @@ import { rangeBand, RANGE_MODIFIERS, parseWeaponStats } from './groundcombat.js'
 
 /* ------------------------------ themes ------------------------------ */
 
-const T = (id, name, subtitle, grid, accent, fallback, desc) => ({
-  id, name, subtitle, grid, accent, fallback, desc,
+const T = (id, name, subtitle, grid, accent, fallback, desc, pattern = null) => ({
+  id, name, subtitle, grid, accent, fallback, desc, pattern,
   // The floor fill is a real photographed/painted texture served from
   // public/maps as a static file, not a flat colour and not a bundled
   // import: a 1024px texture has no business going through the JS bundle.
   // `fallback` is what the floor is painted if the texture 404s.
-  texture: `/maps/${id}.jpg`
+  //
+  // A theme with a `pattern` is DRAWN instead of downloaded. A scrubbed,
+  // geometric deck is panels and seams, and a photograph of one is a large
+  // file that goes soft when the squares grow; drawn, it is sharp at any
+  // size, costs nothing to load and takes its colours from the theme.
+  texture: pattern ? null : `/maps/${id}.jpg`
 });
 
 export const MAP_THEMES = [
@@ -51,7 +56,13 @@ export const MAP_THEMES = [
     'Hibernation chambers where the walls themselves have been colonised.'),
   T('blackstone_fortress', 'Blackstone Citadel', 'Noctilith tiles, conduits, xenos runes',
     '#00f2fe', '#00c6ff', '#0b141d',
-    'Corridors of a fortress that rearranges itself while you walk them.')
+    'Corridors of a fortress that rearranges itself while you walk them.'),
+  // The one clean deck in the set. Everything else here is rusted, haunted
+  // or growing; this is maintained.
+  T('tau_station', 'T\u2019au Void Station', 'Pale composite panelling, soft seams, cool light',
+    '#2f4a55', '#2b93b5', '#c3ccd1',
+    'The scrubbed, well-lit decks of a T\u2019au orbital. Nothing rusted, nothing bleeding.',
+    'panels')
 ];
 
 export const DEFAULT_THEME = 'space_hulk';

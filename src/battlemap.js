@@ -141,6 +141,12 @@ export const EMPTY_MAP = {
   cols: 30,
   rows: 20,
   metresPerSquare: 1,
+  /* A generated ground, as a data URL, overriding the theme's own texture.
+     Kept ON THE DECK rather than in public/maps because it is made at the
+     table: there is no build to drop a file into, and a GM who generates a
+     fen for tonight should not have to deploy to use it. The theme's five
+     numbers still apply \u2014 switch theme to re-tune the grid over it. */
+  customTexture: null,
   // 25mm is a standard infantry base and near enough the inch most terrain is
   // cut to. This is the real-world size of a square, and it is what the
   // projector is calibrated against — see calibrationBar.
@@ -170,6 +176,10 @@ export const EMPTY_MAP = {
      is there without saying what, or opening the deck around it. */
   contacts: {}          // { 'x,y': { name, encounterId, hostileId, state } }
 };
+
+// ~1.5MB of base64, which is a 768px JPEG with room to spare. Past this a
+// generated ground is costing more to load than the deck it decorates.
+export const MAX_CUSTOM_TEXTURE = 1_500_000;
 
 export const cellKey = (x, y) => `${Math.round(x)},${Math.round(y)}`;
 export const parseKey = (k) => {
@@ -317,6 +327,16 @@ export function readMap(m) {
     pxPerSquare: int(src.pxPerSquare, EMPTY_MAP.pxPerSquare, 10, 200),
     mmPerSquare: int(src.mmPerSquare, EMPTY_MAP.mmPerSquare, 5, 100),
     fog: Boolean(src.fog),
+    /* Only ever an image data URL, and bounded. It rides along in the saved
+       deck, so an oversized one would quietly bloat every read and write of
+       the GM's library; and a non-data URL here would let a saved document
+       point the renderer at an arbitrary address. */
+    customTexture: (() => {
+      const v = src.customTexture;
+      if (typeof v !== 'string') return null;
+      if (!/^data:image\/(png|jpeg|webp);base64,/.test(v)) return null;
+      return v.length <= MAX_CUSTOM_TEXTURE ? v : null;
+    })(),
     viewpoint: (() => {
       const v = src.viewpoint;
       if (!v || typeof v !== 'object') return null;

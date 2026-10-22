@@ -11,6 +11,8 @@ import {
   weaponOverlay, calibrationBar, deploymentRows
 } from './battlemap.js';
 import { GEAR } from './gear.js';
+import { shrinkToDataUrl } from './imageshrink.js';
+import { ENVIRONMENTS, CONDITIONS } from '../lib/mapprompt.js';
 
 /* The boarding map, projected under physical miniatures.
 
@@ -281,6 +283,11 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
   const [contactEnc, setContactEnc] = useState('');
   const [contactHostile, setContactHostile] = useState('');
   const [auspexM, setAuspexM] = useState(AUSPEX_RANGE_M);
+  const [genOpen, setGenOpen] = useState(false);
+  const [genEnv, setGenEnv] = useState(ENVIRONMENTS[0].id);
+  const [genCond, setGenCond] = useState('none');
+  const [genBusy, setGenBusy] = useState(false);
+  const [genErr, setGenErr] = useState('');
   const [hover, setHover] = useState(null);
 
   const [weaponKey, setWeaponKey] = useState('lasgun');
@@ -333,14 +340,18 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
   useEffect(() => {
     let cancelled = false;
     const img = new Image();
+    // A generated ground overrides the theme's own file. The theme still
+    // supplies the grid colour, the wash and the rest — only the floor
+    // changes.
+    const src = m.customTexture || theme.texture;
     img.onload = () => { if (!cancelled) { textureRef.current = img; setTextureTick((t) => t + 1); } };
     // A missing texture is not an error: the deck is painted in the theme's
     // flat fallback colour instead, which still reads on a projector. It
     // just loses the grain.
     img.onerror = () => { if (!cancelled) { textureRef.current = null; setTextureTick((t) => t + 1); } };
-    img.src = theme.texture;
+    img.src = src;
     return () => { cancelled = true; textureRef.current = null; };
-  }, [theme]);
+  }, [theme, m.customTexture]);
 
   const measurement = useMemo(() => {
     if (!measureFrom || !measureTo) return null;
@@ -1001,6 +1012,34 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
     setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
   };
 
+  /* Generates a floor with the same Gemini pipeline the portraits use. The
+     prompt is built on the server from the two ids below, so the grimdark
+     rules every other deck in the set follows are enforced there rather than
+     left to whoever is typing — and the endpoint cannot be turned into a
+     general-purpose image generator on the owner's key. */
+  const generateGround = async () => {
+    setGenErr(''); setGenBusy(true);
+    try {
+      const res = await fetch('/api/generate-texture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ environment: genEnv, condition: genCond })
+      });
+      if (!res.ok) {
+        let why = `Generation failed (${res.status})`;
+        try { why = (await res.json()).error || why; } catch { /* not json */ }
+        throw new Error(why);
+      }
+      // Shrunk here, as a portrait is: it is stored on the saved deck, and
+      // the bytes Gemini returns are far more than a tiling floor needs.
+      patch({ customTexture: await shrinkToDataUrl(await res.blob(), 768, 0.8) });
+    } catch (e) {
+      setGenErr(e.message || 'Generation failed');
+    } finally {
+      setGenBusy(false);
+    }
+  };
+
   const exportPng = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1018,6 +1057,11 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
         <select value={m.theme} onChange={(e) => patch({ theme: e.target.value })}>
           {MAP_THEMES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
+        <button type="button"
+          className={'rt-btn rt-bm-mode' + (genOpen ? ' on' : '')}
+          onClick={() => setGenOpen((v) => !v)}>
+          Ground{m.customTexture ? ' \u00b7 generated' : ''}
+        </button>
         {MODES.map((x) => (
           <button key={x.id} type="button"
             className={'rt-btn rt-bm-mode' + (mode === x.id ? ' on' : '')}
@@ -1026,6 +1070,31 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
         <button type="button" className="rt-btn" onClick={exportPng}>Export PNG</button>
         <button type="button" className="rt-btn" onClick={clearAll}>Clear deck</button>
       </div>
+
+      {genOpen && (
+        <div className="rt-bm-bar">
+          <select value={genEnv} onChange={(e) => setGenEnv(e.target.value)} disabled={genBusy}>
+            {ENVIRONMENTS.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+          </select>
+          <select value={genCond} onChange={(e) => setGenCond(e.target.value)} disabled={genBusy}>
+            {CONDITIONS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button type="button" className="rt-btn" onClick={generateGround} disabled={genBusy}>
+            {genBusy ? 'Generating\u2026' : 'Generate ground'}
+          </button>
+          {m.customTexture && (
+            <button type="button" className="rt-btn ghost"
+              onClick={() => patch({ customTexture: null })} disabled={genBusy}>
+              Back to the theme
+            </button>
+          )}
+          <span className="rt-bm-hint">
+            Drawn to the same rules as the nine built in, and kept on this deck — the
+            theme still supplies the grid and the wash, so switch theme to re-tune them.
+          </span>
+        </div>
+      )}
+      {genErr ? <p className="rt-warn">{genErr}</p> : null}
 
       <div className="rt-bm-bar">
         {mode === 'stamp' && (<>

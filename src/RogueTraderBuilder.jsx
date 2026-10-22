@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import BattleMap from './BattleMap.jsx';
+import { shrinkToDataUrl } from './imageshrink.js';
 import MapWindow from './MapWindow.jsx';
 import {
   readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap
@@ -4229,19 +4230,6 @@ function PsychicPanel({ psyRating, onPsyRating, willpower, onClose }) {
 // SPA shell, so both shapes mean the same thing to the player.
 const API_ABSENT = 'Portrait generation needs the serverless functions, which '
   + '`npm run dev` does not run. Use `vercel dev` or the deployed site.';
-
-async function shrinkToDataUrl(blob, max = 768, quality = 0.82) {
-  const bitmap = await createImageBitmap(blob);
-  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-  const w = Math.max(1, Math.round(bitmap.width * scale));
-  const h = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
-  if (bitmap.close) bitmap.close();
-  return canvas.toDataURL('image/jpeg', quality);
-}
 
 function PortraitPlate({ name, profitFactor, avatar, setAvatar, identity }) {
   const fileRef = useRef(null);

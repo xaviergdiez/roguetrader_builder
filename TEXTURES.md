@@ -9,6 +9,29 @@ over it.
 
 ---
 
+## Two ways in
+
+**From inside the app**, which is the one a GM uses: **Ground** on the battle
+map's toolbar, pick an environment and a condition, **Generate ground**. It
+goes through `/api/generate-texture` — the same Gemini key and the same shape
+as the portrait endpoint — and the result is shrunk client-side and kept on
+that deck as a data URL. No build, no deploy: a fen generated for tonight is
+usable tonight.
+
+The prompt is assembled **on the server**, in `lib/mapprompt.js`, from an
+environment id and a condition id and nothing else. Two reasons, and both
+matter: the endpoint spends the owner's money, so a signed-in caller must not
+be able to turn it into a general-purpose image generator; and the rules below
+are then enforced in code rather than left to whoever is typing. 12
+environments x 8 conditions.
+
+A generated ground overrides the theme's texture only. The theme still
+supplies the grid colour, the accent, the wash and the grid strength — switch
+theme to re-tune them over a generated floor.
+
+**From the command line**, for a texture that is to ship with the app as one
+of the built-in themes:
+
 ## The pipeline
 
 1. **Generate** a 1024² or larger square image, using the prompt skeleton

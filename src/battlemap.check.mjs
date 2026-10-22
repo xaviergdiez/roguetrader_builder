@@ -11,7 +11,7 @@ import {
   CONTACT_STATES, nextContactState, readContact, auspexSweep, fogStateAt,
   readSavedMap, readMapLibrary, newBattleMap, publishMap,
   regionAt, regionsAroundDoor, revealArea, concealArea, openReach, visibleExplored,
-  fitGrid,
+  fitGrid, MAX_CUSTOM_TEXTURE,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -260,6 +260,35 @@ import { GEAR } from './gear.js';
   // A door state the renderer cannot draw is dropped on read.
   assert.deepEqual(readMap({ doors: { '1,1': 'open', '2,2': 'ajar', 'x,y': 'open' } }).doors,
     { '1,1': { kind: 'bulkhead', state: 'open' } });
+}
+
+/* ---- a generated ground ---- */
+
+{
+  const ok = 'data:image/jpeg;base64,' + 'A'.repeat(500);
+  assert.equal(readMap({ customTexture: ok }).customTexture, ok);
+  assert.equal(readMap({}).customTexture, null);
+  assert.equal(EMPTY_MAP.customTexture, null);
+
+  // It rides along in the saved deck, so only an image data URL is kept. A
+  // plain URL here would let a saved document point the renderer at an
+  // arbitrary address, and a saved document is not necessarily one this GM
+  // wrote \u2014 decks get shared.
+  assert.equal(readMap({ customTexture: 'https://example.com/evil.jpg' }).customTexture, null);
+  assert.equal(readMap({ customTexture: 'javascript:alert(1)' }).customTexture, null);
+  assert.equal(readMap({ customTexture: 'data:text/html;base64,AAAA' }).customTexture, null);
+  assert.equal(readMap({ customTexture: 42 }).customTexture, null);
+  assert.equal(readMap({ customTexture: '' }).customTexture, null);
+
+  // And it is bounded: an oversized one would quietly bloat every read and
+  // write of the GM's library rather than failing where anyone could see it.
+  const huge = 'data:image/jpeg;base64,' + 'A'.repeat(MAX_CUSTOM_TEXTURE);
+  assert.equal(readMap({ customTexture: huge }).customTexture, null);
+  assert.ok(MAX_CUSTOM_TEXTURE > 400000, 'a 768px JPEG has to fit');
+
+  // Publishing a deck keeps the ground it was built with.
+  const saved = readSavedMap({ name: 'Fen', map: { customTexture: ok } });
+  assert.equal(publishMap(saved).customTexture, ok);
 }
 
 /* ---- bulkheads and hatches ---- */

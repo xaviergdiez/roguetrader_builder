@@ -5,7 +5,7 @@ import {
   wallMask, cornerPillar, WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
-  overlayKindFor, onDeck,
+  overlayKindFor, onDeck, revealArea,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   weaponOverlay, calibrationBar, deploymentRows
@@ -361,7 +361,7 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
     return { x, y };
   };
 
-  const applyAt = (pos, dragging = false, sweep = false) => {
+  const applyAt = (pos, dragging = false, sweep = false, lineOfSight = false) => {
     if (!pos) return;
     const k = cellKey(pos.x, pos.y);
 
@@ -433,14 +433,19 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
         patch({ contacts: auspexSweep(m, pos, auspexM) });
         return;
       }
-      // A click reveals everything that can be SEEN from that square, not
-      // the square alone: the party walks into a room and the room lights
-      // up, which is what actually happens at the table. Dragging paints
-      // single squares for the cases that judgement can't be automated.
-      const seen = onDeck(m, visibleCells(m, pos, null));
-      const explored = { ...m.explored, [k]: true };
-      for (const c of seen) explored[cellKey(c.x, c.y)] = true;
-      patch({ explored });
+      if (lineOfSight) {
+        // What can be seen from a square, for a doorway or a long gallery
+        // where the room is not the unit the GM wants.
+        const seen = onDeck(m, visibleCells(m, pos, null));
+        const explored = { ...m.explored, [k]: true };
+        for (const c of seen) explored[cellKey(c.x, c.y)] = true;
+        patch({ explored });
+        return;
+      }
+      // A PLACE at a time, which is the reveal the table expects: click
+      // inside a room and the room is there; click a door or a hatch and
+      // what it joins comes in with it.
+      patch({ explored: revealArea(m, pos) });
       return;
     }
     if (mode === 'marker') {
@@ -1017,9 +1022,11 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
             onClick={() => patch({ explored: {} })}>Hide all</button>
           {num('Auspex m', auspexM, setAuspexM, 1, 500, 5)}
           <span className="rt-bm-hint">
-            Click a square to reveal what can be seen from it; drag to sweep by hand.
-            Shift-click for an auspex sweep — it reads through bulkheads and pings
-            contacts without opening the deck.
+            Click a room to reveal it, or a door to bring in what it joins — a door
+            bounds a place whether it is open or shut. Drag to reveal by hand,
+            alt-click for line of sight from a square, and shift-click for an auspex
+            sweep, which reads through bulkheads and pings contacts without opening
+            the deck.
           </span>
         </>)}
 
@@ -1125,7 +1132,9 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase')) applyAt(pos, true);
           }}
           onMouseLeave={() => setHover(null)}
-          onMouseDown={(e) => { if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey); }}
+          onMouseDown={(e) => {
+            if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey);
+          }}
           style={{ cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
         />
       </div>

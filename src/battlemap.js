@@ -360,6 +360,77 @@ export function fogStateAt(map, x, y) {
   return m.explored[cellKey(x, y)] ? 'open' : 'dark';
 }
 
+/* --------------------------- revealing an area ---------------------------
+   A deck is revealed a PLACE at a time, not a square at a time: the party
+   steps into a hall and the hall is there, all of it.
+
+   A DOOR IS A BOUNDARY, whatever state it is in. That is what makes the
+   reveal behave the way a crawl should — a room lights up to its doorways
+   and stops, and opening a door is what brings the next room in. If open
+   doors let the flood through instead, the first one opened would cascade
+   through every connected compartment on the deck and there would be no fog
+   left to lift. The door's own square belongs to every region it touches,
+   because you can see a door from either side of it. */
+
+const isDoorAt = (m, x, y) => Boolean(m.doors[cellKey(x, y)]);
+
+export function regionAt(map, pos) {
+  const m = readMap(map);
+  if (!pos) return [];
+  const start = cellKey(pos.x, pos.y);
+  if (!m.floor[start]) return [];
+  // Clicking the door itself asks for what it joins, not for the doorway.
+  if (m.doors[start]) return regionsAroundDoor(m, pos);
+
+  const seen = new Set([start]);
+  const out = [{ x: pos.x, y: pos.y }];
+  const queue = [pos];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+      const x = cur.x + dx, y = cur.y + dy;
+      const k = cellKey(x, y);
+      if (seen.has(k) || !m.floor[k]) continue;
+      seen.add(k);
+      out.push({ x, y });
+      // A doorway is shown but not walked through: the room stops there.
+      if (!isDoorAt(m, x, y)) queue.push({ x, y });
+    }
+  }
+  return out;
+}
+
+/* What a door joins: the door, and every region that touches it. Both sides,
+   not just the far one — a GM opening a bulkhead from an unexplored
+   corridor should not have to click twice to see where they are standing. */
+export function regionsAroundDoor(map, pos) {
+  const m = readMap(map);
+  if (!pos || !m.floor[cellKey(pos.x, pos.y)]) return [];
+  const out = [{ x: pos.x, y: pos.y }];
+  const seen = new Set([cellKey(pos.x, pos.y)]);
+  for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+    const x = pos.x + dx, y = pos.y + dy;
+    const k = cellKey(x, y);
+    if (!m.floor[k] || isDoorAt(m, x, y)) continue;
+    for (const c of regionAt(m, { x, y })) {
+      const ck = cellKey(c.x, c.y);
+      if (seen.has(ck)) continue;
+      seen.add(ck);
+      out.push(c);
+    }
+  }
+  return out;
+}
+
+/* The explored set with that area added. Revealing is additive — a deck is
+   uncovered, never covered back up by accident. */
+export function revealArea(map, pos) {
+  const m = readMap(map);
+  const explored = { ...m.explored };
+  for (const c of regionAt(m, pos)) explored[cellKey(c.x, c.y)] = true;
+  return explored;
+}
+
 /* ------------------------- the saved map library -------------------------
    A GM builds decks between sessions and plays them later, so a map is a
    thing you keep, not a thing you have. The library is the GM's own, beside

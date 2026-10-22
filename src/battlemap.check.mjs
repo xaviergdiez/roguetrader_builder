@@ -9,6 +9,7 @@ import {
   HAZARD_TYPES, hazardById,
   CONTACT_STATES, nextContactState, readContact, auspexSweep, fogStateAt,
   readSavedMap, readMapLibrary, newBattleMap, publishMap,
+  regionAt, regionsAroundDoor, revealArea,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -828,6 +829,72 @@ import { GEAR } from './gear.js';
 
   assert.deepEqual(auspexSweep(m, null), m.contacts, 'no origin changes nothing');
   assert.deepEqual(auspexSweep(m, { x: 0, y: 0 }, 0), m.contacts);
+}
+
+/* ---- revealing a place, not a square ---- */
+
+{
+  // Two rooms joined by a corridor, with a bulkhead where the corridor
+  // leaves the first room and a hatch where it enters the second.
+  const floor = {};
+  const add = (x, y) => { floor[`${x},${y}`] = true; };
+  for (let x = 0; x < 3; x++) for (let y = 0; y < 3; y++) add(x, y);   // room A
+  for (let x = 3; x < 8; x++) add(x, 1);                               // corridor
+  for (let x = 8; x < 11; x++) for (let y = 0; y < 3; y++) add(x, y);  // room B
+  const map = readMap({
+    cols: 14, rows: 6, floor,
+    doors: {
+      '3,1': { kind: 'bulkhead', state: 'closed' },
+      '7,1': { kind: 'hatch', state: 'open' }
+    }
+  });
+  const has = (cells, x, y) => cells.some((c) => c.x === x && c.y === y);
+
+  // A room reveals to its doorways and stops.
+  const roomA = regionAt(map, { x: 1, y: 1 });
+  assert.equal(roomA.length, 10, 'nine squares and the doorway');
+  assert.ok(has(roomA, 0, 0) && has(roomA, 2, 2), 'the whole room');
+  assert.ok(has(roomA, 3, 1), 'the door is visible from inside the room');
+  assert.ok(!has(roomA, 4, 1), 'and the corridor beyond it is not');
+
+  // THE CASCADE THIS PREVENTS: the hatch at 7,1 is OPEN, and if an open door
+  // let the flood through, standing in the corridor would reveal room B as
+  // well — and the first door opened on a connected deck would lift the fog
+  // off all of it. A door bounds a region whatever state it is in.
+  const corridor = regionAt(map, { x: 5, y: 1 });
+  assert.ok(has(corridor, 4, 1) && has(corridor, 6, 1));
+  assert.ok(has(corridor, 7, 1), 'the open hatch is seen from the corridor');
+  assert.ok(!has(corridor, 9, 1), 'but room B is still a separate place');
+  assert.ok(!has(corridor, 1, 1), 'and so is room A');
+
+  // Clicking a door is how the next place comes in — both sides of it, so a
+  // GM opening a bulkhead from an unexplored corridor does not click twice.
+  const joined = regionsAroundDoor(map, { x: 3, y: 1 });
+  assert.ok(has(joined, 1, 1), 'the room behind');
+  assert.ok(has(joined, 6, 1), 'the corridor beyond');
+  assert.ok(has(joined, 3, 1), 'and the doorway itself');
+  assert.ok(!has(joined, 9, 1), 'but not through the NEXT door along');
+  // Clicking the door square through regionAt gets the same thing.
+  assert.deepEqual(regionAt(map, { x: 3, y: 1 }).length, joined.length);
+
+  // Revealing is additive and never un-reveals.
+  const once = revealArea(map, { x: 1, y: 1 });
+  assert.equal(Object.keys(once).length, 10);
+  const twice = revealArea({ ...map, explored: once }, { x: 5, y: 1 });
+  assert.ok(Object.keys(twice).length > Object.keys(once).length);
+  assert.equal(twice['1,1'], true, 'what was already revealed stays revealed');
+  assert.equal(twice['9,1'], undefined, 'and room B is still dark');
+
+  // Void is not a place.
+  assert.deepEqual(regionAt(map, { x: 13, y: 5 }), []);
+  assert.deepEqual(regionAt(map, null), []);
+  assert.deepEqual(regionsAroundDoor(map, { x: 13, y: 5 }), []);
+  // An unpainted map has no regions to reveal, rather than every square.
+  assert.deepEqual(regionAt(readMap({ cols: 10, rows: 10 }), { x: 2, y: 2 }), []);
+
+  // A room with no doors at all is still one region, not an infinite walk.
+  const sealed = readMap({ cols: 6, rows: 6, floor: paintCells({}, [{ x: 1, y: 1 }, { x: 1, y: 2 }]) });
+  assert.equal(regionAt(sealed, { x: 1, y: 1 }).length, 2);
 }
 
 /* ---- fog is a view, and publishing is what starts a game ---- */

@@ -140,12 +140,26 @@ anywhere.
 
 Fill the two bracketed parts and keep the rest:
 
-> Top-down orthographic floor texture, seamless tiling, **[SURFACE]**,
-> **[DETAIL]**, Warhammer 40,000 grimdark aesthetic, heavy industrial
-> gothic, worn and repaired, drab palette with a single hazard-orange
-> accent, even flat lighting with no cast shadows and no highlights,
-> no grid lines, no text, no logos, no perspective, photorealistic
-> material detail, 1024x1024
+> A photorealistic, highly detailed overhead photograph of ground, in the
+> grimdark aesthetic of Warhammer 40,000. The ground is **[SURFACE]**,
+> **[DETAIL]**. Physically based materials with fine surface grain and real
+> depth: lived-in, over-built, worn by use and repair rather than by ruin,
+> drab desaturated palette with at most a single hazard-orange accent, shot
+> straight down from directly overhead, flat even light, no cast shadows, no
+> highlights, no vignette, seamless tiling, mid-tone values, nothing pure
+> black and nothing pure white, photographic, not illustrated, not painted,
+> not rendered as game art. No text, no lettering, no logos, no insignia, no
+> grid lines, no perspective, no horizon, no figures, no watermark, no
+> border. Square 1:1 image.
+
+**The order matters more than the words.** The medium leads. An earlier
+version of this opened with "top-down orthographic floor texture" and left
+"photorealistic" to the very end, after a run of negations — and what came
+back was illustration, not photography. The portrait prompt has always led
+with "A cinematic, highly detailed photorealistic render in the grimdark
+aesthetic of Warhammer 40,000"; this follows it. Saying what it is *not*
+earns its place too: game art is the default register for a 40K prompt, and
+it is the wrong one for a floor.
 
 Worked examples for the environments to come:
 

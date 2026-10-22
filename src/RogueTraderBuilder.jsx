@@ -1931,10 +1931,13 @@ const CSS = `
 .rt-bm-field textarea{display:block;width:100%;margin-top:3px;background:var(--well);
   color:var(--text);border:1px solid var(--brass-dim);padding:6px 8px;
   font-family:var(--serif);font-size:13px;line-height:1.45;resize:vertical;}
-/* Tiled 2x2 at 50%: a floor is judged on how it REPEATS, and a single copy
-   hides every seam it has. */
-.rt-bm-preview{height:260px;border:1px solid var(--brass);margin-bottom:8px;
-  background-repeat:repeat;background-size:50% 50%;}
+/* Tiled, because a floor is judged on how it REPEATS and a single copy hides
+   every seam it has — but at a FIXED SQUARE size. background-size:50% 50% is
+   50% of the BOX, and the box is wide and short, so a square texture came out
+   stretched four to one and every judgement made from it was about a
+   distortion this panel invented. */
+.rt-bm-preview{height:284px;border:1px solid var(--brass);margin-bottom:8px;
+  background-repeat:repeat;background-size:142px 142px;}
 /* A section heading that carries its own action, so the field below it can
    run the full width of the panel and line up with every other one. */
 .rt-sechead{display:flex;align-items:center;justify-content:space-between;

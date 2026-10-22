@@ -1180,8 +1180,8 @@ export default function BattleMap({
           {genErr ? <p className="rt-warn">{genErr}</p> : null}
 
           {preview && (<>
-            {/* Shown tiled 2x2, because a floor is judged on how it repeats
-                and a single copy hides every seam. */}
+            {/* Tiled at a fixed square size, because a floor is judged on
+                how it repeats and a single copy hides every seam. */}
             <div className="rt-bm-preview"
               style={{ backgroundImage: `url(${preview.texture})` }} />
             <div className="rt-bm-bar">

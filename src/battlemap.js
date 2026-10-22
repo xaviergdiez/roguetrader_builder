@@ -66,7 +66,29 @@ export const MAP_THEMES = [
   T('tau_station', 'T\u2019au Void Station', 'Pale composite panelling, soft seams, cool light',
     '#2f4a55', '#2b93b5', '#c3ccd1',
     'The scrubbed, well-lit decks of a T\u2019au orbital. Nothing rusted, nothing bleeding.',
-    0.14, 0.55)
+    0.14, 0.55),
+
+  /* Planetside. The tile and bulkhead tools work out here unchanged \u2014 a
+     wall is terrain and a bulkhead is a gate or a cave mouth, which is a
+     matter of what the GM calls it at the table rather than anything the app
+     needs told. The numbers differ a lot across these four, because a sunlit
+     dune and a hive bottom are not the same kind of dark. */
+  T('jungle', 'Death World Jungle', 'Wet leaf litter, strangling root, standing water',
+    '#c8dba0', '#7fa05a', '#2f3324',
+    'Equatorial canopy floor. Everything underfoot is rotting, or growing through something that is.',
+    0.18, 0.34),
+  T('desert', 'Desert Waste', 'Drift sand over cracked hardpan and bare rock',
+    '#4a3520', '#8a5a2b', '#cfa06a',
+    'Wind-scoured and open. Cover is wherever the rock has broken, and there is not much of it.',
+    0.14, 0.5),
+  T('ice', 'Ice Shelf', 'Pressure ridge, refrozen melt, snow in the lee of the rock',
+    '#2c4450', '#2f7f99', '#cfd9de',
+    'A glacial sheet over frozen stone. The blue is where the snow has gone and the ice has not.',
+    0.12, 0.55),
+  T('hive_city', 'Hive Underlevels', 'Stained plate, hazard stripe, pipework and loose cabling',
+    '#7fd4e8', '#b5651d', '#2a241f',
+    'The bottom of a hive, where the floor is whatever was welded over the last floor.',
+    0.25, 0.32)
 ];
 
 export const DEFAULT_THEME = 'space_hulk';

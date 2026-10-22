@@ -372,6 +372,19 @@ export function fogStateAt(map, x, y) {
   return m.explored[cellKey(x, y)] ? 'open' : 'dark';
 }
 
+/* How many squares fit across a given number of screen pixels.
+
+   PX PER SQUARE IS NOT THE THING TO CHANGE HERE. It is the projector's
+   calibration — a square has to stay the size of the miniature bases
+   standing on it — so filling a bigger screen means MORE SQUARES, not
+   bigger ones. Scaling the squares to fit instead would silently decalibrate
+   the table every time the window changed size. */
+export const fitGrid = (availablePx, pxPerSquare) => {
+  const px = Number(pxPerSquare) || EMPTY_MAP.pxPerSquare;
+  const n = Math.floor((Number(availablePx) || 0) / px);
+  return Math.max(5, Math.min(100, n));
+};
+
 /* --------------------------- revealing an area ---------------------------
    A deck is revealed a PLACE at a time, not a square at a time: the party
    steps into a hall and the hall is there, all of it.

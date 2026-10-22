@@ -1904,11 +1904,16 @@ const CSS = `
 .rt-bm-hint{font-size:11px;color:var(--dim);font-style:italic;}
 /* The canvas can be far wider than the dialog; scroll it rather than
    squashing it, so a square stays the size the GM calibrated it to. */
-.rt-bm-stage{overflow:auto;max-height:62vh;border:1px solid var(--brass);
+/* A definite height, not just a cap: the stage is measured to work out how
+   many squares fit, and a box that shrinks to its canvas would only ever
+   report the size it already is. */
+.rt-bm-stage{overflow:auto;height:58vh;border:1px solid var(--brass);
   background:#05070a;padding:4px;}
-/* In a window of its own the map gets the whole screen, not a slice of a
-   modal, so the stage stops capping its own height. */
-.rt-bm-win .rt-bm-stage{max-height:calc(100vh - 190px);}
+/* In a window of its own the map takes everything the toolbars leave. A
+   projector is the whole point of that window, so the deck uses the glass
+   rather than sitting in a corner of it. */
+.rt-bm-win{display:flex;flex-direction:column;height:calc(100vh - 20px);}
+.rt-bm-win .rt-bm-stage{flex:1 1 auto;min-height:0;height:auto;}
 /* The map's own window wears .rt-root to pick up the custom properties every
    rule here reads, but not the atmosphere that comes with it: the vignette
    would darken the corners of a deck that is being projected onto a table,

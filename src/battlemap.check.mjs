@@ -10,6 +10,7 @@ import {
   CONTACT_STATES, nextContactState, readContact, auspexSweep, fogStateAt,
   readSavedMap, readMapLibrary, newBattleMap, publishMap,
   regionAt, regionsAroundDoor, revealArea, concealArea, openReach, visibleExplored,
+  fitGrid,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -829,6 +830,25 @@ import { GEAR } from './gear.js';
 
   assert.deepEqual(auspexSweep(m, null), m.contacts, 'no origin changes nothing');
   assert.deepEqual(auspexSweep(m, { x: 0, y: 0 }, 0), m.contacts);
+}
+
+/* ---- filling the screen means more squares, not bigger ones ---- */
+
+{
+  assert.equal(fitGrid(960, 32), 30);
+  assert.equal(fitGrid(1920, 32), 60, 'twice the screen, twice the squares');
+  // The square itself never changes size: that is the projector's
+  // calibration, and scaling it to fit would decalibrate the table every
+  // time the window moved.
+  assert.equal(fitGrid(1000, 40), 25);
+  assert.equal(fitGrid(1000, 20), 50);
+  // Clamped the same way cols and rows are, so a tiny or vast viewport
+  // still yields a grid readMap will accept unchanged.
+  assert.equal(fitGrid(10, 32), 5);
+  assert.equal(fitGrid(0, 32), 5);
+  assert.equal(fitGrid(999999, 32), 100);
+  assert.equal(fitGrid(960, 0), fitGrid(960, EMPTY_MAP.pxPerSquare), 'a zero square falls back');
+  assert.equal(readMap({ cols: fitGrid(1920, 32) }).cols, 60, 'and readMap takes it as-is');
 }
 
 /* ---- revealing a place, not a square ---- */

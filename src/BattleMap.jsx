@@ -5,7 +5,7 @@ import {
   wallMask, cornerPillar, WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
-  overlayKindFor, onDeck, revealArea, concealArea, visibleExplored,
+  overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   weaponOverlay, calibrationBar, deploymentRows
@@ -297,6 +297,11 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
   const [measureTo, setMeasureTo] = useState(null);
 
   const canvasRef = useRef(null);
+  const stageRef = useRef(null);
+  // Resize fires long after the render that bound it; fitting from the
+  // captured map would write back a deck that is several edits old.
+  const mapRef = useRef(m);
+  mapRef.current = m;
   const textureRef = useRef(null);
   const [textureTick, setTextureTick] = useState(0);
 
@@ -909,12 +914,45 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
     <label className="rt-bm-num">
       <span>{label}</span>
       <input type="number" value={value} min={min} max={max} step={step}
+        /* A focused number input takes the mouse wheel, and these sit a
+           centimetre above a map the GM scrolls. Spinning px/square by
+           accident would decalibrate the projector mid-session without
+           anyone seeing it happen, so the wheel drops focus instead. */
+        onWheel={(e) => e.currentTarget.blur()}
         onChange={(e) => {
           const n = Number(e.target.value);
           if (Number.isFinite(n)) onSet(Math.min(max, Math.max(min, n)));
         }} />
     </label>
   );
+
+  /* Grow the grid to whatever the window gives us, at the px/square already
+     calibrated. A projector or a second screen is the whole point of this
+     thing, so the deck should use the glass rather than sit in the corner of
+     it. The squares keep their size; there are simply more of them. */
+  const fitToStage = () => {
+    const el = stageRef.current;
+    if (!el) return;
+    const pad = 10;   // the stage's own padding and border
+    const cur = mapRef.current;
+    const cols = fitGrid(el.clientWidth - pad, cur.pxPerSquare);
+    const rows = fitGrid(el.clientHeight - pad, cur.pxPerSquare);
+    if (cols === cur.cols && rows === cur.rows) return;
+    if (onChange) onChange({ ...cur, cols, rows });
+  };
+
+  // In a window of its own there is no reason not to fill it, so it fits
+  // itself on open and whenever the window is resized. In the dashboard tab
+  // the deck's size is the GM's to set, and resizing a panel should not
+  // quietly redraw the deck they are building.
+  useEffect(() => {
+    if (!win) return undefined;
+    fitToStage();
+    const onResize = () => fitToStage();
+    win.addEventListener('resize', onResize);
+    return () => win.removeEventListener('resize', onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [win, m.pxPerSquare]);
 
   const allExplored = () => {
     const out = {};
@@ -1113,6 +1151,7 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
         {num('Px / square', m.pxPerSquare, (v) => patch({ pxPerSquare: v }), 10, 200, 2)}
         {num('mm / square', m.mmPerSquare, (v) => patch({ mmPerSquare: v }), 5, 100)}
         {num('Metres / square', m.metresPerSquare, (v) => patch({ metresPerSquare: v }), 0.5, 10, 0.5)}
+        <button type="button" className="rt-btn" onClick={fitToStage}>Fit to screen</button>
         <label className="rt-bm-num"><input type="checkbox" checked={showZones}
           onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
         <label className="rt-bm-num"><input type="checkbox" checked={showCalibration}
@@ -1139,7 +1178,7 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
         </div>
       )}
 
-      <div className="rt-bm-stage">
+      <div className="rt-bm-stage" ref={stageRef}>
         <canvas
           ref={canvasRef}
           onMouseMove={(e) => {
@@ -1155,11 +1194,6 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
         />
       </div>
 
-      <p className="rt-bm-hint">
-        The miniatures are the combatants — nothing is drawn for them. Overlays are projected
-        under the models so a range band, a blast or a flame cone can be read off the table.
-        Line of sight is a straight line between squares, not true cover: the GM overrules it.
-      </p>
     </div>
   );
 }

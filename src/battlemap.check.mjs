@@ -1,5 +1,6 @@
 // Self-check for the boarding battle map. Run: node src/battlemap.check.mjs
 import assert from 'node:assert/strict';
+import { existsSync, statSync } from 'node:fs';
 import {
   MAP_THEMES, DEFAULT_THEME, themeById, EMPTY_MAP, readMap,
   distanceSquares, distanceMetres, reachBetween, deploymentRows, calibrationBar,
@@ -31,6 +32,16 @@ import { GEAR } from './gear.js';
     // must name one that exists on disk — a 404 silently renders the flat
     // fallback colour and looks like a styling bug rather than a missing file.
     assert.equal(t.texture, `/maps/${t.id}.jpg`);
+    // AND THE FILE IS ACTUALLY THERE. A theme whose texture 404s renders
+    // the flat fallback colour and reads as a styling bug rather than as a
+    // missing asset, which is a thing to discover on a projector in front
+    // of the table rather than here.
+    const file = new URL(`../public/maps/${t.id}.jpg`, import.meta.url);
+    assert.ok(existsSync(file), `${t.id}: public/maps/${t.id}.jpg is missing`);
+    const bytes = statSync(file).size;
+    assert.ok(bytes > 20000, `${t.id}: texture is only ${bytes} bytes`);
+    assert.ok(bytes < 900000,
+      `${t.id}: texture is ${Math.round(bytes / 1024)}KB — resample it, a GM loads this over hotel wifi`);
     assert.match(t.grid, /^#[0-9a-f]{6}$/i, t.id + ': grid colour');
     // Every theme knocks its deck back by SOME amount, and never so far
     // that the floor it took a texture to get is no longer visible.

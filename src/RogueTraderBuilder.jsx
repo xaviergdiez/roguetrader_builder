@@ -1906,14 +1906,12 @@ const CSS = `
    squashing it, so a square stays the size the GM calibrated it to. */
 /* A definite height, not just a cap: the stage is measured to work out how
    many squares fit, and a box that shrinks to its canvas would only ever
-   report the size it already is. */
+   report the size it already is. The value here is a starting point —
+   the component measures its own position and takes everything from there
+   to the bottom of the screen, which is the only thing that knows what is
+   above it in the dialog or in its own window. */
 .rt-bm-stage{overflow:auto;height:58vh;border:1px solid var(--brass);
   background:#05070a;padding:4px;}
-/* In a window of its own the map takes everything the toolbars leave. A
-   projector is the whole point of that window, so the deck uses the glass
-   rather than sitting in a corner of it. */
-.rt-bm-win{display:flex;flex-direction:column;height:calc(100vh - 20px);}
-.rt-bm-win .rt-bm-stage{flex:1 1 auto;min-height:0;height:auto;}
 /* The map's own window wears .rt-root to pick up the custom properties every
    rule here reads, but not the atmosphere that comes with it: the vignette
    would darken the corners of a deck that is being projected onto a table,

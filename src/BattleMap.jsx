@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   MAP_THEMES, themeById, readMap, cellKey, parseKey,
   TILE_CATALOG, TILE_CATEGORIES, stampCells, paintCells,
@@ -945,10 +945,40 @@ export default function BattleMap({ map, onChange, win = null, encounters = [] }
     if (onChange) onChange({ ...cur, cols, rows });
   };
 
-  // In a window of its own there is no reason not to fill it, so it fits
-  // itself on open and whenever the window is resized. In the dashboard tab
-  // the deck's size is the GM's to set, and resizing a panel should not
-  // quietly redraw the deck they are building.
+  /* The stage takes everything from wherever it has landed down to the
+     bottom of the screen.
+
+     A fixed height in vh cannot do this: what sits above the map differs
+     between the dashboard tab and its own window, and inside the tab it
+     changes as the toolbars reflow — picking a tool with a long hint pushes
+     the map down by a line. Measuring the stage's own top is the only thing
+     that knows. A ResizeObserver on the component catches the reflow; the
+     height it computes does not depend on the stage's own height, so
+     setting it cannot feed back into another measurement. */
+  useLayoutEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const w = win || window;
+    const sizeStage = () => {
+      const top = el.getBoundingClientRect().top;
+      const next = Math.max(240, Math.round(w.innerHeight - top - 14));
+      if (Math.abs(el.clientHeight - next) > 1) el.style.height = next + 'px';
+    };
+    sizeStage();
+    const ro = typeof w.ResizeObserver === 'function'
+      ? new w.ResizeObserver(sizeStage) : null;
+    if (ro && el.parentElement) ro.observe(el.parentElement);
+    w.addEventListener('resize', sizeStage);
+    return () => {
+      if (ro) ro.disconnect();
+      w.removeEventListener('resize', sizeStage);
+    };
+  }, [win]);
+
+  // In a window of its own there is no reason not to fill it, so the grid
+  // fits itself on open and whenever the window is resized. In the dashboard
+  // tab the deck's size is the GM's to set with Fit to screen, because
+  // resizing a panel should not quietly redraw the deck being built.
   useEffect(() => {
     if (!win) return undefined;
     fitToStage();

@@ -2,7 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import BattleMap from './BattleMap.jsx';
 import MapWindow from './MapWindow.jsx';
-import { readMap as readBattleMap } from './battlemap.js';
+import {
+  readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap
+} from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
 import { parseGear, gearInfo, CRAFT, GEAR, availabilityOf } from './gear.js';
@@ -7625,6 +7627,12 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   });
   // The window itself is owned by the component above, so neither switching
   // tabs nor closing this dashboard shuts the map the table is playing on.
+  const decks = readMapLibrary(homebrew && homebrew.battlemaps);
+  const saveDecks = (list) => setHomebrew({ ...(homebrew || {}), battlemaps: list });
+  const putDeck = (d) => saveDecks(decks.map((x) => (x.id === d.id ? d : x)));
+  const [deckId, setDeckId] = useState(null);
+  const deck = decks.find((d) => d.id === deckId) || null;
+  const [mapView, setMapView] = useState('design');
 
   const addHostile = (npc) => {
     if (!editing || editing.hostiles.length >= MAX_HOSTILES) return;
@@ -8655,13 +8663,71 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           </button>
         </div>
         {mapErr ? <p className="rt-warn">{mapErr}</p> : null}
-        {mapWindow ? (
+
+        {/* A deck is built between sessions and played later, so the library
+            and the live map are two different things: designing is done with
+            the fog off and every square in view, and publishing is what turns
+            a drawing into a game. */}
+        <div className="rt-bm-bar">
+          <button type="button"
+            className={'rt-btn rt-bm-mode' + (mapView === 'design' ? ' on' : '')}
+            onClick={() => setMapView('design')}>Design</button>
+          <button type="button"
+            className={'rt-btn rt-bm-mode' + (mapView === 'live' ? ' on' : '')}
+            onClick={() => setMapView('live')}>In play</button>
+          {mapView === 'design' ? (<>
+            <select className="rt-sel" value={deckId || ''}
+              onChange={(e) => setDeckId(e.target.value || null)}>
+              <option value="">{'\u2014 pick a deck \u2014'}</option>
+              {decks.map((d) => (
+                <option key={d.id} value={d.id}>{d.name || 'Untitled deck'}</option>
+              ))}
+            </select>
+            <button type="button" className="rt-btn" onClick={() => {
+              const d = newBattleMap('Deck ' + (decks.length + 1));
+              saveDecks([...decks, d]);
+              setDeckId(d.id);
+            }}>New deck</button>
+            {deck && (<>
+              <input className="rt-field" value={deck.name}
+                placeholder="Name this deck"
+                onChange={(e) => putDeck({ ...deck, name: e.target.value })} />
+              <button type="button" className="rt-btn" onClick={() => {
+                setBattleMap(publishMap(deck));
+                setMapView('live');
+              }}>Publish for play</button>
+              <button type="button" className="rt-btn ghost" onClick={() => {
+                saveDecks(decks.filter((d) => d.id !== deck.id));
+                setDeckId(null);
+              }}>Delete</button>
+            </>)}
+          </>) : (
+            <span className="rt-bm-hint">
+              {battleMap.fog
+                ? 'Fog is on. Reveal as the party advances, and sweep with an auspex to ping contacts.'
+                : 'No deck published yet \u2014 publish one from Design, or build here directly.'}
+            </span>
+          )}
+        </div>
+
+        {mapView === 'design' && !deck ? (
+          <p className="rt-bm-hint">
+            Pick a deck to work on, or start a new one. Decks live in your own library
+            and nothing in them reaches the table until you publish.
+          </p>
+        ) : mapWindow ? (
           <p className="rt-bm-hint">
             The map is running in a second window so the dashboard and bridge data stay
             here while you run the encounter. Closing that window brings it back.
           </p>
         ) : (
-          <BattleMap map={battleMap} onChange={setBattleMap} />
+          <BattleMap
+            map={mapView === 'live' ? battleMap : deck.map}
+            onChange={mapView === 'live'
+              ? setBattleMap
+              : (next) => putDeck({ ...deck, map: next })}
+            encounters={encounters}
+          />
         )}
       </>)}
 

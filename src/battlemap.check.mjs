@@ -5,12 +5,16 @@ import {
   distanceSquares, distanceMetres, reachBetween, deploymentRows, calibrationBar,
   rangeRings, areaCells, coneCells, visibleCells, weaponOverlay, unobstructed,
   overlayKindFor, onDeck,
+  DOOR_KINDS, doorKindById, readDoor, COVER_TYPES, coverById, coverBetween,
+  HAZARD_TYPES, hazardById,
+  CONTACT_STATES, nextContactState, readContact, auspexSweep, fogStateAt,
+  readSavedMap, readMapLibrary, newBattleMap, publishMap,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, doorBlocks, MARKER_TYPES, markerTypeById
 } from './battlemap.js';
-import { rangeBand, parseWeaponStats, RANGE_MODIFIERS } from './groundcombat.js';
+import { rangeBand, parseWeaponStats, RANGE_MODIFIERS, conditionById } from './groundcombat.js';
 import { GEAR } from './gear.js';
 
 /* ---- themes ---- */
@@ -227,7 +231,163 @@ import { GEAR } from './gear.js';
 
   // A door state the renderer cannot draw is dropped on read.
   assert.deepEqual(readMap({ doors: { '1,1': 'open', '2,2': 'ajar', 'x,y': 'open' } }).doors,
-    { '1,1': 'open' });
+    { '1,1': { kind: 'bulkhead', state: 'open' } });
+}
+
+/* ---- bulkheads and hatches ---- */
+
+{
+  assert.ok(DOOR_KINDS.length >= 2);
+  for (const d of DOOR_KINDS) {
+    assert.ok(d.name && d.note, d.id + ': incomplete');
+    assert.ok(Number.isInteger(d.ap) && d.ap > 0, d.id + ': needs an AP to break');
+  }
+  // A hatch is easier to get through than a blast door. If they were the
+  // same there would be no reason for both to exist.
+  assert.ok(doorKindById('hatch').ap < doorKindById('bulkhead').ap);
+  assert.equal(doorKindById('nonsense').id, 'bulkhead', 'an unknown kind is a bulkhead');
+
+  // THE MIGRATION: a door used to be the bare state string. Both shapes
+  // read, or a map saved before hatches existed would lose every door on
+  // the deck rather than keeping its bulkheads.
+  assert.deepEqual(readDoor('closed'), { kind: 'bulkhead', state: 'closed' });
+  assert.deepEqual(readDoor({ kind: 'hatch', state: 'jammed' }),
+    { kind: 'hatch', state: 'jammed' });
+  assert.equal(readDoor('ajar'), null);
+  assert.equal(readDoor({ kind: 'hatch' }), null, 'a door with no state is not a door');
+  assert.equal(readDoor(null), null);
+  const mixed = readMap({ doors: { '1,1': 'closed', '2,2': { kind: 'hatch', state: 'open' } } });
+  assert.equal(mixed.doors['1,1'].kind, 'bulkhead');
+  assert.equal(mixed.doors['2,2'].kind, 'hatch');
+
+  // A hatch blocks exactly as a bulkhead does — the difference is getting
+  // through it, not seeing through it.
+  const cells = [];
+  for (let x = 0; x < 10; x++) cells.push({ x, y: 2 });
+  const hatched = readMap({
+    cols: 12, rows: 6, floor: paintCells({}, cells),
+    doors: { '5,2': { kind: 'hatch', state: 'closed' } }
+  });
+  const stop = lineBlocked(hatched, { x: 0, y: 2 }, { x: 9, y: 2 });
+  assert.equal(stop.reason, 'door');
+  assert.equal(stop.kind, 'hatch', 'the blockage says which kind it was');
+  assert.equal(stop.state, 'closed');
+}
+
+/* ---- cover ---- */
+
+{
+  assert.ok(COVER_TYPES.length >= 3);
+  for (const c of COVER_TYPES) {
+    assert.ok(c.name && c.note, c.id + ': incomplete');
+    assert.ok(Number.isInteger(c.ap) && c.ap > 0, c.id + ': cover needs Armour Points');
+    assert.equal(typeof c.blocksSight, 'boolean');
+  }
+  assert.equal(coverById('nonsense'), null);
+  assert.equal(coverById('crates').blocksSight, true);
+
+  // THE DISTINCTION THAT MATTERS: a railing is cover you shoot OVER, a
+  // cargo stack is cover you cannot see past. Treating them alike would
+  // either seal off a gantry or make a hold transparent.
+  assert.equal(coverById('low').blocksSight, false);
+  assert.ok(COVER_TYPES.some((c) => !c.blocksSight), 'something must be shoot-over-able');
+  assert.ok(COVER_TYPES.some((c) => c.blocksSight));
+
+  const cells = [];
+  for (let x = 0; x < 12; x++) cells.push({ x, y: 3 });
+  const floor = paintCells({}, cells);
+  const from = { x: 0, y: 3 }, to = { x: 10, y: 3 };
+
+  const railing = readMap({ cols: 14, rows: 8, floor, cover: { '5,3': 'low' } });
+  assert.equal(lineBlocked(railing, from, to), null, 'you can shoot over a railing');
+
+  const stacked = readMap({ cols: 14, rows: 8, floor, cover: { '5,3': 'crates' } });
+  const hit = lineBlocked(stacked, from, to);
+  assert.equal(hit.reason, 'cover');
+  assert.equal(hit.cover, 'crates');
+  assert.deepEqual([hit.x, hit.y], [5, 3]);
+
+  // Sight-blocking cover hides what is behind it, the same as a wall.
+  assert.ok(!visibleCells(stacked, from, 50).some((c) => c.x === 8 && c.y === 3));
+  assert.ok(visibleCells(railing, from, 50).some((c) => c.x === 8 && c.y === 3));
+
+  // The Armour Points a shot has to cross, including cover on the target's
+  // OWN square — which is where most of it is.
+  assert.equal(coverBetween(railing, from, to).ap, 4);
+  assert.equal(coverBetween(readMap({ cols: 14, rows: 8, floor, cover: { '10,3': 'low' } }), from, to).ap,
+    4, 'the target crouched behind its own railing still has it');
+  assert.equal(coverBetween(readMap({ cols: 14, rows: 8, floor }), from, to), null);
+  // Cover does not stack: the best piece in the lane is what counts.
+  const two = readMap({ cols: 14, rows: 8, floor, cover: { '3,3': 'low', '7,3': 'low' } });
+  assert.equal(coverBetween(two, from, to).ap, 4, 'two railings are not an 8');
+  assert.equal(coverBetween(railing, null, to), null);
+
+  // reachBetween carries it, so one call answers range, blockage and cover.
+  const shot = reachBetween({ from, to, map: railing, weaponRangeM: 100 });
+  assert.equal(shot.blocked, null);
+  assert.equal(shot.cover.ap, 4);
+  assert.equal(shot.metres, 10);
+}
+
+/* ---- hazards are information, not obstruction ---- */
+
+{
+  assert.ok(HAZARD_TYPES.length >= 4);
+  for (const h of HAZARD_TYPES) {
+    assert.ok(h.name && h.note, h.id + ': incomplete');
+    assert.match(h.colour, /^#[0-9a-f]{6}$/i, h.id + ': colour');
+    // Where a hazard lines up with a condition the engine already applies,
+    // it names it by the SAME id, or the GM would be handed a chip that
+    // does not exist.
+    if (h.condition) {
+      assert.ok(conditionById(h.condition), h.id + ': names an unknown condition');
+    }
+  }
+  assert.equal(hazardById('fire').condition, 'on_fire');
+  assert.equal(hazardById('nonsense'), null);
+  assert.equal(hazardById('toxic').condition, null, 'not every hazard has a chip');
+
+  // A hazard stops nothing: you can see across a fire and shoot through it.
+  const cells = [];
+  for (let x = 0; x < 10; x++) cells.push({ x, y: 1 });
+  const burning = readMap({
+    cols: 12, rows: 4, floor: paintCells({}, cells), hazards: { '5,1': 'fire' }
+  });
+  assert.equal(lineBlocked(burning, { x: 0, y: 1 }, { x: 9, y: 1 }), null);
+  assert.equal(coverBetween(burning, { x: 0, y: 1 }, { x: 9, y: 1 }), null);
+  // An unknown hazard is dropped rather than drawn as an unlabelled blob.
+  assert.deepEqual(readMap({ hazards: { '1,1': 'fire', '2,2': 'nonsense' } }).hazards,
+    { '1,1': 'fire' });
+}
+
+/* ---- fog of war ---- */
+
+{
+  // `explored` is what the party has seen; `fog` is whether the map is drawn
+  // with it. Separate, so turning fog off to check something does not throw
+  // away what was explored.
+  assert.equal(EMPTY_MAP.fog, false);
+  assert.deepEqual(EMPTY_MAP.explored, {});
+  const m = readMap({ fog: true, explored: { '1,1': true, '2,2': false, 'x,y': true } });
+  assert.equal(m.fog, true);
+  assert.deepEqual(m.explored, { '1,1': true });
+  assert.equal(readMap({ fog: 'yes' }).fog, true);
+  assert.equal(readMap({}).fog, false);
+
+  // FOG IS A VIEW, NOT A FACT. It must never reach the sight calculation:
+  // the GM knows what is behind the fog, and a template or a measurement
+  // that stopped at the edge of what the party had explored would be wrong
+  // about the deck it is drawn on.
+  const cells = [];
+  for (let x = 0; x < 10; x++) cells.push({ x, y: 1 });
+  const floor = paintCells({}, cells);
+  const lit = readMap({ cols: 12, rows: 4, floor, fog: false });
+  const dark = readMap({ cols: 12, rows: 4, floor, fog: true, explored: { '0,1': true } });
+  assert.deepEqual(lineBlocked(lit, { x: 0, y: 1 }, { x: 9, y: 1 }),
+    lineBlocked(dark, { x: 0, y: 1 }, { x: 9, y: 1 }));
+  assert.equal(visibleCells(dark, { x: 0, y: 1 }, 50).length,
+    visibleCells(lit, { x: 0, y: 1 }, 50).length,
+    'fog must not change what can be seen, only what is drawn');
 }
 
 /* ---- markers are scenery, not combatants ---- */
@@ -611,6 +771,104 @@ import { GEAR } from './gear.js';
       assert.equal(weaponOverlay(GEAR[k].stats).isField, false, k + ' is not a force field');
     }
   }
+}
+
+/* ---- contacts, and what an auspex leaks through fog ---- */
+
+{
+  assert.deepEqual(CONTACT_STATES, ['hidden', 'ping', 'seen']);
+  assert.equal(nextContactState('hidden'), 'ping');
+  assert.equal(nextContactState('ping'), 'seen');
+  assert.equal(nextContactState('seen'), 'hidden');
+  // Nothing there yet means the first click places a contact, and a contact
+  // is placed unknown — the same reasoning as a bulkhead being fitted shut.
+  assert.equal(nextContactState(undefined), 'hidden');
+  assert.equal(nextContactState('nonsense'), 'hidden');
+
+  // A contact must be nameable or it is a blip nobody can act on.
+  assert.equal(readContact({ name: '' }), null);
+  assert.equal(readContact(null), null);
+  assert.equal(readContact({ name: 'Genestealer' }).state, 'hidden', 'they start unknown');
+  assert.equal(readContact({ name: 'x', state: 'nonsense' }).state, 'hidden');
+  assert.equal(readContact({ name: 'x', encounterId: 'enc-1', hostileId: 'h2' }).encounterId, 'enc-1');
+  assert.deepEqual(Object.keys(readMap({ contacts: { '1,1': { name: 'A' }, '2,2': {}, 'x,y': { name: 'B' } } }).contacts),
+    ['1,1']);
+
+  const m = readMap({
+    cols: 60, rows: 20, metresPerSquare: 1,
+    contacts: {
+      '5,5': { name: 'Genestealer' },
+      '40,5': { name: 'Broodlord' },
+      '6,5': { name: 'Hybrid', state: 'seen' }
+    }
+  });
+
+  const swept = auspexSweep(m, { x: 0, y: 5 }, 10);
+  assert.equal(swept['5,5'].state, 'ping', 'in range and unknown: it is on the scope');
+  assert.equal(swept['40,5'].state, 'hidden', 'out of range: nothing');
+  assert.equal(swept['6,5'].state, 'seen', 'a scope does not un-see a thing');
+
+  // AN AUSPEX READS THROUGH A BULKHEAD. That is most of why it is carried,
+  // so a sweep is bounded by range and not by line of sight.
+  const cells = [];
+  for (let x = 0; x < 12; x++) cells.push({ x, y: 5 });
+  const sealed = readMap({
+    cols: 60, rows: 20, floor: paintCells({}, cells),
+    doors: { '3,5': { kind: 'bulkhead', state: 'closed' } },
+    contacts: { '8,5': { name: 'Something' } }
+  });
+  assert.ok(lineBlocked(sealed, { x: 0, y: 5 }, { x: 8, y: 5 }), 'the door does block sight');
+  assert.equal(auspexSweep(sealed, { x: 0, y: 5 }, 20)['8,5'].state, 'ping',
+    'but the auspex still reads it');
+
+  // The scale knob moves the sweep with everything else.
+  const coarse = readMap({ cols: 60, rows: 20, metresPerSquare: 2, contacts: { '5,0': { name: 'A' } } });
+  assert.equal(auspexSweep(coarse, { x: 0, y: 0 }, 8)['5,0'].state, 'hidden', '10m away on a 2m grid');
+  assert.equal(auspexSweep(coarse, { x: 0, y: 0 }, 12)['5,0'].state, 'ping');
+
+  assert.deepEqual(auspexSweep(m, null), m.contacts, 'no origin changes nothing');
+  assert.deepEqual(auspexSweep(m, { x: 0, y: 0 }, 0), m.contacts);
+}
+
+/* ---- fog is a view, and publishing is what starts a game ---- */
+
+{
+  assert.equal(fogStateAt(readMap({ fog: false }), 3, 3), 'open', 'no fog, nothing hidden');
+  const dark = readMap({ fog: true, explored: { '1,1': true } });
+  assert.equal(fogStateAt(dark, 1, 1), 'open');
+  assert.equal(fogStateAt(dark, 9, 9), 'dark');
+
+  // THE WHOLE POINT OF PUBLISHING: a deck is drawn between sessions with the
+  // fog off, every square visible to the GM who is building it. Pushed to
+  // the table as it stands, it would hand the party the floorplan, last
+  // session's explored squares and every contact already found.
+  const built = readSavedMap({
+    name: 'Hulk deck 1',
+    map: {
+      cols: 20, rows: 10, fog: false,
+      floor: paintCells({}, [{ x: 1, y: 1 }, { x: 2, y: 1 }]),
+      explored: { '1,1': true, '2,1': true },
+      contacts: { '2,1': { name: 'Genestealer', state: 'seen' } }
+    }
+  });
+  const live = publishMap(built);
+  assert.equal(live.fog, true, 'fog comes on by itself');
+  assert.deepEqual(live.explored, {}, 'and last session is forgotten');
+  assert.equal(live.contacts['2,1'].state, 'hidden', 'every contact goes back to unknown');
+  // The deck itself survives: it is the thing that was built.
+  assert.deepEqual(live.floor, built.map.floor);
+  assert.equal(live.cols, 20);
+  assert.equal(live.contacts['2,1'].name, 'Genestealer');
+
+  // The library behaves like the GM's other libraries.
+  assert.deepEqual(readMapLibrary(null), []);
+  assert.equal(readMapLibrary([{}, {}]).length, 2);
+  const a = newBattleMap('Deck A');
+  const b = newBattleMap('Deck B');
+  assert.notEqual(a.id, b.id, 'two maps made in the same millisecond are still two maps');
+  assert.equal(a.name, 'Deck A');
+  assert.equal(readSavedMap({ name: '' }).name, '', 'a name is kept as typed');
+  assert.ok(readSavedMap(null).id, 'junk still reads as a map');
 }
 
 /* ---- the two scales are different things ---- */

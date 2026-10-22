@@ -110,8 +110,22 @@ export const EMPTY_MAP = {
   mmPerSquare: 25,
   pxPerSquare: 40,      // screen pixels per square, adjusted until it matches
   floor: {},            // { 'x,y': true } — the single source of truth for deck
-  doors: {},            // { 'x,y': 'closed' | 'open' | 'jammed' }
-  markers: {}           // { 'x,y': { type, label } } — scenery
+  doors: {},            // { 'x,y': { kind, state } }
+  cover: {},            // { 'x,y': coverTypeId } — things standing on the deck
+  hazards: {},          // { 'x,y': hazardTypeId } — dangerous to stand in
+  markers: {},          // { 'x,y': { type, label } } — scenery
+  // Fog of war. `explored` is what the party has seen; `fog` is whether the
+  // map is drawn with it. The two are separate so turning fog off to check
+  // something does not throw away what was explored.
+  explored: {},         // { 'x,y': true }
+  fog: false,
+  /* Hostiles placed from a saved encounter. THESE ARE NOT TOKENS: the fight
+     is played with miniatures, and a model standing on a square the party
+     has not reached would give the position away. A contact is the GM's own
+     note of what is out there, and the one thing fog is allowed to leak —
+     an auspex sweep turns a hidden contact into a ping, which says something
+     is there without saying what, or opening the deck around it. */
+  contacts: {}          // { 'x,y': { name, encounterId, hostileId, state } }
 };
 
 export const cellKey = (x, y) => `${Math.round(x)},${Math.round(y)}`;
@@ -133,13 +147,73 @@ const int = (v, fallback, min, max) => {
 };
 
 export const DOOR_STATES = ['closed', 'open', 'jammed'];
-// Closed -> open -> jammed -> closed. A jammed bulkhead still blocks, which
-// is the whole reason the state exists.
+// Closed -> open -> jammed -> closed. A jammed door still blocks, which is
+// the whole reason the state exists.
 export const nextDoorState = (s) => {
   const i = DOOR_STATES.indexOf(s);
   return DOOR_STATES[(i < 0 ? 0 : i + 1) % DOOR_STATES.length];
 };
 export const doorBlocks = (state) => state !== 'open';
+
+/* A bulkhead and a hatch are both doors and differ in what it takes to get
+   through one: a blast bulkhead is a wall with a motor, a hatch is a crawlway
+   cover. The AP is what the GM prices breaking it at. */
+export const DOOR_KINDS = [
+  { id: 'bulkhead', name: 'Bulkhead', ap: 12,
+    note: 'A powered blast door. Breaking one is a job, not an action.' },
+  { id: 'hatch', name: 'Hatch', ap: 6,
+    note: 'A crawl-through access cover \u2014 maintenance ways, shafts, cargo holds.' }
+];
+export const doorKindById = (id) =>
+  DOOR_KINDS.find((d) => d.id === id) || DOOR_KINDS[0];
+
+/* A door was once stored as the bare state string. Both shapes are read, so
+   a map saved before hatches existed still opens with its bulkheads intact
+   rather than losing every door on the deck. */
+export function readDoor(v) {
+  if (typeof v === 'string') {
+    return DOOR_STATES.includes(v) ? { kind: 'bulkhead', state: v } : null;
+  }
+  if (!v || typeof v !== 'object' || !DOOR_STATES.includes(v.state)) return null;
+  return { kind: doorKindById(v.kind).id, state: v.state };
+}
+
+/* ---------------------------- cover ----------------------------
+   Something standing ON a square rather than the deck itself. The one that
+   matters is blocksSight: a cargo stack is a wall you cannot see past, a
+   railing is a thing you crouch behind and shoot over, and treating them
+   alike would either seal a gantry or make a hold transparent. `ap` is the
+   Armour Points the cover adds against a shot that crosses it. */
+export const COVER_TYPES = [
+  { id: 'low', name: 'Low barrier or railing', ap: 4, blocksSight: false,
+    note: 'Crouch behind it and shoot over it.' },
+  { id: 'crates', name: 'Cargo crates', ap: 8, blocksSight: true,
+    note: 'Stacked high enough to hide behind.' },
+  { id: 'machinery', name: 'Machinery or plating', ap: 12, blocksSight: true,
+    note: 'Pipework, cogitator banks, loose hull plate.' },
+  { id: 'pillar', name: 'Structural pillar', ap: 16, blocksSight: true,
+    note: 'Part of the ship. It does not move and it does not break.' }
+];
+export const coverById = (id) => COVER_TYPES.find((c) => c.id === id) || null;
+
+/* ---------------------------- hazards ----------------------------
+   A square that is dangerous to stand in. These block nothing and stop
+   nothing \u2014 they are information, drawn so the table can see where not to
+   walk. Where one lines up with a condition the combat engine already
+   applies, it names it, so the GM can hand out the right chip. */
+export const HAZARD_TYPES = [
+  { id: 'fire', name: 'Fire', colour: '#ff6b2c', condition: 'on_fire',
+    note: '1d10 Wounds a round, ignoring armour. An Agility Test puts it out.' },
+  { id: 'toxic', name: 'Toxic gas', colour: '#5fe06a', condition: null,
+    note: 'A Toughness Test each round, or Fatigue and damage as the GM rules.' },
+  { id: 'void', name: 'Vacuum breach', colour: '#6fa8ff', condition: null,
+    note: 'No air, and anything unsealed is dragged toward the hole.' },
+  { id: 'radiation', name: 'Radiation', colour: '#e3d23c', condition: null,
+    note: 'Lingering after the exposure. The GM sets the toll.' },
+  { id: 'electrical', name: 'Live current', colour: '#b98cff', condition: 'stunned',
+    note: 'A ruptured conduit. Crossing it risks being Stunned.' }
+];
+export const hazardById = (id) => HAZARD_TYPES.find((h) => h.id === id) || null;
 
 export const MARKER_TYPES = [
   { id: 'breach', name: 'Torpedo breach', colour: '#ff5722' },
@@ -160,7 +234,27 @@ export function readMap(m) {
   }
   const doors = {};
   for (const [k, v] of Object.entries(src.doors || {})) {
-    if (parseKey(k) && DOOR_STATES.includes(v)) doors[k] = v;
+    if (!parseKey(k)) continue;
+    const d = readDoor(v);
+    if (d) doors[k] = d;
+  }
+  const cover = {};
+  for (const [k, v] of Object.entries(src.cover || {})) {
+    if (parseKey(k) && coverById(v)) cover[k] = v;
+  }
+  const hazards = {};
+  for (const [k, v] of Object.entries(src.hazards || {})) {
+    if (parseKey(k) && hazardById(v)) hazards[k] = v;
+  }
+  const explored = {};
+  for (const k of Object.keys(src.explored || {})) {
+    if (src.explored[k] && parseKey(k)) explored[k] = true;
+  }
+  const contacts = {};
+  for (const [k, v] of Object.entries(src.contacts || {})) {
+    if (!parseKey(k)) continue;
+    const c = readContact(v);
+    if (c) contacts[k] = c;
   }
   const markers = {};
   for (const [k, v] of Object.entries(src.markers || {})) {
@@ -179,7 +273,8 @@ export function readMap(m) {
     })(),
     pxPerSquare: int(src.pxPerSquare, EMPTY_MAP.pxPerSquare, 10, 200),
     mmPerSquare: int(src.mmPerSquare, EMPTY_MAP.mmPerSquare, 5, 100),
-    floor, doors, markers
+    fog: Boolean(src.fog),
+    floor, doors, cover, hazards, markers, explored, contacts
   };
 }
 
@@ -208,6 +303,98 @@ export const isFloor = (floor, x, y) => Boolean(floor && floor[cellKey(x, y)]);
 
 // Cheaper than Object.keys(o).length on a big object: stops at the first key.
 const isEmpty = (o) => { for (const _k in o) return false; return true; };
+
+/* ---------------------------- contacts ----------------------------
+   hidden : the party has no idea it is there.
+   ping   : an auspex has it — something is on the scope, at that bearing.
+            The deck around it stays dark; only the contact shows.
+   seen   : they have laid eyes on it, and the square is open. */
+export const CONTACT_STATES = ['hidden', 'ping', 'seen'];
+export const nextContactState = (st) => {
+  const i = CONTACT_STATES.indexOf(st);
+  return CONTACT_STATES[(i < 0 ? 0 : i + 1) % CONTACT_STATES.length];
+};
+
+export function readContact(v) {
+  if (!v || typeof v !== 'object') return null;
+  const name = String(v.name == null ? '' : v.name).slice(0, 60);
+  if (!name) return null;      // a blip with no name is one nobody can act on
+  return {
+    name,
+    encounterId: typeof v.encounterId === 'string' ? v.encounterId : null,
+    hostileId: typeof v.hostileId === 'string' ? v.hostileId : null,
+    state: CONTACT_STATES.includes(v.state) ? v.state : 'hidden'
+  };
+}
+
+// An auspex reaches 50 metres in the books. A default, not a law — a GM
+// with a different reading, or a jury-rigged augur, changes it.
+export const AUSPEX_RANGE_M = 50;
+
+/* An auspex sweep from a square. Everything in range that was hidden becomes
+   a ping; what has already been seen stays seen, because a scope does not
+   un-see a thing.
+
+   A sweep is NOT line of sight: an auspex reads through a bulkhead, which is
+   most of why it is worth carrying. Range alone bounds it. */
+export function auspexSweep(map, from, rangeM = AUSPEX_RANGE_M) {
+  const m = readMap(map);
+  if (!from) return m.contacts;
+  const reach = (Number(rangeM) || 0) / (m.metresPerSquare || 1);
+  if (reach <= 0) return m.contacts;
+  const out = {};
+  for (const [k, c] of Object.entries(m.contacts)) {
+    const p = parseKey(k);
+    if (!p) continue;
+    const near = Math.hypot(p.x - from.x, p.y - from.y) <= reach;
+    out[k] = (near && c.state === 'hidden') ? { ...c, state: 'ping' } : c;
+  }
+  return out;
+}
+
+/* What the projection shows of a square once fog is on. The GM's own window
+   draws the deck regardless; this is about what the table may see. */
+export function fogStateAt(map, x, y) {
+  const m = readMap(map);
+  if (!m.fog) return 'open';
+  return m.explored[cellKey(x, y)] ? 'open' : 'dark';
+}
+
+/* ------------------------- the saved map library -------------------------
+   A GM builds decks between sessions and plays them later, so a map is a
+   thing you keep, not a thing you have. The library is the GM's own, beside
+   their encounters and journals.
+
+   Publishing is what turns a drawing into a game: fog goes ON, what was
+   explored is wiped, and every contact goes back to hidden. A map pushed
+   with last session's fog still lifted would hand the party the floorplan. */
+export const readSavedMap = (x) => {
+  const src = x && typeof x === 'object' ? x : null;
+  return {
+    id: (src && typeof src.id === 'string' && src.id) || newMapId(),
+    name: String((src && src.name) || '').slice(0, 80),
+    map: readMap(src && src.map)
+  };
+};
+export const readMapLibrary = (list) =>
+  (Array.isArray(list) ? list : []).map(readSavedMap);
+
+let mapSeq = 0;
+const newMapId = () => 'bmap-' + Date.now().toString(36) + '-' + (mapSeq++).toString(36);
+
+export const newBattleMap = (name = 'New deck') => readSavedMap({ name, map: EMPTY_MAP });
+
+export function publishMap(saved) {
+  const s = readSavedMap(saved);
+  return {
+    ...s.map,
+    fog: true,
+    explored: {},
+    contacts: Object.fromEntries(
+      Object.entries(s.map.contacts).map(([k, c]) => [k, { ...c, state: 'hidden' }])
+    )
+  };
+}
 
 /* --------------------------- building the deck --------------------------- */
 
@@ -336,7 +523,13 @@ function walkLine(m, from, to) {
     if (x === from.x && y === from.y) continue;
     const k = cellKey(x, y);
     const door = m.doors[k];
-    if (door && doorBlocks(door)) return { x, y, reason: 'door', state: door };
+    if (door && doorBlocks(door.state)) {
+      return { x, y, reason: 'door', state: door.state, kind: door.kind };
+    }
+    // Cover that stands head-high stops the lane; a railing does not, which
+    // is the whole point of keeping the two apart.
+    const cov = coverById(m.cover[k]);
+    if (cov && cov.blocksSight) return { x, y, reason: 'cover', cover: cov.id };
     // Void only blocks on a map that has a deck painted at all; an unbuilt
     // map is open ground, not a solid block of rock.
     if (built && !m.floor[k]) return { x, y, reason: 'void' };
@@ -361,7 +554,9 @@ export function reachBetween({ from, to, map, weaponRangeM = null } = {}) {
     // 'out' carries null, not 0: out of range is no shot at all, and a 0 here
     // would be applied to the roll as "no modifier".
     mod: RANGE_MODIFIERS[band],
-    blocked: map ? walkLine(m, from, to) : null
+    blocked: map ? walkLine(m, from, to) : null,
+    // What the target is crouched behind, if anything.
+    cover: map ? coverBetween(m, from, to) : null
   };
 }
 
@@ -466,6 +661,30 @@ export function unobstructed(map, centre, cells) {
   if (!centre) return [];
   return (cells || []).filter((c) =>
     (c.x === centre.x && c.y === centre.y) || !walkLine(m, centre, c));
+}
+
+/* The cover a shot has to cross, as Armour Points. Sight-blocking cover
+   never reaches here — that stops the shot outright — so this reports the
+   low stuff a target crouches behind, including cover on the target's own
+   square, which is where most of it is. The highest wins; cover does not
+   stack in this system. */
+export function coverBetween(map, from, to) {
+  const m = readMap(map);
+  if (!from || !to) return null;
+  const steps = Math.ceil(distanceSquares(from, to) * 2);
+  let best = null;
+  const consider = (x, y) => {
+    const c = coverById(m.cover[cellKey(x, y)]);
+    if (c && (!best || c.ap > best.ap)) best = c;
+  };
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    const x = Math.round(from.x + (to.x - from.x) * t);
+    const y = Math.round(from.y + (to.y - from.y) * t);
+    consider(x, y);
+  }
+  consider(to.x, to.y);
+  return best;
 }
 
 /* Keeps a template on the deck. A blast or a field spilling into the void

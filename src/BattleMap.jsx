@@ -6,6 +6,8 @@ import {
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
   overlayKindFor, onDeck,
+  DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
+  nextContactState, auspexSweep, AUSPEX_RANGE_M,
   weaponOverlay, calibrationBar, deploymentRows
 } from './battlemap.js';
 import { GEAR } from './gear.js';
@@ -25,7 +27,11 @@ const MODES = [
   { id: 'stamp', label: 'Stamp tile' },
   { id: 'paint', label: 'Paint deck' },
   { id: 'erase', label: 'Erase' },
-  { id: 'door', label: 'Bulkhead' },
+  { id: 'door', label: 'Door' },
+  { id: 'cover', label: 'Cover' },
+  { id: 'hazard', label: 'Hazard' },
+  { id: 'contact', label: 'Contacts' },
+  { id: 'fog', label: 'Fog' },
   { id: 'marker', label: 'Marker' },
   { id: 'overlay', label: 'Overlay' },
   { id: 'measure', label: 'Measure' }
@@ -261,7 +267,7 @@ const BAND_COLOUR = {
   extreme: 'rgba(231,76,60,0.7)'
 };
 
-export default function BattleMap({ map, onChange, win = null }) {
+export default function BattleMap({ map, onChange, win = null, encounters = [] }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = themeById(m.theme);
 
@@ -269,6 +275,12 @@ export default function BattleMap({ map, onChange, win = null }) {
   const [tileId, setTileId] = useState('corridor_1x5');
   const [rotation, setRotation] = useState(0);
   const [markerType, setMarkerType] = useState('objective');
+  const [doorKind, setDoorKind] = useState('bulkhead');
+  const [coverType, setCoverType] = useState('crates');
+  const [hazardType, setHazardType] = useState('fire');
+  const [contactEnc, setContactEnc] = useState('');
+  const [contactHostile, setContactHostile] = useState('');
+  const [auspexM, setAuspexM] = useState(AUSPEX_RANGE_M);
   const [hover, setHover] = useState(null);
 
   const [weaponKey, setWeaponKey] = useState('lasgun');
@@ -297,6 +309,10 @@ export default function BattleMap({ map, onChange, win = null }) {
   const measureRef = useRef(null);
 
   const patch = (next) => onChange && onChange({ ...m, ...next });
+
+  // Which window this is. The projector's copy hides what the table must
+  // not see; the GM's own tab shows it.
+  const projecting = Boolean(win);
 
   const px = Math.min(
     m.pxPerSquare,
@@ -345,7 +361,7 @@ export default function BattleMap({ map, onChange, win = null }) {
     return { x, y };
   };
 
-  const applyAt = (pos, dragging = false) => {
+  const applyAt = (pos, dragging = false, sweep = false) => {
     if (!pos) return;
     const k = cellKey(pos.x, pos.y);
 
@@ -353,7 +369,15 @@ export default function BattleMap({ map, onChange, win = null }) {
     if (mode === 'erase') {
       const doors = { ...m.doors }; delete doors[k];
       const markers = { ...m.markers }; delete markers[k];
-      patch({ floor: paintCells(m.floor, [pos], false), doors, markers });
+      const cover = { ...m.cover }; delete cover[k];
+      const hazards = { ...m.hazards }; delete hazards[k];
+      patch({ floor: paintCells(m.floor, [pos], false), doors, markers, cover, hazards });
+      return;
+    }
+    // Revealing is a drag as well as a click: a corridor is swept, not
+    // clicked square by square.
+    if (mode === 'fog' && dragging) {
+      patch({ explored: { ...m.explored, [k]: true } });
       return;
     }
     if (dragging) return;   // the rest place one thing per click
@@ -363,7 +387,60 @@ export default function BattleMap({ map, onChange, win = null }) {
       return;
     }
     if (mode === 'door') {
-      patch({ doors: { ...m.doors, [k]: nextDoorState(m.doors[k]) } });
+      const doors = { ...m.doors };
+      const here = doors[k];
+      // Clicking a door of the same kind cycles its state; clicking with a
+      // different kind selected swaps it, which is how a bulkhead becomes a
+      // hatch without erasing it first.
+      doors[k] = (here && here.kind === doorKind)
+        ? { kind: here.kind, state: nextDoorState(here.state) }
+        : { kind: doorKind, state: 'closed' };
+      patch({ doors });
+      return;
+    }
+    if (mode === 'cover') {
+      const cover = { ...m.cover };
+      if (cover[k] === coverType) delete cover[k]; else cover[k] = coverType;
+      patch({ cover });
+      return;
+    }
+    if (mode === 'hazard') {
+      const hazards = { ...m.hazards };
+      if (hazards[k] === hazardType) delete hazards[k]; else hazards[k] = hazardType;
+      patch({ hazards });
+      return;
+    }
+    if (mode === 'contact') {
+      const contacts = { ...m.contacts };
+      const here = contacts[k];
+      if (here) {
+        // Cycle what the party knows: unknown -> on the scope -> seen.
+        contacts[k] = { ...here, state: nextContactState(here.state) };
+      } else {
+        const enc = encounters.find((e) => e.id === contactEnc);
+        const h = enc && enc.hostiles[Number(contactHostile)];
+        if (!h) return;          // nothing picked: a blank contact helps nobody
+        contacts[k] = {
+          name: h.name, encounterId: enc.id, hostileId: String(contactHostile), state: 'hidden'
+        };
+      }
+      patch({ contacts });
+      return;
+    }
+    if (mode === 'fog') {
+      if (sweep) {
+        // An auspex does not light the deck: it finds what is out there.
+        patch({ contacts: auspexSweep(m, pos, auspexM) });
+        return;
+      }
+      // A click reveals everything that can be SEEN from that square, not
+      // the square alone: the party walks into a room and the room lights
+      // up, which is what actually happens at the table. Dragging paints
+      // single squares for the cases that judgement can't be automated.
+      const seen = onDeck(m, visibleCells(m, pos, null));
+      const explored = { ...m.explored, [k]: true };
+      for (const c of seen) explored[cellKey(c.x, c.y)] = true;
+      patch({ explored });
       return;
     }
     if (mode === 'marker') {
@@ -521,6 +598,61 @@ export default function BattleMap({ map, onChange, win = null }) {
       if (cornerPillar(m.floor, p.x, p.y, 1, 1)) ctx.fillRect(x0 + px - c, y0 + px - c, c, c);
     }
 
+    // 3b. Hazards, as a tinted square with a warning stripe. Under the
+    //     cover and the markers, because something can stand in a fire.
+    for (const [k, id] of Object.entries(m.hazards)) {
+      const p = parseKey(k);
+      const hz = hazardById(id);
+      if (!p || !hz) continue;
+      const x0 = p.x * px, y0 = p.y * px;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x0, y0, px, px); ctx.clip();
+      ctx.fillStyle = hz.colour;
+      ctx.globalAlpha = 0.22;
+      ctx.fillRect(x0, y0, px, px);
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = hz.colour;
+      ctx.lineWidth = Math.max(2, px * 0.09);
+      for (let o = -px; o < px * 2; o += px * 0.34) {
+        ctx.beginPath();
+        ctx.moveTo(x0 + o, y0 + px);
+        ctx.lineTo(x0 + o + px, y0);
+        ctx.stroke();
+      }
+      ctx.restore();
+      ctx.strokeStyle = hz.colour;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x0 + 1, y0 + 1, px - 2, px - 2);
+    }
+
+    // 3c. Cover. Sight-blocking cover fills its square; cover you can shoot
+    //     over is drawn as a low bar, so the two are told apart at a glance
+    //     from across the table rather than by remembering which is which.
+    for (const [k, id] of Object.entries(m.cover)) {
+      const p = parseKey(k);
+      const cv = coverById(id);
+      if (!p || !cv) continue;
+      const x0 = p.x * px, y0 = p.y * px;
+      if (cv.blocksSight) {
+        ctx.fillStyle = 'rgba(78,88,96,0.92)';
+        ctx.fillRect(x0 + px * 0.1, y0 + px * 0.1, px * 0.8, px * 0.8);
+        ctx.strokeStyle = 'rgba(190,205,215,0.85)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(x0 + px * 0.1, y0 + px * 0.1, px * 0.8, px * 0.8);
+        ctx.beginPath();
+        ctx.moveTo(x0 + px * 0.1, y0 + px * 0.9);
+        ctx.lineTo(x0 + px * 0.9, y0 + px * 0.1);
+        ctx.stroke();
+      } else {
+        const h = Math.max(3, px * 0.2);
+        ctx.fillStyle = 'rgba(120,135,145,0.9)';
+        ctx.fillRect(x0 + px * 0.08, y0 + px - h - px * 0.12, px * 0.84, h);
+        ctx.strokeStyle = 'rgba(200,215,225,0.9)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + px * 0.08, y0 + px - h - px * 0.12, px * 0.84, h);
+      }
+    }
+
     // 4. The grid, for the table to count squares off.
     ctx.save();
     ctx.globalAlpha = 0.3;
@@ -531,21 +663,27 @@ export default function BattleMap({ map, onChange, win = null }) {
     ctx.restore();
 
     // 5. Bulkheads.
-    for (const [k, state] of Object.entries(m.doors)) {
+    for (const [k, door] of Object.entries(m.doors)) {
       const p = parseKey(k);
       if (!p) continue;
+      const { kind, state } = door;
       const x0 = p.x * px, y0 = p.y * px;
       ctx.fillStyle = state === 'open' ? '#2ecc71' : state === 'jammed' ? '#f39c12' : '#e74c3c';
       const leaf = Math.max(3, px * 0.16);
+      // A hatch is drawn narrow and short of the walls, a bulkhead spans the
+      // opening: the one you can crawl through should not look like the one
+      // you need a melta for.
+      const hatch = kind === 'hatch';
+      const inset = hatch ? px * 0.26 : 2;
+      const bh = hatch ? Math.max(4, px * 0.17) : Math.max(6, px * 0.3);
       if (state === 'open') {
-        ctx.fillRect(x0 + 2, y0 + 2, leaf, px - 4);
-        ctx.fillRect(x0 + px - 2 - leaf, y0 + 2, leaf, px - 4);
+        ctx.fillRect(x0 + inset, y0 + inset, leaf, px - inset * 2);
+        ctx.fillRect(x0 + px - inset - leaf, y0 + inset, leaf, px - inset * 2);
       } else {
-        const bh = Math.max(6, px * 0.3);
-        ctx.fillRect(x0 + 2, y0 + px / 2 - bh / 2, px - 4, bh);
+        ctx.fillRect(x0 + inset, y0 + px / 2 - bh / 2, px - inset * 2, bh);
         ctx.strokeStyle = '#0b0e14';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x0 + 2, y0 + px / 2 - bh / 2, px - 4, bh);
+        ctx.lineWidth = hatch ? 1 : 2;
+        ctx.strokeRect(x0 + inset, y0 + px / 2 - bh / 2, px - inset * 2, bh);
       }
     }
 
@@ -559,6 +697,70 @@ export default function BattleMap({ map, onChange, win = null }) {
       ctx.beginPath(); ctx.arc(cx, cy, px * 0.36, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+
+    // 6b. Fog of war, over the deck and the grid both: an unexplored square
+    //     must not even show how big it is.
+    //
+    //     IT IS DRAWN DIFFERENTLY IN THE TWO WINDOWS. The projector's copy is
+    //     solid, because the table must not read through it. The GM's own tab
+    //     is dimmed rather than blacked, because the GM is the one building
+    //     the deck and reaching for the next square to reveal, and a tool you
+    //     cannot see to aim is no tool.
+    if (m.fog) {
+      ctx.fillStyle = projecting ? 'rgb(3,4,6)' : 'rgba(3,4,6,0.82)';
+      for (let x = 0; x < m.cols; x++) {
+        for (let y = 0; y < m.rows; y++) {
+          if (!m.explored[cellKey(x, y)]) ctx.fillRect(x * px, y * px, px, px);
+        }
+      }
+    }
+
+    // 6c. Contacts. The fight is played with miniatures, so these are not
+    //     models on a board — they are what the GM knows and the auspex
+    //     leaks. A ping is drawn OVER the fog on purpose: that is the whole
+    //     mechanic, something on the scope with the deck still dark.
+    for (const [k, c] of Object.entries(m.contacts)) {
+      const p = parseKey(k);
+      if (!p) continue;
+      const cx = p.x * px + px / 2, cy = p.y * px + px / 2;
+      if (c.state === 'hidden') {
+        // Never on the projector: the GM's note to themselves.
+        if (projecting) continue;
+        ctx.save();
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = 'rgba(220,120,120,0.55)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(cx, cy, px * 0.3, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+        continue;
+      }
+      if (c.state === 'ping') {
+        // A contact, not a creature: concentric rings, no name, no shape.
+        // The party learns that something is out there and nothing else.
+        for (const r of [0.44, 0.3, 0.16]) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, px * r, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(255,70,70,${0.35 + (0.5 - r)})`;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(255,70,70,0.9)';
+        ctx.beginPath(); ctx.arc(cx, cy, px * 0.07, 0, Math.PI * 2); ctx.fill();
+        continue;
+      }
+      // seen
+      ctx.beginPath();
+      ctx.arc(cx, cy, px * 0.34, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(192,57,43,0.85)';
+      ctx.fill();
+      ctx.strokeStyle = '#0b0e14';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.max(8, Math.floor(px * 0.26))}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(c.name.slice(0, 2).toUpperCase(), cx, cy + px * 0.09);
     }
 
     // 7. THE OVERLAYS — the reason this is worth projecting at all.
@@ -680,7 +882,7 @@ export default function BattleMap({ map, onChange, win = null }) {
       ctx.textAlign = 'left';
       ctx.fillText(bar.label, bx + 4, by - px * 0.3);
     }
-  }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin, aim, weapon, coneAngle,
+  }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, showLos, textureTick]);
 
   /* ---- controls ---- */
@@ -695,6 +897,12 @@ export default function BattleMap({ map, onChange, win = null }) {
         }} />
     </label>
   );
+
+  const allExplored = () => {
+    const out = {};
+    for (let x = 0; x < m.cols; x++) for (let y = 0; y < m.rows; y++) out[cellKey(x, y)] = true;
+    return out;
+  };
 
   const clearAll = () => {
     if (!window.confirm('Clear the deck, bulkheads and markers?')) return;
@@ -750,9 +958,70 @@ export default function BattleMap({ map, onChange, win = null }) {
           </select>
         )}
 
-        {mode === 'door' && (
-          <span className="rt-bm-hint">Click to fit a bulkhead, again to cycle {DOOR_STATES.join(' → ')}.</span>
-        )}
+        {mode === 'door' && (<>
+          <select value={doorKind} onChange={(e) => setDoorKind(e.target.value)}>
+            {DOOR_KINDS.map((d) => (
+              <option key={d.id} value={d.id}>{d.name} · AP {d.ap}</option>
+            ))}
+          </select>
+          <span className="rt-bm-hint">
+            Click to fit one, again to cycle {DOOR_STATES.join(' → ')}. A jammed door still blocks.
+          </span>
+        </>)}
+
+        {mode === 'cover' && (<>
+          <select value={coverType} onChange={(e) => setCoverType(e.target.value)}>
+            {COVER_TYPES.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} · AP {c.ap} · {c.blocksSight ? 'blocks sight' : 'see over'}
+              </option>
+            ))}
+          </select>
+          <span className="rt-bm-hint">{(coverById(coverType) || {}).note}</span>
+        </>)}
+
+        {mode === 'hazard' && (<>
+          <select value={hazardType} onChange={(e) => setHazardType(e.target.value)}>
+            {HAZARD_TYPES.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+          </select>
+          <span className="rt-bm-hint">{(hazardById(hazardType) || {}).note}</span>
+        </>)}
+
+        {mode === 'contact' && (<>
+          <select value={contactEnc} onChange={(e) => { setContactEnc(e.target.value); setContactHostile(''); }}>
+            <option value="">— from which encounter —</option>
+            {encounters.map((e) => <option key={e.id} value={e.id}>{e.name || 'Untitled'}</option>)}
+          </select>
+          {contactEnc && (
+            <select value={contactHostile} onChange={(e) => setContactHostile(e.target.value)}>
+              <option value="">— which hostile —</option>
+              {((encounters.find((e) => e.id === contactEnc) || {}).hostiles || []).map((h, i) => (
+                <option key={i} value={String(i)}>{h.name}</option>
+              ))}
+            </select>
+          )}
+          <span className="rt-bm-hint">
+            Click to place; click a contact again to cycle unknown → on the scope → seen.
+            The models still do the fighting.
+          </span>
+        </>)}
+
+        {mode === 'fog' && (<>
+          <label className="rt-bm-num">
+            <input type="checkbox" checked={m.fog}
+              onChange={(e) => patch({ fog: e.target.checked })} /><span>Fog of war</span>
+          </label>
+          <button type="button" className="rt-btn"
+            onClick={() => patch({ explored: allExplored() })}>Reveal all</button>
+          <button type="button" className="rt-btn"
+            onClick={() => patch({ explored: {} })}>Hide all</button>
+          {num('Auspex m', auspexM, setAuspexM, 1, 500, 5)}
+          <span className="rt-bm-hint">
+            Click a square to reveal what can be seen from it; drag to sweep by hand.
+            Shift-click for an auspex sweep — it reads through bulkheads and pings
+            contacts without opening the deck.
+          </span>
+        </>)}
 
         {(mode === 'overlay' || mode === 'measure') && (
           <select value={weaponKey} onChange={(e) => setWeaponKey(e.target.value)}>
@@ -856,7 +1125,7 @@ export default function BattleMap({ map, onChange, win = null }) {
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase')) applyAt(pos, true);
           }}
           onMouseLeave={() => setHover(null)}
-          onMouseDown={(e) => { if (e.button === 0) applyAt(posFromEvent(e)); }}
+          onMouseDown={(e) => { if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey); }}
           style={{ cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
         />
       </div>

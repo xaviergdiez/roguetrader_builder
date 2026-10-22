@@ -30,18 +30,22 @@ import { rangeBand, RANGE_MODIFIERS, parseWeaponStats } from './groundcombat.js'
 
 /* ------------------------------ themes ------------------------------ */
 
-const T = (id, name, subtitle, grid, accent, fallback, desc, pattern = null) => ({
-  id, name, subtitle, grid, accent, fallback, desc, pattern,
+/* `wash` is how far the deck is knocked back before the grid, the tokens and
+   the templates are drawn over it. It exists so those read against a busy
+   floor, and it is per theme because the floors differ: a dim, cluttered
+   hulk plate needs the full quarter, and the same wash over a scrubbed white
+   station turns a deliberately bright deck grey.
+
+   `gridAlpha` goes with it. The grid is how the table counts squares, so it
+   has to be legible ON the floor, and a dark line over a bright deck needs
+   to be drawn harder than a bright line over a dim one. */
+const T = (id, name, subtitle, grid, accent, fallback, desc, wash = 0.25, gridAlpha = 0.3) => ({
+  id, name, subtitle, grid, accent, fallback, desc, wash, gridAlpha,
   // The floor fill is a real photographed/painted texture served from
   // public/maps as a static file, not a flat colour and not a bundled
   // import: a 1024px texture has no business going through the JS bundle.
   // `fallback` is what the floor is painted if the texture 404s.
-  //
-  // A theme with a `pattern` is DRAWN instead of downloaded. A scrubbed,
-  // geometric deck is panels and seams, and a photograph of one is a large
-  // file that goes soft when the squares grow; drawn, it is sharp at any
-  // size, costs nothing to load and takes its colours from the theme.
-  texture: pattern ? null : `/maps/${id}.jpg`
+  texture: `/maps/${id}.jpg`
 });
 
 export const MAP_THEMES = [
@@ -62,7 +66,7 @@ export const MAP_THEMES = [
   T('tau_station', 'T\u2019au Void Station', 'Pale composite panelling, soft seams, cool light',
     '#2f4a55', '#2b93b5', '#c3ccd1',
     'The scrubbed, well-lit decks of a T\u2019au orbital. Nothing rusted, nothing bleeding.',
-    'panels')
+    0.14, 0.55)
 ];
 
 export const DEFAULT_THEME = 'space_hulk';

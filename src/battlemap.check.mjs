@@ -27,15 +27,19 @@ import { GEAR } from './gear.js';
   assert.equal(new Set(ids).size, ids.length, 'duplicate theme id');
   for (const t of MAP_THEMES) {
     assert.ok(t.name && t.subtitle && t.desc, t.id + ': incomplete theme');
-    // A theme is EITHER a file on disk or a drawn pattern, never both and
-    // never neither — a theme with no fill at all renders as the flat
-    // fallback and reads as a styling bug rather than a missing texture.
-    if (t.pattern) {
-      assert.equal(t.texture, null, t.id + ': a drawn theme fetches nothing');
-    } else {
-      assert.equal(t.texture, `/maps/${t.id}.jpg`);
-    }
+    // The texture is a static file, not a bundled import, and every theme
+    // must name one that exists on disk — a 404 silently renders the flat
+    // fallback colour and looks like a styling bug rather than a missing file.
+    assert.equal(t.texture, `/maps/${t.id}.jpg`);
     assert.match(t.grid, /^#[0-9a-f]{6}$/i, t.id + ': grid colour');
+    // Every theme knocks its deck back by SOME amount, and never so far
+    // that the floor it took a texture to get is no longer visible.
+    assert.ok(typeof t.wash === 'number' && t.wash >= 0 && t.wash <= 0.5,
+      t.id + ': wash is ' + t.wash);
+    // The grid is how the table counts squares. A theme that drew it at
+    // zero would look clean and be unusable.
+    assert.ok(typeof t.gridAlpha === 'number' && t.gridAlpha > 0.1 && t.gridAlpha <= 1,
+      t.id + ': gridAlpha is ' + t.gridAlpha);
     assert.match(t.fallback, /^#[0-9a-f]{6}$/i, t.id + ': fallback colour');
   }
   // An unknown id falls back rather than returning undefined and crashing
@@ -47,10 +51,13 @@ import { GEAR } from './gear.js';
   assert.equal(EMPTY_MAP.theme, DEFAULT_THEME);
   assert.equal(readMap({}).theme, DEFAULT_THEME);
   assert.equal(themeById('blackstone_fortress').name, 'Blackstone Citadel');
-  // The clean deck is drawn, not downloaded.
-  assert.equal(themeById('tau_station').pattern, 'panels');
-  assert.equal(themeById('tau_station').texture, null);
-  assert.ok(MAP_THEMES.some((t) => !t.pattern), 'the photographed decks are still here');
+  assert.equal(themeById('tau_station').name, 'T\u2019au Void Station');
+  // The bright station deck is washed less than the dim hulk plate, or it
+  // would come out the same grey as everything else.
+  assert.ok(themeById('tau_station').wash < themeById('space_hulk').wash);
+  // and its dark grid is drawn harder, because a dark line on a bright
+  // floor needs more ink than a bright line on a dim one.
+  assert.ok(themeById('tau_station').gridAlpha > themeById('space_hulk').gridAlpha);
 }
 
 /* ---- reading a stored map ---- */

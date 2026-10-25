@@ -151,9 +151,28 @@ export function readEndeavour(e) {
     // an Endeavour. Stored per Endeavour rather than read off the ship, so a
     // GM can apply it (or anything like it) without the ship being to hand.
     apModifier: int(src && src.apModifier, 0),
-    missions: missions.filter((m) => m && typeof m === 'object').map(readMission)
+    missions: missions.filter((m) => m && typeof m === 'object').map(readMission),
+    // The campaign diary: one entry per session, GM-only (redactEndeavour).
+    ...(Array.isArray(src && src.diary) ? { diary: readDiary(src.diary) } : {})
   };
 }
+
+export function readDiary(list) {
+  return (Array.isArray(list) ? list : [])
+    .filter((x) => x && typeof x === 'object')
+    .map((x) => ({
+      id: (typeof x.id === 'string' && x.id) || newId('day'),
+      at: Number.isFinite(Number(x.at)) ? Number(x.at) : Date.now(),
+      title: str(x.title, 120),
+      text: str(x.text, 4000),
+      // What the GM suggested to themselves; never applied by anything here.
+      xp: Math.max(0, int(x.xp, 0))
+    }))
+    .slice(-200);
+}
+
+export const withDiaryEntry = (end, entry) =>
+  ({ ...end, diary: readDiary([...(end.diary || []), entry]) });
 
 /* A name is stored exactly as it was typed, EMPTY INCLUDED, and the fallback
    is supplied here when something is drawn.
@@ -239,6 +258,7 @@ export function endeavourProgress(end) {
 export function redactEndeavour(end, { isGm = false } = {}) {
   if (!end) return null;
   if (isGm) return end;
+  const { diary, ...pub } = end;
   const missions = (end.missions || [])
     .map((m) => {
       const { scenario, ...rest } = m;
@@ -248,7 +268,7 @@ export function redactEndeavour(end, { isGm = false } = {}) {
         objectives: (m.objectives || []).filter((o) => !o.hidden) };
     })
     .filter((m) => (m.objectives || []).length > 0);
-  return { ...end, missions };
+  return { ...pub, missions };
 }
 
 /* ---- what a list prints ---- */

@@ -739,7 +739,9 @@ export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
     case 'player_heal': {
       const prev = playerVitals[e.charId];
       const entry = patchWounds(prev, {
-        delta: -Math.max(0, Math.floor(Number(e.amount) || 0))
+        delta: -Math.max(0, Math.floor(Number(e.amount) || 0)),
+        // Critical Damage mends separately (downtime, with medical care).
+        crit: -Math.max(0, Math.floor(Number(e.critHeal) || 0))
       });
       // Healing a wound does not clear a condition: keep what was there.
       return { patch: { playerVitals: { ...playerVitals, [e.charId]: { ...(prev || {}), ...entry } } }, fields: ['playerVitals'], unknown: false };

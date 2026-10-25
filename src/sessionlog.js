@@ -23,7 +23,6 @@ export const CATEGORIES = [
 const EVENT_CATEGORY = {
   player_fired: 'fired',
   player_melee: 'fought',
-  npc_damage: 'wounded',
   psychic_power: 'psychic',
   objective_scored: 'objective'
 };
@@ -39,8 +38,18 @@ export function tallySession(entries, { survivors = [], objectiveChars = [] } = 
     out[id][cat] = (out[id][cat] || 0) + 1;
   };
   for (const e of entries || []) {
+    const who = e && (e.actor || e.charId);
     const cat = EVENT_CATEGORY[e && e.event];
-    if (cat) bump(e.actor || e.charId, cat);
+    if (cat) bump(who, cat);
+    // A character's own attack on a hostile (npc_damage) is logged with how
+    // it was made and whether it landed: shooting is "fired", swinging is
+    // "fought", and only a hit "wounded an enemy". A miss still counts as
+    // the attempt.
+    if (e && e.event === 'npc_damage' && who) {
+      if (e.attack === 'ranged') bump(who, 'fired');
+      if (e.attack === 'melee') bump(who, 'fought');
+      if (e.hit) bump(who, 'wounded');
+    }
   }
   for (const id of survivors) bump(id, 'survived');
   for (const id of objectiveChars) bump(id, 'objective');

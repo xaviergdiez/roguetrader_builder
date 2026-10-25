@@ -330,7 +330,11 @@ export default async function handler(req, res) {
     let next = applyPatch(ship, { combat: { ...ship.combat, ...patch } });
     next = appendLog(next, {
       by: auth.isGm ? "gm" : "player", charId: event.charId || null,
-      event: event.id, text: String(event.text || event.id).slice(0, 300)
+      event: event.id, text: String(event.text || event.id).slice(0, 300),
+      // How an attack was made and whether it landed, for the session
+      // diary. Informational only: nothing in the fight reads these back.
+      ...(event.attack === "ranged" || event.attack === "melee"
+        ? { attack: event.attack, hit: Number(event.amount) > 0 } : {})
     });
     await redis.set(shipKey(code), next);
 

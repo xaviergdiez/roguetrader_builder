@@ -61,6 +61,7 @@ import {
   ammoCost, spendAmmo, jamCheck, overheatResult, clearJam, reload as gcReload
 } from './groundcombat.js';
 import NervePanel, { SpotPanel } from './NervePanel.jsx';
+import CampaignPanel from './CampaignPanel.jsx';
 import { situationFor } from './awareness.js';
 import { insanityTrack, corruptionTrack, INSANITY_STEP, MALIGNANCY_STEP } from './sanity.js';
 import {
@@ -6660,6 +6661,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     const who = characterName || 'A player';
     groundEvent({
       id: 'npc_damage', npcId: npc.id, amount: totalTaken, crit: critGained,
+      charId, attack: gMyPreview.weapon.skillType === 'ws' ? 'melee' : 'ranged',
       text: gMyPreview.success
         ? `${who} hits ${npc.name} with ${gMyPreview.weapon.label} (${gMyPreview.hits} hit${gMyPreview.hits === 1 ? '' : 's'}, ${totalTaken} Wounds).`
         : `${who} misses ${npc.name} (rolled ${gMyPreview.roll} vs ${gMyPreview.total}).`
@@ -8592,6 +8594,11 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                   + 'marked hidden never leave this machine.'
                 : 'Open a bridge to publish this to the table.'}
             </p>
+
+            {/* The campaign between fights: scenario and secret sub-plots,
+                the session log with its XP suggestion, and downtime. */}
+            <CampaignPanel code={bridgeCode} journal={journal}
+              editMission={editMission} putEndeavour={putEndeavour} />
           </>
         );
       })()}

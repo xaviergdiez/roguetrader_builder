@@ -649,3 +649,11 @@ console.log('groundcombat.check.mjs: ammo, jam and pinning rules passed');
   assert.deepEqual(wrap.patch.ground.between[0].expired, ['Surprised']);
 }
 console.log('groundcombat.check.mjs: awareness conditions passed');
+
+{
+  const c = { playerVitals: { pc1: { max: 12, damage: 10, critSoFar: 3, conditions: [] } }, ground: { npcs: [] } };
+  const h = applyGroundEvent(c, { id: 'player_heal', charId: 'pc1', amount: 4, critHeal: 2 }, {});
+  assert.equal(h.patch.playerVitals.pc1.damage, 6);
+  assert.equal(h.patch.playerVitals.pc1.critSoFar, 1);
+  assert.equal(applyGroundEvent(c, { id: 'player_heal', charId: 'pc1', amount: 1, critHeal: 99 }, {}).patch.playerVitals.pc1.critSoFar, 0, 'cannot go below none');
+}

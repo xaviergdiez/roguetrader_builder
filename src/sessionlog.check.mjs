@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { tallySession, suggestXp, diaryEntry, ENCOUNTER_XP } from './sessionlog.js';
 
 const log = [
-  { event: 'npc_damage', charId: 'c1' },
-  { event: 'npc_damage', actor: 'c2', charId: null },
+  { event: 'npc_damage', charId: 'c1', attack: 'melee', hit: true },
+  { event: 'npc_damage', actor: 'c2', charId: null, attack: 'ranged', hit: true },
+  { event: 'npc_damage', charId: 'c2', attack: 'ranged', hit: false },
   { event: 'player_melee', charId: 'c1' },
   { event: 'player_fired', charId: 'c1' },
   { event: 'psychic_power', charId: 'c2' },
@@ -11,8 +12,8 @@ const log = [
   { event: 'npc_damage' }
 ];
 const t = tallySession(log, { survivors: ['c1', 'c2'], objectiveChars: ['c2'] });
-assert.deepEqual(t.c1, { wounded: 1, fought: 1, fired: 1, survived: 1 });
-assert.deepEqual(t.c2, { wounded: 1, psychic: 1, survived: 1, objective: 1 });
+assert.deepEqual(t.c1, { fought: 2, wounded: 1, fired: 1, survived: 1 });
+assert.deepEqual(t.c2, { fired: 2, wounded: 1, psychic: 1, survived: 1, objective: 1 });
 assert.equal(Object.keys(t).length, 2, 'unattributed events are ignored');
 
 // RT p.291
@@ -28,6 +29,6 @@ assert.equal(suggestXp({}).suggestion, true);
 
 const d = diaryEntry(t, { c1: 'Grak' }, { title: 'The Cloud-Fane', xp: suggestXp({}) });
 assert.match(d, /The Cloud-Fane \(suggested XP: 500 each\)/);
-assert.match(d, /Grak: Survived, Fired a weapon, Fought in melee, Wounded an enemy/);
+assert.match(d, /Grak: Survived, Fired a weapon, Fought in melee x2, Wounded an enemy/);
 
 console.log('sessionlog.check.mjs: all assertions passed');

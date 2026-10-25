@@ -291,6 +291,17 @@ import {
   assert.equal(subplotMessage(e.missions[0], sc.subplots[0]).to, 'c1');
   assert.equal(subplotMessage(e.missions[0], sc.subplots[1]), null, 'no character, nowhere to send it');
   assert.ok(SCENARIO_CONCEPTS.includes('Stowaway'));
+
+  const { readDiary, withDiaryEntry } = await import('./endeavours.js');
+  const e0 = readEndeavour({ name: 'E', missions: [{ name: 'M', objectives: [{ name: 'o' }] }] });
+  assert.equal(e0.diary, undefined, 'no diary until there is one');
+  const e1 = withDiaryEntry(e0, { title: 'Session 1', text: 'Grak: Survived', xp: 500 });
+  assert.equal(e1.diary.length, 1);
+  assert.equal(e1.diary[0].xp, 500);
+  assert.deepEqual(readEndeavour(e1), e1, 'a diary survives a round trip');
+  assert.equal(red(e1, { isGm: true }).diary.length, 1);
+  assert.equal(red(e1, { isGm: false }).diary, undefined, "the diary is the GM's");
+  assert.equal(readDiary([null, 3, { text: 'x', xp: -5 }])[0].xp, 0);
 }
 console.log('endeavours.js OK (%d objective kinds, %d statuses)',
   OBJECTIVE_KINDS.length, STATUSES.length);

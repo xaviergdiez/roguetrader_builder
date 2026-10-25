@@ -53,7 +53,11 @@ const strings = [
   'Good chainsword or best staff; good flamer or best lasgun; best guard flak armour, Ecclesiarchal robes, aquila pendant, censer.',
   'Best hellpistol or good hand cannon; best metal staff, best xeno-mesh armour, Emperor’s tarot deck, silk headscarf, Nobilite signet, micro-bead.',
   'Best hellpistol or common inferno pistol; best hellgun or common boltgun; xeno-mesh armour, autoquill, dataslate, micro-bead, multikey, two sets of robes, synskin, chrono, cameleoline cloak.',
-  'Best mono-sword or common power sword; best hand cannon or common bolt pistol; guard flak, micro-bead, void suit, blessed ship token, re-breather, Navy uniform, pict-recorder, vox-caster.'
+  'Best mono-sword or common power sword; best hand cannon or common bolt pistol; guard flak, micro-bead, void suit, blessed ship token, re-breather, Navy uniform, pict-recorder, vox-caster.',
+  // ponytail: this list is hand-kept rather than read from CAREERS, which
+  // lives in the JSX and cannot be imported here. Add a career's gear string
+  // when you add the career, or its kit goes unchecked.
+  'Best mono-sword or good power sword; two mono-swords; enforcer light carapace or synskin, micro-bead, void suit, medikit.'
 ];
 const missing = [];
 for (const str of strings) {
@@ -77,6 +81,25 @@ assert.deepEqual(missing, [], 'gear with no catalogue entry: ' + missing.join(',
   for (const [k, v] of Object.entries(GEAR)) {
     assert.ok(ladder.has(v.avail), k + ' has an off-ladder rating: ' + v.avail);
   }
+}
+
+/* ---- a force field is not armour ---- */
+
+// The combat engine reads an AP figure off the stats line and subtracts it.
+// A field never reduces damage — it negates a hit or it doesn't — so giving
+// one an AP line would quietly hand the wearer permanent damage reduction on
+// top of a save it is also allowed to make.
+{
+  const fields = Object.entries(GEAR).filter(([, v]) => v.kind === 'Field');
+  assert.ok(fields.length >= 4, 'the force fields went missing');
+  for (const [k, v] of fields) {
+    assert.equal(/\bAP\s*\d/.test(v.stats), false, k + ': a field must not carry an AP figure');
+    assert.match(v.stats, /Protection Rating \d+/, k + ': a field needs its rating');
+    assert.match(v.stats, /Overload \d\d–\d\d/, k + ': and the band it burns out on');
+  }
+  // And it is reachable the way everything else is.
+  assert.equal(availabilityOf('a Good Refractor Field').rating, 'Rare');
+  assert.equal(availabilityOf('a Good Refractor Field').craftsmanship, 'Good');
 }
 
 // Reading it off a label, quality prefix and all. The prefix is reported

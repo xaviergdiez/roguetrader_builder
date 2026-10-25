@@ -1,0 +1,50 @@
+Field,Value,Notes / accepted values
+#,,"Sister Mara Thorne — an Adeptus Sororitas of the Mendicantine tradition, built on the Missionary career. Load with Roster → Load character → paste this CSV."
+# — IDENTITY —,,
+Name,Sister Mara Thorne,Free text.
+Gender,Female,Male | Female | Other
+Portrait URL,,"Optional. Direct link to an image, or leave blank."
+Background,,"Left blank on purpose: the app drafts one from the origin path below."
+# — ORIGIN PATH —,,
+Home World,Imperial World,+3 Willpower. Wounds = 2 x TB + 1d5. Fate 3 (4 on a 9-10).
+Birthright,Child of the Creed,Raised in the shadow of the Ecclesiarchy.
+Lure of the Void,Zealot,Faith took her off-world.
+Trials,The Hand of War,A campaign she walked out of.
+Motivation,Endurance,The Mendicantine vow: minister on the fringe and survive it. +1 wound.
+Career,Missionary,Starts with Pure Faith and Unshakeable Faith.
+# — ORIGIN PATH CHOICES —,,Only those belonging to the picks above apply.
+Child of the Creed: Bonus,+3 Willpower,choice id: cc_b
+Zealot: Mark of faith,Favoured of the Faithful,choice id: zl
+The Hand of War: The Ashes of War,A Weapon Training Talent,choice id: hw_t
+The Hand of War: Hatred (your old foe),Chaos worshippers,choice id: hw_h
+# — CHARACTERISTICS —,,The 2d10+25 roll BEFORE origin modifiers. The app applies those itself.
+Weapon Skill,42,"Child of the Creed carries a hidden -3, so this lands at 39."
+Ballistic Skill,33,
+Strength,34,
+Toughness,40,"-5 from Favoured of the Faithful lands this at 35, for Toughness Bonus 3."
+Agility,30,
+Intelligence,29,
+Perception,31,
+Willpower,40,+3 Imperial World +3 Creed = 46.
+Fellowship,33,+5 from Favoured of the Faithful = 38.
+# — DERIVED ROLLS —,,
+Wound roll,4,"The 1d5 an Imperial World calls for: 2 x TB 3 + 4 + 1 for Endurance = 11 wounds."
+Fate roll,9,"1d10 against the Imperial World table: a 9 buys the fourth Fate Point."
+# — IN PLAY —,,
+Damage taken,0,
+Wound bonus,0,
+# — PROGRESSION —,,
+XP total,5000,"Rank 1. 500 spendable after the origin path; 200 goes on Power Armour Training below."
+Psy rating,,Not a psyker.
+# — GAINED AFTER CREATION —,,Semicolon separated. Origin-path entries come across automatically.
+Extra skills,,
+Extra talents,,"Power Armour Training is filed as an Elite Advance below, so it is not repeated here."
+Extra traits,"Sanctified Iron: the bionic arm is an etched canvas for devotional litanies. Among missionary orders a lost limb is a scar of faith.",
+Elite Advances,"Power Armour Training (Talent, 200 XP)","No amount of coin or standing teaches anyone to walk in powered plate."
+Extra gear,Good Bionic Arm; Light Power Armour,"The arm is initial gear for a Missionary. The suit came through the Ecclesiarchy requisition route — target 10 at Profit Factor 20, and it cost 1 Profit Factor."
+Dropped gear,best guard flak armour,"Replaced by the power armour; kept out of the way rather than deleted."
+Concept,"Mendicantine Sister ministering to fringe worlds the Ecclesiarchy has forgotten",
+Role in crew,"Confessor and close-quarters enforcer",
+Secret,"She burned a shrine to keep a Chaos relic out of the hands that were coming for it, and let the Order believe the heretics did it.",GM only — feeds the GM crew tab.
+Favour owed,"The Mission Commandery that issued her plate expects it back, blessed and in person.",Feeds the GM crew tab.
+Notes,"Acts of Faith in close quarters: burn a Fate Point rather than spend it when the alternative is losing the relic.",

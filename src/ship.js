@@ -26,6 +26,12 @@ const H = (id, name, cls, speed, manoeuvre, detection, armour, hullIntegrity,
   turrets, space, sp, slots, source
 });
 
+// A rolled Machine Spirit Oddity or Past History moves the same statistics a
+// component does, so its flat modifiers are summed in alongside them below.
+// Only the flat half — see shiphistory.js for what is deliberately left to
+// the GM.
+import { historyMods } from './shiphistory.js';
+
 export const HULLS = [
   H('hull-jericho', 'Jericho-class', 'Transport', 3, -10, 10, 12, 50, 1, 45, 20,
     ['prow', 'port', 'starboard'], 'Core'),
@@ -344,8 +350,12 @@ const listed = (bp) => {
 export const powerGenerated = (bp) =>
   listed(bp).reduce((n, c) => n + (c.power > 0 ? c.power : 0), 0);
 
+// A Wolf in Sheep's Clothing spends 2 Power maintaining its disguise, which
+// is a draw on the plant exactly like a component's, so it is counted here
+// rather than as reduced generation.
 export const powerUsed = (bp) =>
-  listed(bp).reduce((n, c) => n + (c.power < 0 ? -c.power : 0), 0);
+  listed(bp).reduce((n, c) => n + (c.power < 0 ? -c.power : 0), 0)
+  + Math.abs(Math.min(0, historyMods(bp && bp.history).power || 0));
 
 export const spaceUsed = (bp) => listed(bp).reduce((n, c) => n + c.space, 0);
 
@@ -431,14 +441,26 @@ export function validate(bp) {
 export const POP_PENALTY_THRESHOLD = 0.75;
 export const POP_MANOEUVRE_PENALTY = -5;
 
-export function stats(bp, vitals) {
+// `context` says what the ship is DOING, which three history entries turn
+// on: Wrothful and Skittish change in combat, Adventurous on whether an
+// Endeavour is running. Defaulting to neither is the ordinary case — a ship
+// sitting in the builder is not fighting and not chasing anything — and it
+// is also what every caller written before this did.
+export function stats(bp, vitals, context = {}) {
   const hull = hullById(bp && bp.hullId, bp);
   if (!hull) return null;
   const comps = listed(bp);
-  const sum = (key) => comps.reduce((n, c) => n + ((c.mods && c.mods[key]) || 0), 0);
+  const hist = historyMods(bp && bp.history, context);
+  // A component's mods and the ship's own history move the same figures, so
+  // they are added together rather than kept apart: nothing downstream cares
+  // whether the +5 Detection came from an auger array or from a machine
+  // spirit with a nose for trouble.
+  const sum = (key) => comps.reduce((n, c) => n + ((c.mods && c.mods[key]) || 0), 0)
+    + (hist[key] || 0);
 
-  const pop = Number((vitals && vitals.population) ?? 100);
-  const understaffed = pop < 100 * POP_PENALTY_THRESHOLD;
+  const maxPopulation = Math.max(0, 100 + (hist.population || 0));
+  const pop = Number((vitals && vitals.population) ?? maxPopulation);
+  const understaffed = pop < maxPopulation * POP_PENALTY_THRESHOLD;
 
   return {
     speed: hull.speed + sum('speed'),
@@ -449,8 +471,9 @@ export function stats(bp, vitals) {
     turrets: hull.turrets + sum('turrets'),
     hullIntegrity: hull.hullIntegrity + sum('hullIntegrity'),
     maxMorale: 100 + sum('morale'),
-    maxPopulation: 100,
-    moraleLossReduction: comps.reduce((n, c) => n + (c.moraleLossReduction || 0), 0),
+    maxPopulation,
+    moraleLossReduction: comps.reduce((n, c) => n + (c.moraleLossReduction || 0), 0)
+      + (hist.moraleLossReduction || 0),
     voidShields: comps.reduce((n, c) => n + (c.shields || 0), 0),
     understaffed
   };
@@ -464,10 +487,17 @@ export function newVitals(bp) {
   const s = stats(bp);
   const hull = hullById(bp && bp.hullId, bp);
   return {
-    population: 100,
+    population: s ? s.maxPopulation : 100,
     morale: s ? s.maxMorale : 100,
     hullIntegrity: hull ? hull.hullIntegrity : 0,
     corruption: 0,
-    repInquisition: 50, repMechanicus: 50, repNavy: 50, repColdTrade: 50
+    repInquisition: 50, repMechanicus: 50, repNavy: 50, repColdTrade: 50,
+    // The DYNASTY's Profit Factor, not any one character's. Rogue Trader
+    // makes this a single pooled figure the whole endeavour draws on, and
+    // acquisition.js has always tested against it — but it was derived per
+    // sheet (20 + the origin path's contribution), so every player carried a
+    // private copy and nobody's purchase moved anyone else's number. 0 means
+    // the table has not set it yet; the GM or the High Factotum does.
+    profitFactor: 0
   };
 }

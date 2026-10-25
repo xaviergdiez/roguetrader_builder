@@ -25,7 +25,15 @@ const list = (v) => (Array.isArray(v) ? v : []);
 function clean(homebrew) {
   const h = homebrew && typeof homebrew === "object" ? homebrew : {};
   const entries = (arr) => list(arr).filter((x) => x && typeof x === "object");
-  return { hulls: entries(h.hulls), components: entries(h.components) };
+  // `encounters` is a GM's saved encounter library (see src/encounters.js).
+  // It lives here rather than on a route of its own: same kind of thing,
+  // same size, and the plan's function budget is nearly spent.
+  return {
+    hulls: entries(h.hulls),
+    components: entries(h.components),
+    encounters: entries(h.encounters),
+    endeavours: entries(h.endeavours)
+  };
 }
 
 export default async function handler(req, res) {
@@ -42,7 +50,8 @@ export default async function handler(req, res) {
   if (req.method === "PUT") {
     const homebrew = clean((req.body ?? {}).homebrew);
 
-    const count = homebrew.hulls.length + homebrew.components.length;
+    const count = homebrew.hulls.length + homebrew.components.length
+      + homebrew.encounters.length + homebrew.endeavours.length;
     if (count > MAX_ENTRIES) {
       return res.status(413).json({
         error: `That is ${count} entries, over the ${MAX_ENTRIES} limit.`

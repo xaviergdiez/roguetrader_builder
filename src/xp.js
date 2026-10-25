@@ -118,6 +118,12 @@ const CHAR_TIERS = {
   'Void-Master': {
     primary: ['ag', 'bs', 'per'], secondary: ['wp', 't'], tertiary: ['ws', 's', 'int', 'fel']
   },
+  // Weapon Skill and Agility before anything: the archetype's own four are
+  // WS, S, T and Ag, and of those the two it actually spends every turn are
+  // the blade and the footwork.
+  'Bladedancer': {
+    primary: ['ws', 'ag', 's'], secondary: ['t', 'per'], tertiary: ['bs', 'int', 'wp', 'fel']
+  },
   'Eldar Corsair': {
     primary: ['ag', 'ws', 'per'], secondary: ['bs', 'wp'], tertiary: ['s', 't', 'int', 'fel']
   },

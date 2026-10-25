@@ -120,11 +120,11 @@ for (const tier of Object.keys(CHAR_ADVANCE_COST)) {
 
 const ALL_CHARS = ['ws', 'bs', 's', 't', 'ag', 'int', 'per', 'wp', 'fel'];
 
-// all 13 careers this app has advance tables for are covered, and vice versa
+// every career this app has advance tables for is covered, and vice versa
 assert.deepEqual(CHAR_TIER_CAREERS.slice().sort(), [
-  'Arch-Militant', 'Astropath Transcendent', 'Drukhari Kabalite Warrior', 'Eldar Corsair',
-  'Explorator', 'Kroot Mercenary', 'Missionary', 'Navigator', 'Ork Freebooter',
-  'Rogue Trader', 'Seneschal', "T'au Fire Warrior", 'Void-Master'
+  'Arch-Militant', 'Astropath Transcendent', 'Bladedancer', 'Drukhari Kabalite Warrior',
+  'Eldar Corsair', 'Explorator', 'Kroot Mercenary', 'Missionary', 'Navigator',
+  'Ork Freebooter', 'Rogue Trader', 'Seneschal', "T'au Fire Warrior", 'Void-Master'
 ]);
 
 // every career's tiers partition all nine characteristics exactly once —

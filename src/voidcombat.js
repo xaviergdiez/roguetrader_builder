@@ -700,6 +700,15 @@ export function applyEvent(state, event) {
       patch.repColdTrade = clamp100(vital(s.repColdTrade, 50) + Math.floor(Number(e.amount) || 0));
       break;
 
+    // Signed like the standings, but NOT clamped to 100: Profit Factor has no
+    // printed ceiling — a successful endeavour is meant to push it past where
+    // the dynasty began — while the standings are a 0-100 regard. The floor
+    // is still 0, since a dynasty cannot owe less than nothing in means.
+    case 'profit_factor':
+      patch.profitFactor = Math.max(0,
+        vital(s.profitFactor, 0) + Math.floor(Number(e.amount) || 0));
+      break;
+
     case 'advance_phase':
       patch.phase = nextPhase(s.phase);
       break;

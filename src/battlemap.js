@@ -519,20 +519,14 @@ export function readContact(v) {
 }
 
 /* What a player's copy of the map may carry. The whole combat document is
-   polled by every browser, so a hidden contact left in it is readable by
-   anyone with the network tab open — its name included. Hidden contacts are
-   dropped; a ping keeps its square and loses everything else, which is
-   exactly what the projector shows. */
+   polled by every browser, so anything left in it is readable by anyone
+   with the network tab open: the floorplan, the explored squares, and every
+   contact with its name. The table plays on the projector, not on a
+   terminal, so a player's copy carries ONE thing: the light the deck is
+   fought in, which their own attack rolls need. */
 export function redactMapForTable(map) {
   if (!map || typeof map !== 'object') return map;
-  const contacts = {};
-  for (const [k, c] of Object.entries(map.contacts || {})) {
-    if (!c || c.state === 'hidden') continue;
-    contacts[k] = c.state === 'ping'
-      ? { name: 'Contact', encounterId: null, hostileId: null, state: 'ping' }
-      : c;
-  }
-  return { ...map, contacts };
+  return { lighting: lightingById(map.lighting).id };
 }
 
 // An auspex reaches 50 metres in the books. A default, not a law — a GM

@@ -58,7 +58,8 @@ import {
 import {
   ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES, GROUND_CONDITIONS,
   weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll, resolveHits,
-  ammoCost, spendAmmo, jamCheck, overheatResult, clearJam, reload as gcReload
+  ammoCost, spendAmmo, jamCheck, overheatResult, clearJam, reload as gcReload, weaponAllowsAction,
+  actionById as gcActionById
 } from './groundcombat.js';
 import NervePanel, { SpotPanel } from './NervePanel.jsx';
 import CampaignPanel from './CampaignPanel.jsx';
@@ -6553,6 +6554,11 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const gmAttack = () => {
     const npc = ground.npcs.find((n) => n.id === gAtkNpc);
     if (!npc) return;
+    const npcWeapon = gcWeaponProfile(npc.weapon);
+    if (npcWeapon && !weaponAllowsAction(npcWeapon, gAtkAction)) {
+      setErr(`${npc.weapon} cannot fire a ${gcActionById(gAtkAction).name.toLowerCase()}.`);
+      return;
+    }
     const roll = roll1d100();
     // What the scene hands this shot: the target's Unaware/Surprised/Stunned
     // conditions and the light the map is fought in.
@@ -6607,6 +6613,11 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const rollMyAttack = () => {
     const npc = ground.npcs.find((n) => n.id === gNpcTarget);
     if (!npc || !gMyWeapon) return;
+    const myWeapon = gcWeaponProfile(gMyWeapon);
+    if (myWeapon && !weaponAllowsAction(myWeapon, gMyAction)) {
+      setErr(`${gMyWeapon} cannot fire a ${gcActionById(gMyAction).name.toLowerCase()}.`);
+      return;
+    }
     const roll = d(100);
     const sit = situationFor({ targetConditions: npc.conditions, lighting: ground.map && ground.map.lighting });
     const atk = npcAttackRoll(myAttackChar, {
@@ -7182,10 +7193,15 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                               onClick={() => {
                                 const t = breakTest({ npc: n, trigger, roll: d(100) });
                                 if (!t) return;
+                                // The shared log says only what the table can see: that it
+                                // held or broke. The roll, the target and the fallback
+                                // behaviour are the GM's, shown here and nowhere else.
                                 groundEvent({ id: 'gm_note', text: t.skipped
+                                  ? `${n.name} stands firm.`
+                                  : `${n.name} ${t.holds ? 'holds' : 'breaks'}.` },
+                                t.skipped
                                   ? `${n.name} never breaks.`
-                                  : `${n.name} (${trigger.replace('_', ' ')}): rolled ${t.roll} vs ${t.target} \u2014 `
-                                    + (t.holds ? 'the order holds.' : `breaks. ${t.fallback}`) });
+                                  : `Rolled ${t.roll} vs ${t.target}: ${t.holds ? 'the order holds.' : `it breaks. ${t.fallback}`}`);
                               }}>
                               Break: {trigger.replace('_', ' ')}
                             </button>

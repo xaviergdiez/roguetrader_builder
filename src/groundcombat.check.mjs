@@ -516,35 +516,70 @@ console.log('groundcombat.check.mjs: ground combat events all passed');
 
 console.log('groundcombat.check.mjs: damage resolver passed');
 
-/* ---- Inquisitor mechanics: ammo, jams, pinning, between turns ---- */
+/* ---- ammo, jams, pinning, between turns (Rogue Trader pp.116-117, 243, 248-249) ---- */
 {
-  const { ammoCost, spendAmmo, jamCheck, reload, pinningTest, betweenTurns, actionById } =
+  const { ammoCost, spendAmmo, jamCheck, overheatResult, clearJam, needsRecharge, reload, pinningTest,
+    pinEscapeTest, pinnedCondition, betweenTurns, actionById, resolveAttack, toHit } =
     await import('./groundcombat.js');
   const rifle = { skillType: 'bs', clip: 60, modes: { single: true, semiAuto: 3, fullAuto: 10 }, qualities: [] };
   assert.equal(ammoCost(rifle, 'standard_attack'), 1);
   assert.equal(ammoCost(rifle, 'semi_auto_burst'), 3);
   assert.equal(ammoCost(rifle, 'full_auto_burst'), 10);
+  assert.equal(ammoCost(rifle, 'suppressing_fire'), 10, 'suppressing fire spends a full-auto burst');
   assert.equal(ammoCost({ skillType: 'ws', clip: null }, 'standard_attack'), 0, 'melee spends nothing');
   assert.equal(spendAmmo(5, 3), 2);
   assert.equal(spendAmmo(2, 3), null, 'a short clip cannot pay');
   assert.equal(reload(rifle), 60);
 
+  // p.249: 96-00 jams; p.242: 94-00 on a burst; p.117: Unreliable 91+.
   assert.equal(jamCheck(rifle, 95).jammed, false);
   assert.equal(jamCheck(rifle, 96).jammed, true);
+  assert.equal(jamCheck(rifle, 93, 'full_auto_burst').jammed, false);
   assert.equal(jamCheck(rifle, 94, 'full_auto_burst').jammed, true, 'bursts jam on 94+');
-  assert.equal(jamCheck({ ...rifle, qualities: ['Reliable'] }, 99).jammed, false);
-  assert.equal(jamCheck({ ...rifle, qualities: ['Reliable'] }, 100).jammed, true);
+  assert.equal(jamCheck(rifle, 94, 'suppressing_fire').jammed, true, 'so does suppressing fire');
   assert.equal(jamCheck({ ...rifle, qualities: ['Unreliable'] }, 91).jammed, true);
-  const plasma = { ...rifle, qualities: ['Overheats'] };
+  assert.equal(jamCheck({ ...rifle, qualities: ['Unreliable'] }, 90).jammed, false);
+  // p.116: Reliable — a jam only counts on a d10 of 10, otherwise it is a miss.
+  const reliable = { ...rifle, qualities: ['Reliable'] };
+  assert.equal(jamCheck(reliable, 97, 'standard_attack', { d10: 4 }).jammed, false);
+  assert.equal(jamCheck(reliable, 97, 'standard_attack', { d10: 4 }).reliableSaved, true);
+  assert.equal(jamCheck(reliable, 97, 'standard_attack', { d10: 10 }).jammed, true);
+  assert.equal(jamCheck(reliable, 50, 'standard_attack', { d10: 10 }).jammed, false, 'no jam below the threshold');
+  // p.115: craftsmanship. Poor adds Unreliable, Good adds Reliable, they cancel, Best never jams.
+  assert.equal(jamCheck(rifle, 91, 'standard_attack', { craftsmanship: 'poor' }).jammed, true);
+  assert.equal(jamCheck({ ...rifle, qualities: ['Unreliable'] }, 91, 'standard_attack', { craftsmanship: 'good' }).jammed, false,
+    'Good craftsmanship cancels Unreliable');
+  assert.equal(jamCheck(rifle, 99, 'standard_attack', { craftsmanship: 'best' }).jammed, false);
+  assert.equal(jamCheck(rifle, 91, 'standard_attack', { untrained: true }).jammed, true, 'untrained counts as Unreliable');
+  // p.116: Overheats on 91+, and that is not a Jam.
+  const plasma = { ...rifle, qualities: ['Overheats'], damage: { dice: 1, die: 10, bonus: 6, type: 'E' } };
   assert.equal(jamCheck(plasma, 91).overheated, true);
   assert.equal(jamCheck(plasma, 91).jammed, false);
   assert.equal(jamCheck(plasma, 90).overheated, false);
+  assert.deepEqual(overheatResult(plasma).damage, plasma.damage);
+  assert.equal(overheatResult(plasma).pen, 0);
+  assert.equal(needsRecharge({ qualities: ['Overheats', 'Recharge'] }), true);
+  // p.249: clearing a Jam is a BS test; the ammo in it is lost.
+  assert.equal(clearJam({ bs: 40, roll: 30 }).cleared, true);
+  assert.equal(clearJam({ bs: 40, roll: 30 }).ammoLost, true);
+  assert.equal(clearJam({ bs: 40, roll: 70 }).cleared, false);
 
-  assert.ok(actionById('suppressing_fire'), 'Suppressing Fire is a listed action');
-  assert.equal(actionById('suppressing_fire').suppresses, true);
-  assert.equal(pinningTest({ willpower: 40, roll: 30 }).pinned, false);
-  assert.equal(pinningTest({ willpower: 40, roll: 70 }).pinned, true);
-  assert.equal(pinningTest({ blast: true }).pinned, true, 'a blast pins without a test');
+  // p.243: Suppressing Fire is a Full Action, Hard (-20) BS, no +20 full-auto bonus.
+  const sf = actionById('suppressing_fire');
+  assert.equal(sf.type, 'full');
+  assert.equal(sf.toHitMod, -20);
+  assert.equal(sf.suppresses, true);
+  assert.equal(toHit({ baseSkill: 50, weapon: { skillType: 'bs', range: 90 }, distanceM: 20, actionId: 'suppressing_fire' }).total, 40);
+  const burst = resolveAttack({ target: 40, roll: 10, actionId: 'suppressing_fire', weapon: rifle });
+  assert.equal(burst.hits, 1 + Math.floor(3 * 0.5), 'one hit + one per two DoS');
+
+  // p.248: Hard (-20) Willpower Pinning Test, not auto-pinned; pinned until recovered.
+  assert.equal(pinningTest({ willpower: 50, roll: 30 }).pinned, false, '30 vs 50-20');
+  assert.equal(pinningTest({ willpower: 50, roll: 31 }).pinned, true);
+  assert.equal(pinnedCondition().rounds, null, 'pinned lasts until the escape test, not a fixed time');
+  assert.equal(pinEscapeTest({ willpower: 40, roll: 60, underFire: false }).escaped, true, 'Easy +30 once nobody shoots');
+  assert.equal(pinEscapeTest({ willpower: 40, roll: 60, underFire: true }).escaped, false);
+  assert.equal(pinEscapeTest({ willpower: 5, roll: 99, inMelee: true }).escaped, true, 'melee frees a pinned character');
 
   const report = betweenTurns([
     { id: 'a', name: 'A', conditions: [{ id: 'blood_loss', name: 'Blood Loss', rounds: 1 }] },
@@ -564,4 +599,4 @@ console.log('groundcombat.check.mjs: damage resolver passed');
   assert.equal(wrapped.patch.playerVitals.pc1.damage, 1);
   assert.equal(applyGroundEvent(combat, { id: 'pinning_prompt' }, {}).unknown, false);
 }
-console.log('groundcombat.check.mjs: inquisitor mechanics passed');
+console.log('groundcombat.check.mjs: ammo, jam and pinning rules passed');

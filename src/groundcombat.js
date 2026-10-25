@@ -38,11 +38,14 @@ export const ACTIONS = [
     '1 hit + 1 per 2 Degrees of Success.', { requiresMode: 'semiAuto', toHitMod: 10, hitsPerDoS: 0.5 }),
   A('full_auto_burst', 'Full-Auto Burst', 'full',
     '1 hit + 1 per 1 Degree of Success.', { requiresMode: 'fullAuto', toHitMod: 20, hitsPerDoS: 1 }),
-  // Inquisitor's pinning rules: full auto pins the whole target group. The
-  // fire itself scores no hits; each target tests Willpower (pinningTest()).
+  // RT p.243. A full-auto weapon, a 45-degree kill zone. Every target in it
+  // tests Pinning (Hard -20 Willpower) whether or not it is hit; the shooter
+  // rolls a Hard -20 BS test for wild fire at a random target in the zone,
+  // one extra hit per two Degrees, up to the weapon's full-auto rate. No +20
+  // full-auto bonus.
   A('suppressing_fire', 'Suppressing Fire', 'full',
-    'Spray a 45-degree zone. No hits scored; every target in it tests Willpower or is Pinned.',
-    { requiresMode: 'fullAuto', toHitMod: 0, suppresses: true, ammoMultiplier: 1 }),
+    'Kill zone (45 degrees). Targets test Hard (-20) Willpower or are Pinned. Hard (-20) BS: 1 random hit + 1 per 2 DoS.',
+    { requiresMode: 'fullAuto', toHitMod: -20, hitsPerDoS: 0.5, suppresses: true, pinTestMod: -20 }),
   A('aim', 'Aim', 'half', '+10 to hit on the next attack.', { grantsNextAttack: 10 }),
   A('aim_extended', 'Aim (Extended)', 'full', '+20 to hit on the next attack.', { grantsNextAttack: 20 }),
   A('charge', 'Charge', 'full', 'Move up to 3x Agility Bonus. +10 WS (melee).', { wsMod: 10 }),
@@ -51,7 +54,8 @@ export const ACTIONS = [
   A('guarded_attack', 'Guarded Attack', 'full',
     '-10 WS. +10 Dodge/Parry until next turn.', { wsMod: -10, grantsDefense: { dodge: 10, parry: 10 } }),
   A('overwatch', 'Overwatch', 'full',
-    'Set a 45-degree kill zone. Fire as a Reaction on entry (-20 BS).', { bsMod: -20, reaction: true }),
+    'Set a 45-degree kill zone and name a Semi-Auto, Full-Auto or Suppressing attack. Targets in it test Hard (-20) Pinning or are Pinned.',
+    { reaction: true, pinTestMod: -20 }),
   A('reload', 'Reload', 'variable', 'Refills clip. Duration depends on weapon stats.'),
   A('tactical_advance', 'Tactical Advance', 'full', 'Move cover to cover, retaining cover bonus.')
 ];
@@ -59,11 +63,10 @@ export const ACTIONS = [
 export const actionById = (id) => ACTIONS.find((a) => a.id === id) || null;
 
 /* ------------------------------ ammo, jams, overheats ------------------------------
-   gear.js already stores Clip and the weapon qualities in the stats string
-   and parseWeaponStats() reads them back; nothing spent a round or rolled a
-   jam. These are the pure halves: how many rounds an attack costs, and
-   whether the d100 that came with it jammed or overheated the weapon. The
-   caller keeps the counter per carried weapon. */
+   Rogue Trader pp.116-117, 239, 242-243, 249. gear.js already stores Clip and
+   the weapon qualities in the stats string and parseWeaponStats() reads them
+   back; this is the pure half that spends rounds and judges the d100.
+   The caller keeps the rounds counter and the jammed flag per weapon. */
 
 export function ammoCost(weapon, actionId = 'standard_attack') {
   if (!weapon || weapon.clip == null) return 0;
@@ -82,41 +85,91 @@ export const spendAmmo = (rounds, cost) =>
 const hasQuality = (weapon, name) =>
   Boolean(weapon && (weapon.qualities || []).some((q) => q.toLowerCase().startsWith(name)));
 
-// Jam thresholds: 96+ for a single shot, 94+ for an automatic burst,
-// Unreliable jams on 91+, Reliable only on 100. A weapon that Overheats
-// does that on 91+ instead of jamming. The attack roll is reused, as the
-// rules intend.
-export function jamCheck(weapon, roll, actionId = 'standard_attack') {
-  if (!weapon || weapon.skillType !== 'bs') return { jammed: false, overheated: false, threshold: null };
+// An unmodified 96-00 jams a ranged weapon; 94-00 on a Semi-Auto, Full-Auto
+// or Suppressing attack. Unreliable jams on 91+ whatever the fire mode.
+// Reliable: the roll still "jams", but a d10 is then rolled and only a 10
+// is a real Jam — otherwise it is just a miss. Poor craftsmanship adds
+// Unreliable, Good adds Reliable (the two cancel), Best never jams or
+// overheats, and using a ranged weapon untrained counts as Unreliable.
+//
+// Overheats is a separate result: 91+ (not a Jam). The wielder takes the
+// weapon's own damage, Pen 0, to an arm — avoidable by dropping the weapon
+// as a Free Action — and the weapon cannot fire again until the second
+// round after.
+//
+// `d10` is the Reliable confirmation die; `craftsmanship` is 'poor' | 'common' |
+// 'good' | 'best'.
+export function jamCheck(weapon, roll, actionId = 'standard_attack', { craftsmanship = 'common', untrained = false, d10 = 10 } = {}) {
+  const none = { jammed: false, overheated: false, threshold: null, reliableSaved: false };
+  if (!weapon || weapon.skillType !== 'bs') return none;
+  if (craftsmanship === 'best') return { ...none, bestCraft: true };
   const action = actionById(actionId);
-  let threshold = action && action.requiresMode ? 94 : 96;
-  if (hasQuality(weapon, 'unreliable')) threshold = Math.min(threshold, 91);
-  if (hasQuality(weapon, 'reliable')) threshold = 100;
+  const auto = Boolean(action && action.requiresMode);
+
+  let unreliable = hasQuality(weapon, 'unreliable') || craftsmanship === 'poor' || untrained;
+  let reliable = hasQuality(weapon, 'reliable') || craftsmanship === 'good';
+  if (unreliable && reliable) { unreliable = false; reliable = false; }
+
   if (hasQuality(weapon, 'overheats')) {
-    return { jammed: false, overheated: roll >= 91, threshold: 91 };
+    return { ...none, overheated: roll >= 91, threshold: 91 };
   }
-  return { jammed: roll >= threshold, overheated: false, threshold };
+  let threshold = auto ? 94 : 96;
+  if (unreliable) threshold = Math.min(threshold, 91);
+  const wouldJam = roll >= threshold;
+  if (wouldJam && reliable) {
+    const real = Number(d10) === 10;
+    return { ...none, jammed: real, reliableSaved: !real, threshold };
+  }
+  return { ...none, jammed: wouldJam, threshold };
 }
 
-// Reload time off the weapon: "Rld" is not in the parsed stats, so the
-// default follows clip size — a pistol-sized clip is a Half Action, a belt a
-// Full Action, as a plain house rule the GM can overrule.
+// What an overheat costs the wielder: the weapon's own damage, no
+// penetration, to an arm — unless the weapon is dropped (a Free Action).
+export const overheatResult = (weapon) => ({
+  damage: weapon && weapon.damage ? weapon.damage : null,
+  pen: 0, location: 'arm', avoidableByDropping: true,
+  cooldownRounds: 1
+});
+
+// Clearing a Jam is a Full Action and a Ballistic Skill Test. On success the
+// weapon is clear but needs reloading, and any ammo in it is lost.
+export function clearJam({ bs = 0, roll, otherMod = 0 } = {}) {
+  const t = resolveTest(Number(bs) || 0, Number(otherMod) || 0, roll);
+  return { ...t, cleared: t.success, ammoLost: t.success, needsReload: t.success };
+}
+
+// Recharge weapons (plasma cannon, ...) can only fire every other round.
+export const needsRecharge = (weapon) => hasQuality(weapon, 'recharge');
+
+// Reload time is not in the parsed stats line (gear.js has no Rld column),
+// so this is a house default by clip size: a belt is a Full Action, a
+// magazine a Half Action. The GM overrules per weapon.
 export const reloadAction = (weapon) =>
   (weapon && weapon.clip != null && weapon.clip > 30 ? 'full' : 'half');
 
 export const reload = (weapon) => (weapon && weapon.clip != null ? weapon.clip : 0);
 
-/* ------------------------------ pinning ------------------------------ */
+/* ------------------------------ pinning ------------------------------
+   RT p.248. Being shot at by suppressive fire (or caught in an Overwatch
+   kill zone) calls for a Hard (-20) Willpower Pinning Test, whether or not a
+   shot lands. A Pinned character is Pinned until a Willpower Test at the end
+   of his Turn gets him out: Easy (+30) when nobody has shot at him since. */
 
-// A Willpower test, -10 per extra shot of volume is not modelled: the GM's
-// otherMod covers it. Failure pins until the end of the target's next turn.
-export function pinningTest({ willpower = 0, roll, otherMod = 0, blast = false } = {}) {
-  if (blast) return { pinned: true, automatic: true, success: false, degrees: 0, roll: null };
-  const test = resolveTest(Number(willpower) || 0, Number(otherMod) || 0, roll);
+export const PINNING_MOD = -20;
+
+export function pinningTest({ willpower = 0, roll, otherMod = 0 } = {}) {
+  const test = resolveTest(Number(willpower) || 0, PINNING_MOD + (Number(otherMod) || 0), roll);
   return { ...test, pinned: !test.success };
 }
 
-export const pinnedCondition = () => ({ id: 'pinned', rounds: 1 });
+export function pinEscapeTest({ willpower = 0, roll, underFire = true, inMelee = false, otherMod = 0 } = {}) {
+  if (inMelee) return { escaped: true, automatic: true, success: true, degrees: 0, roll: null };
+  const test = resolveTest(Number(willpower) || 0, (underFire ? 0 : 30) + (Number(otherMod) || 0), roll);
+  return { ...test, escaped: test.success };
+}
+
+// Open-ended: pinned until the escape test is passed, not for a fixed time.
+export const pinnedCondition = () => ({ id: 'pinned', rounds: null });
 
 /* ------------------------------ between turns ------------------------------ */
 
@@ -174,7 +227,10 @@ export const SITUATION_MODIFIERS = [
   { id: 'target_running', name: 'Target Running / Moving Fast', mod: -20 },
   { id: 'firing_into_melee', name: 'Firing into Melee Combat', mod: -20 },
   { id: 'poor_visibility', name: 'Poor Visibility (Fog, Smoke)', mod: -20 },
-  { id: 'total_darkness', name: 'Total Darkness', mod: -30 }
+  { id: 'total_darkness', name: 'Total Darkness', mod: -30 },
+  // RT p.235/249: a Surprised or Unaware target is hit at +30 (Easy).
+  { id: 'target_unaware', name: 'Target Surprised or Unaware', mod: 30 },
+  { id: 'bad_weather', name: 'Harsh Weather / Unnatural Conditions', mod: -20 }
 ];
 
 const findMod = (table, id) => (table.find((m) => m.id === id) || { mod: 0 }).mod;
@@ -423,9 +479,19 @@ export const GROUND_CONDITIONS = [
     note: '1d10 Wounds each round, ignoring armour. An Agility Test puts it out.' }),
   C('stunned', 'Stunned', { note: 'No actions, and others attack at +20.' }),
   C('prone', 'Prone', { note: '-10 to melee attacks; melee attackers gain +10.' }),
-  C('fleeing', 'Fleeing', { note: 'Must move away from the source of fear. Ends on a passed Willpower Test.' }),
-  C('shaken', 'Shaken', { note: '-10 to all tests while the shock lasts.' }),
-  C('pinned', 'Pinned', { note: 'No advancing, -20 Ballistic Skill from cover.' }),
+  // Fear and Shock (RT table 10-4). Most last "until the end of the
+  // encounter", so they carry no round count and the GM clears them.
+  C('startled', 'Startled', { note: 'Only a single Half Action next Turn, then acts normally.' }),
+  C('shaken', 'Shaken', { note: '-10 to all Tests for the rest of the encounter unless the character snaps out of it (Willpower Test at the start of each Turn).' }),
+  C('backing_away', 'Backing Away', { note: 'Cannot willingly approach the object of fear. -10 to all Tests until the end of the encounter.' }),
+  C('frozen', 'Frozen with Terror', { note: 'No Actions until the character snaps out of it (Willpower Test each Turn); then -10 to all Tests for the encounter.' }),
+  C('fleeing', 'Fleeing', { note: 'Must flee the source of fear; only Half Actions if prevented; -20 to all Tests. Snap out of it once away (Willpower Test).' }),
+  C('frenzied', 'Manic Frenzy', { note: 'Attacks anything nearby at random until snapped out of it or knocked unconscious.' }),
+  C('sobbing', 'Overcome', { note: 'Helpless: screams and vomits, drops what is held. Afterwards only a single Half Action each Turn until rested.' }),
+  C('crumpled', 'Crumpled', { note: 'On the ground sobbing; may do nothing. Afterwards -20 to all Tests until the end of the encounter.' }),
+  C('catatonic', 'Catatonic', { note: 'Mind snapped; cannot be roused for 1d5 hours.' }),
+  C('hallucinating', 'Acute Hallucinations', { note: 'Strange and terrible visions. Afterwards -20 to all Tests while the encounter lasts.' }),
+  C('pinned', 'Pinned', { note: 'Half Actions only; -20 to all Ballistic Skill Tests. In cover: may not leave it. Willpower Test at end of turn to recover (Easy +30 if no longer under fire); melee escapes it.' }),
   C('fatigued', 'Fatigued', { note: '-10 to all tests per level of Fatigue.' }),
   C('helpless', 'Helpless', { note: 'No actions, and open to a Coup de Grace.' }),
   C('blinded', 'Blinded', { note: 'Cannot see: -30 to anything that needs sight.' }),

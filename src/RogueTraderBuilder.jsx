@@ -7167,10 +7167,10 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                         {Math.max(0, n.max - n.damage)}/{n.max} Wounds
                         {n.critSoFar > 0 ? ' \u00B7 Crit ' + n.critSoFar : ''}
                       </span>
-                      {(n.order || n.fear > 0) && (
+                      {((isGmHere && n.order) || n.fear > 0) && (
                         <p className="rt-entry-s">
-                          {n.order && orderById(n.order) ? `Order: ${orderById(n.order).name}` : ''}
-                          {n.order && n.fear > 0 ? ' \u00B7 ' : ''}
+                          {isGmHere && n.order && orderById(n.order) ? `Order: ${orderById(n.order).name}` : ''}
+                          {isGmHere && n.order && n.fear > 0 ? ' \u00B7 ' : ''}
                           {n.fear > 0 ? `Fear (${n.fear})` : ''}
                         </p>
                       )}

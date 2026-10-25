@@ -8,6 +8,7 @@
 // buttons.
 
 import React, { useState } from 'react';
+import { DIFFICULTIES, resolveTest } from './dice.js';
 import {
   pinningTest, pinEscapeTest, pinnedCondition
 } from './groundcombat.js';
@@ -147,6 +148,36 @@ export default function NervePanel({
         <button className="rt-btn" disabled={busy} onClick={fear}>Fear Test</button>
         {pending.trauma > 0 && <button className="rt-btn" disabled={busy} onClick={trauma}>Trauma Test ({pending.trauma})</button>}
         {pending.malignancy > 0 && <button className="rt-btn" disabled={busy} onClick={malignancy}>Malignancy Test ({pending.malignancy})</button>}
+      </div>
+      {result && <p className="rt-vox-hint" role="status">{result}</p>}
+    </>
+  );
+}
+
+// A spotting roll: an Awareness Test against Perception, at a difficulty the
+// GM calls out (fog, shadow and the like make it harder; a noise makes it
+// easier). The result goes to the log; whether it beats whatever is hiding is
+// the GM's opposed roll (awareness.js opposedAwareness).
+export function SpotPanel({ perception = 0, charId, name = 'A player', emit, busy = false }) {
+  const [diff, setDiff] = useState('0');
+  const [result, setResult] = useState(null);
+  const look = async () => {
+    const roll = d(100);
+    const t = resolveTest(perception, Number(diff) || 0, roll);
+    const line = `Awareness: rolled ${roll} vs ${t.target} \u2014 ${t.success ? `sees something (${t.degrees} degree${t.degrees === 1 ? '' : 's'})` : 'nothing'}.`;
+    setResult(line);
+    await emit({ id: 'player_response', charId, text: `${name} looks and listens. ${line}` }, null);
+  };
+  return (
+    <>
+      <div className="rt-conds-h">Spotting</div>
+      <div className="rt-gmmods">
+        <label><span className="rt-der-k">Difficulty</span>
+          <select className="rt-sel" value={diff} onChange={(e) => setDiff(e.target.value)}>
+            {DIFFICULTIES.map((x) => <option key={x.label} value={String(x.mod)}>{x.label} ({x.mod >= 0 ? '+' : ''}{x.mod})</option>)}
+          </select>
+        </label>
+        <button className="rt-btn" disabled={busy} onClick={look}>Awareness Test</button>
       </div>
       {result && <p className="rt-vox-hint" role="status">{result}</p>}
     </>

@@ -9,8 +9,10 @@ import {
   resolveTheme, themeNumbersFor,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
+  OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText,
   weaponOverlay, calibrationBar, deploymentRows
 } from './battlemap.js';
+import { NOISE, noiseById, noisePing } from './awareness.js';
 import { GEAR } from './gear.js';
 import { shrinkToDataUrl } from './imageshrink.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
@@ -33,7 +35,9 @@ const MODES = [
   { id: 'door', label: 'Door' },
   { id: 'cover', label: 'Cover' },
   { id: 'hazard', label: 'Hazard' },
+  { id: 'obscure', label: 'Foliage / smoke' },
   { id: 'contact', label: 'Contacts' },
+  { id: 'noise', label: 'Noise' },
   { id: 'fog', label: 'Fog' },
   { id: 'marker', label: 'Marker' },
   { id: 'overlay', label: 'Overlay' },
@@ -283,6 +287,8 @@ export default function BattleMap({
   const [doorKind, setDoorKind] = useState('bulkhead');
   const [coverType, setCoverType] = useState('crates');
   const [hazardType, setHazardType] = useState('fire');
+  const [obscureType, setObscureType] = useState('medium');
+  const [noiseKind, setNoiseKind] = useState('shot');
   const [contactEnc, setContactEnc] = useState('');
   const [contactHostile, setContactHostile] = useState('');
   const [auspexM, setAuspexM] = useState(AUSPEX_RANGE_M);
@@ -395,7 +401,15 @@ export default function BattleMap({
       const markers = { ...m.markers }; delete markers[k];
       const cover = { ...m.cover }; delete cover[k];
       const hazards = { ...m.hazards }; delete hazards[k];
-      patch({ floor: paintCells(m.floor, [pos], false), doors, markers, cover, hazards });
+      const obscuring = { ...m.obscuring }; delete obscuring[k];
+      patch({ floor: paintCells(m.floor, [pos], false), doors, markers, cover, hazards, obscuring });
+      return;
+    }
+    // Foliage and smoke are laid down by dragging, like the deck itself.
+    if (mode === 'obscure') {
+      const obscuring = { ...m.obscuring };
+      if (obscuring[k] === obscureType && !dragging) delete obscuring[k]; else obscuring[k] = obscureType;
+      patch({ obscuring });
       return;
     }
     // Revealing is a drag as well as a click: a corridor is swept, not
@@ -419,7 +433,10 @@ export default function BattleMap({
       doors[k] = (here && here.kind === doorKind)
         ? { kind: here.kind, state: nextDoorState(here.state) }
         : { kind: doorKind, state: 'closed' };
-      patch({ doors });
+      // Opening a door is a noise: anything hidden within earshot comes up
+      // on the scope as a ping, without saying what it is.
+      const opened = doors[k].state === 'open' && !(here && here.state === 'open');
+      patch(opened ? { doors, contacts: noisePing(m, pos, 'door') } : { doors });
       return;
     }
     if (mode === 'cover') {
@@ -432,6 +449,10 @@ export default function BattleMap({
       const hazards = { ...m.hazards };
       if (hazards[k] === hazardType) delete hazards[k]; else hazards[k] = hazardType;
       patch({ hazards });
+      return;
+    }
+    if (mode === 'noise') {
+      patch({ contacts: noisePing(m, pos, noiseKind) });
       return;
     }
     if (mode === 'contact') {
@@ -695,6 +716,26 @@ export default function BattleMap({
       }
     }
 
+    // 3d. Foliage and smoke: a green wash, denser where sight stops sooner.
+    //     Drawn on the projector too — it is terrain, not a secret.
+    for (const [k, id] of Object.entries(m.obscuring)) {
+      const p = parseKey(k);
+      const ob = obscuringById(id);
+      if (!p || !ob) continue;
+      ctx.save();
+      ctx.globalAlpha = ob.alpha;
+      ctx.fillStyle = ob.colour;
+      ctx.fillRect(p.x * px, p.y * px, px, px);
+      ctx.globalAlpha = Math.min(0.9, ob.alpha + 0.25);
+      ctx.fillStyle = ob.colour;
+      for (const [fx, fy] of [[0.28, 0.3], [0.7, 0.35], [0.45, 0.7]]) {
+        ctx.beginPath();
+        ctx.arc(p.x * px + px * fx, p.y * px + px * fy, px * 0.12, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
     // 4. The grid, for the table to count squares off.
     ctx.save();
     ctx.globalAlpha = theme.gridAlpha;
@@ -901,6 +942,12 @@ export default function BattleMap({
       }
     } else if (hover && (mode === 'paint' || mode === 'erase')) {
       fill([hover], mode === 'erase' ? 'rgba(231,76,60,0.4)' : 'rgba(46,204,113,0.4)');
+    } else if (hover && mode === 'obscure') {
+      fill([hover], 'rgba(95,159,85,0.45)');
+    } else if (hover && mode === 'noise' && !projecting) {
+      // How far this sound carries, as the GM lines it up.
+      const n = noiseById(noiseKind);
+      if (n) fill(areaCells(m, hover, n.radiusM), 'rgba(255,200,60,0.16)');
     }
 
     // 9. The measuring tape.
@@ -929,7 +976,8 @@ export default function BattleMap({
       ctx.fillText(bar.label, bx + 4, by - px * 0.3);
     }
   }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin, aim, weapon, coneAngle, projecting,
-      measureFrom, measureTo, measurement, showZones, showCalibration, showLos, textureTick]);
+      measureFrom, measureTo, measurement, showZones, showCalibration, showLos, textureTick,
+      noiseKind]);
 
   /* ---- controls ---- */
 
@@ -1257,6 +1305,29 @@ export default function BattleMap({
           <span className="rt-bm-hint">{(hazardById(hazardType) || {}).note}</span>
         </>)}
 
+        {mode === 'obscure' && (<>
+          <select value={obscureType} onChange={(e) => setObscureType(e.target.value)}>
+            {OBSCURING.map((o) => (
+              <option key={o.id} value={o.id}>{o.name} {'\u00b7'} sight stops after {o.blocksAfterM} m</option>
+            ))}
+          </select>
+          <span className="rt-bm-hint">
+            Click to lay it, drag to paint a stand of it, click again to lift. Not cover:
+            it blocks the line of sight once it is deep enough, so the ruler and the
+            sight overlay both stop at it. Blasts and flame cones pass through.
+          </span>
+        </>)}
+
+        {mode === 'noise' && (<>
+          <select value={noiseKind} onChange={(e) => setNoiseKind(e.target.value)}>
+            {NOISE.map((n) => <option key={n.id} value={n.id}>{n.name} {'\u00b7'} heard to {n.radiusM} m</option>)}
+          </select>
+          <span className="rt-bm-hint">
+            Click where the sound is made. Anything hidden within earshot comes up as a
+            ping. Opening a door does this on its own.
+          </span>
+        </>)}
+
         {mode === 'contact' && (<>
           <select value={contactEnc} onChange={(e) => { setContactEnc(e.target.value); setContactHostile(''); }}>
             <option value="">— from which encounter —</option>
@@ -1346,8 +1417,7 @@ export default function BattleMap({
                       ? 'out of range'
                       : `${overlay.shot.mod >= 0 ? '+' : ''}${overlay.shot.mod} to hit`}{')'}
                     {overlay.shot.blocked ? (
-                      <strong> · blocked by {overlay.shot.blocked.reason === 'door'
-                        ? `a ${overlay.shot.blocked.state} bulkhead` : 'a wall'}</strong>
+                      <strong> · blocked by {blockedText(overlay.shot.blocked)}</strong>
                     ) : null}
                   </span>
                 ) : null}
@@ -1365,6 +1435,12 @@ export default function BattleMap({
         {num('Px / square', m.pxPerSquare, (v) => patch({ pxPerSquare: v }), 10, 200, 2)}
         {num('mm / square', m.mmPerSquare, (v) => patch({ mmPerSquare: v }), 5, 100)}
         {num('Metres / square', m.metresPerSquare, (v) => patch({ metresPerSquare: v }), 0.5, 10, 0.5)}
+        <label className="rt-bm-num"><span>Light</span>
+          <select value={m.lighting} onChange={(e) => patch({ lighting: e.target.value })}
+            title="Shooting in poor light carries a penalty to hit (Rogue Trader pp.248-249)">
+            {LIGHTING_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        </label>
         <button type="button" className="rt-btn" onClick={fitToStage}>Fit to screen</button>
         <label className="rt-bm-num"><input type="checkbox" checked={showZones}
           onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
@@ -1386,8 +1462,7 @@ export default function BattleMap({
           <span> — {measurement.band.replace('_', ' ')}</span>
           <span> ({measurement.mod === null ? 'out of range' : `${measurement.mod >= 0 ? '+' : ''}${measurement.mod} to hit`})</span>
           {measurement.blocked && (
-            <span> · blocked by {measurement.blocked.reason === 'door'
-              ? `a ${measurement.blocked.state} bulkhead` : 'a wall'} at {measurement.blocked.x},{measurement.blocked.y}</span>
+            <span> · blocked by {blockedText(measurement.blocked)} at {measurement.blocked.x},{measurement.blocked.y}</span>
           )}
         </div>
       )}
@@ -1398,7 +1473,7 @@ export default function BattleMap({
           onMouseMove={(e) => {
             const pos = posFromEvent(e);
             setHover(pos);
-            if (e.buttons === 1 && (mode === 'paint' || mode === 'erase')) applyAt(pos, true);
+            if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'obscure')) applyAt(pos, true);
           }}
           onMouseLeave={() => setHover(null)}
           onMouseDown={(e) => {

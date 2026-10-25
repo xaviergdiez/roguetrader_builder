@@ -611,3 +611,41 @@ console.log('groundcombat.check.mjs: ammo, jam and pinning rules passed');
   assert.equal(authorizeGroundEvent({ id: 'gm_note' }, { isGm: false, isMember: true }).ok, false, 'only the GM writes notes');
   assert.equal(applyGroundEvent({}, { id: 'gm_note' }, {}).unknown, false);
 }
+
+/* ---- awareness: Unaware and Surprised (RT pp.235, 241, 249) ---- */
+{
+  const { situationFromConditions, SITUATION_MODIFIERS, toHit, conditionById } = await import('./groundcombat.js');
+  assert.ok(conditionById('unaware') && conditionById('surprised'));
+  assert.deepEqual(situationFromConditions([{ id: 'unaware' }]), ['target_unaware']);
+  assert.deepEqual(situationFromConditions([{ id: 'surprised' }, { id: 'unaware' }]), ['target_unaware'], 'no double count');
+  assert.deepEqual(situationFromConditions([{ id: 'stunned' }]), ['target_stunned']);
+  assert.deepEqual(situationFromConditions([{ id: 'prone' }]), []);
+  assert.equal(toHit({ baseSkill: 40, situationIds: ['target_unaware'] }).total, 70, '+30 against an unaware target');
+
+  const combat = {
+    playerVitals: { pc1: { max: 12, damage: 0, critSoFar: 0, conditions: [{ id: 'unaware', rounds: null }, { id: 'prone', rounds: null }] } },
+    ground: { npcs: [{ id: 'n1', name: 'Guard', max: 8, damage: 0, critSoFar: 0, conditions: [{ id: 'unaware', rounds: null }, { id: 'prone', rounds: null }] }] }
+  };
+  // a miss is logged as a zero-damage hit and still ends Unaware
+  const miss = applyGroundEvent(combat, { id: 'npc_damage', npcId: 'n1', amount: 0 }, {});
+  assert.deepEqual(miss.patch.ground.npcs[0].conditions.map((c) => c.id), ['prone'], 'attacked, so no longer Unaware');
+  const hitPc = applyGroundEvent(combat, { id: 'npc_attack', charId: 'pc1', amount: 2 }, {});
+  assert.deepEqual(hitPc.patch.playerVitals.pc1.conditions.map((c) => c.id), ['prone']);
+  assert.equal(hitPc.patch.playerVitals.pc1.damage, 2);
+  // other damage keeps the player's conditions (it used to wipe them)
+  const burn = applyGroundEvent(combat, { id: 'player_damage', charId: 'pc1', amount: 1 }, {});
+  assert.equal(burn.patch.playerVitals.pc1.conditions.length, 2);
+  const heal = applyGroundEvent(combat, { id: 'player_heal', charId: 'pc1', amount: 1 }, {});
+  assert.equal(heal.patch.playerVitals.pc1.conditions.length, 2);
+
+  // Surprised, given one round, is gone when the round wraps.
+  const surprised = {
+    playerVitals: {},
+    ground: { npcs: [{ id: 'n1', name: 'Guard', max: 8, damage: 0, critSoFar: 0, conditions: [{ id: 'surprised', name: 'Surprised', rounds: 1 }] }],
+      order: [{ id: 'n1', name: 'Guard' }], round: 1, turn: 0 }
+  };
+  const wrap = applyGroundEvent(surprised, { id: 'ground_advance' }, { d10: () => 5 });
+  assert.deepEqual(wrap.patch.ground.npcs[0].conditions, []);
+  assert.deepEqual(wrap.patch.ground.between[0].expired, ['Surprised']);
+}
+console.log('groundcombat.check.mjs: awareness conditions passed');

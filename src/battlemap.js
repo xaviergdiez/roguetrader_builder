@@ -237,6 +237,8 @@ export const EMPTY_MAP = {
   doors: {},            // { 'x,y': { kind, state } }
   cover: {},            // { 'x,y': coverTypeId } — things standing on the deck
   hazards: {},          // { 'x,y': hazardTypeId } — dangerous to stand in
+  obscuring: {},        // { 'x,y': densityId } — foliage and smoke, see OBSCURING
+  lighting: 'clear',    // see LIGHTING_PRESETS
   markers: {},          // { 'x,y': { type, label } } — scenery
   // Fog of war. `explored` is what the party has seen; `fog` is whether the
   // map is drawn with it. The two are separate so turning fog off to check
@@ -349,6 +351,34 @@ export const HAZARD_TYPES = [
 ];
 export const hazardById = (id) => HAZARD_TYPES.find((h) => h.id === id) || null;
 
+/* ---------------------------- obscuring terrain ----------------------------
+   Foliage, smoke and the like: not cover (nobody crouches behind it for
+   Armour Points) but it eats sight. Sight carries this far INTO the stuff
+   before it stops dead, and the denser it is the sooner. Rogue Trader gives
+   no figure — only a -20 to hit for fog, mist, shadow or smoke (p.248) — so
+   the distances are house numbers borrowed from Inquisitor's vision rules,
+   and the GM can edit the table. Folded into lineBlocked, so the ruler, the
+   line-of-sight overlay and the fog reveal all see it. */
+export const OBSCURING = [
+  { id: 'light', name: 'Light foliage / thin smoke', blocksAfterM: 7, colour: '#7fbf6a', alpha: 0.18 },
+  { id: 'medium', name: 'Medium foliage / smoke', blocksAfterM: 5, colour: '#5f9f55', alpha: 0.3 },
+  { id: 'heavy', name: 'Dense foliage / thick smoke', blocksAfterM: 4, colour: '#3f7f40', alpha: 0.45 }
+];
+export const obscuringById = (id) => OBSCURING.find((o) => o.id === id) || null;
+
+/* The light a deck is fought in. Each preset names the combat situation
+   modifiers it implies (groundcombat.js SITUATION_MODIFIERS): Rogue Trader
+   makes shooting into fog, mist, shadow or smoke Hard (-20), harsh weather
+   Hard (-20), and total darkness worse. */
+export const LIGHTING_PRESETS = [
+  { id: 'clear', name: 'Clear', situationIds: [] },
+  { id: 'dim', name: 'Fog, Mist or Shadow', situationIds: ['poor_visibility'] },
+  { id: 'smoke', name: 'Smoke', situationIds: ['poor_visibility'] },
+  { id: 'rain', name: 'Rain or Ash Storm', situationIds: ['bad_weather'] },
+  { id: 'dark', name: 'Total Darkness', situationIds: ['total_darkness'] }
+];
+export const lightingById = (id) => LIGHTING_PRESETS.find((p) => p.id === id) || LIGHTING_PRESETS[0];
+
 export const MARKER_TYPES = [
   { id: 'breach', name: 'Torpedo breach', colour: '#ff5722' },
   { id: 'objective', name: 'Objective', colour: '#f1c40f' },
@@ -379,6 +409,10 @@ export function readMap(m) {
   const hazards = {};
   for (const [k, v] of Object.entries(src.hazards || {})) {
     if (parseKey(k) && hazardById(v)) hazards[k] = v;
+  }
+  const obscuring = {};
+  for (const [k, v] of Object.entries(src.obscuring || {})) {
+    if (parseKey(k) && obscuringById(v)) obscuring[k] = v;
   }
   const explored = {};
   for (const k of Object.keys(src.explored || {})) {
@@ -414,6 +448,7 @@ export function readMap(m) {
     pxPerSquare: int(src.pxPerSquare, EMPTY_MAP.pxPerSquare, 10, 200),
     mmPerSquare: int(src.mmPerSquare, EMPTY_MAP.mmPerSquare, 5, 100),
     fog: Boolean(src.fog),
+    lighting: lightingById(src.lighting).id,
     /* Only ever an image data URL, and bounded. It rides along in the saved
        deck, so an oversized one would quietly bloat every read and write of
        the GM's library; and a non-data URL here would let a saved document
@@ -430,7 +465,7 @@ export function readMap(m) {
       const x = Math.round(Number(v.x)), y = Math.round(Number(v.y));
       return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
     })(),
-    floor, doors, cover, hazards, markers, explored, contacts
+    floor, doors, cover, hazards, obscuring, markers, explored, contacts
   };
 }
 
@@ -481,6 +516,23 @@ export function readContact(v) {
     hostileId: typeof v.hostileId === 'string' ? v.hostileId : null,
     state: CONTACT_STATES.includes(v.state) ? v.state : 'hidden'
   };
+}
+
+/* What a player's copy of the map may carry. The whole combat document is
+   polled by every browser, so a hidden contact left in it is readable by
+   anyone with the network tab open — its name included. Hidden contacts are
+   dropped; a ping keeps its square and loses everything else, which is
+   exactly what the projector shows. */
+export function redactMapForTable(map) {
+  if (!map || typeof map !== 'object') return map;
+  const contacts = {};
+  for (const [k, c] of Object.entries(map.contacts || {})) {
+    if (!c || c.state === 'hidden') continue;
+    contacts[k] = c.state === 'ping'
+      ? { name: 'Contact', encounterId: null, hostileId: null, state: 'ping' }
+      : c;
+  }
+  return { ...map, contacts };
 }
 
 // An auspex reaches 50 metres in the books. A default, not a law — a GM
@@ -800,11 +852,20 @@ export function lineBlocked(map, from, to) {
   return walkLine(readMap(map), from, to);
 }
 
+/* A sentence for what stopped a lane, for the ruler and the overlays. */
+export function blockedText(b) {
+  if (!b) return '';
+  if (b.reason === 'door') return `a ${b.state} bulkhead`;
+  if (b.reason === 'obscured') return 'foliage or smoke';
+  if (b.reason === 'cover') return 'cover';
+  return 'a wall';
+}
+
 /* The same walk, on a map that has ALREADY been read. visibleCells asks this
    once per square on the board, and readMap rebuilds the whole floor, door
    and marker set each time it is called — re-reading inside the loop made a
    single redraw rebuild the map several hundred times and stalled the tab. */
-function walkLine(m, from, to) {
+function walkLine(m, from, to, { sight = true } = {}) {
   if (!from || !to) return null;
   const steps = Math.ceil(distanceSquares(from, to) * 2);
   if (steps === 0) return null;
@@ -813,13 +874,32 @@ function walkLine(m, from, to) {
   // key in the map on every square of every line, which on a large deck is
   // billions of operations for one redraw and freezes the tab.
   const built = !isEmpty(m.floor);
+  // Sight carried into foliage or smoke so far, in metres, and the shortest
+  // reach of any density crossed on the way (a thin screen then a thick one
+  // is stopped by the thick one's limit). Templates — a blast, a flame cone
+  // — pass `sight: false`: a grenade is not stopped by smoke.
+  const hasObscuring = sight && !isEmpty(m.obscuring);
+  const metresPerStep = (distanceSquares(from, to) / steps) * (m.metresPerSquare || 1);
+  let through = 0;
+  let limit = Infinity;
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const x = Math.round(from.x + (to.x - from.x) * t);
     const y = Math.round(from.y + (to.y - from.y) * t);
-    if (x === to.x && y === to.y) break;       // the target's own square is not cover
-    if (x === from.x && y === from.y) continue;
+    const isTarget = x === to.x && y === to.y;
     const k = cellKey(x, y);
+    if (hasObscuring && !(x === from.x && y === from.y)) {
+      // The target's own square counts: something crouched in the reeds is
+      // hidden by them. The firer's own square does not.
+      const o = obscuringById(m.obscuring[k]);
+      if (o) {
+        through += metresPerStep;
+        limit = Math.min(limit, o.blocksAfterM);
+        if (through > limit) return { x, y, reason: 'obscured', density: o.id };
+      }
+    }
+    if (isTarget) break;                       // the target's own square is not cover
+    if (x === from.x && y === from.y) continue;
     const door = m.doors[k];
     if (door && doorBlocks(door.state)) {
       return { x, y, reason: 'door', state: door.state, kind: door.kind };
@@ -958,7 +1038,7 @@ export function unobstructed(map, centre, cells) {
   const m = readMap(map);
   if (!centre) return [];
   return (cells || []).filter((c) =>
-    (c.x === centre.x && c.y === centre.y) || !walkLine(m, centre, c));
+    (c.x === centre.x && c.y === centre.y) || !walkLine(m, centre, c, { sight: false }));
 }
 
 /* The cover a shot has to cross, as Armour Points. Sight-blocking cover

@@ -477,6 +477,12 @@ export const GROUND_CONDITIONS = [
     note: '1 Wound at the start of each round until the bleeding is stopped.' }),
   C('on_fire', 'On Fire', { perRoundDice: 10,
     note: '1d10 Wounds each round, ignoring armour. An Agility Test puts it out.' }),
+  // RT p.235 / p.249. Unaware: does not know the attack is coming, hit at +30,
+  // and no longer Unaware once attacked, hit or miss. Surprised: the
+  // opening of a fight; loses its first Turn, attackers +30, and recovers
+  // when the surprise round is done (give it 1 round).
+  C('unaware', 'Unaware', { note: 'Has no idea it is about to be attacked: hit at +30. Ends the moment it is attacked.' }),
+  C('surprised', 'Surprised', { note: 'Loses its first Turn and can only stand dumbfounded; attackers get +30. Recovers after the surprise round.' }),
   C('stunned', 'Stunned', { note: 'No actions, and others attack at +20.' }),
   C('prone', 'Prone', { note: '-10 to melee attacks; melee attackers gain +10.' }),
   // Fear and Shock (RT table 10-4). Most last "until the end of the
@@ -498,6 +504,17 @@ export const GROUND_CONDITIONS = [
   C('deafened', 'Deafened', { note: 'Cannot hear.' }),
   C('unconscious', 'Unconscious', { note: 'Helpless and unaware.' })
 ];
+
+// Situation modifier ids (SITUATION_MODIFIERS) that a TARGET's conditions
+// hand to whoever is shooting at it.
+export function situationFromConditions(conditions) {
+  const ids = new Set();
+  for (const c of conditions || []) {
+    if (c.id === 'unaware' || c.id === 'surprised') ids.add('target_unaware');
+    if (c.id === 'stunned') ids.add('target_stunned');
+  }
+  return [...ids];
+}
 
 export const conditionById = (id) => GROUND_CONDITIONS.find((c) => c.id === id) || null;
 
@@ -705,18 +722,27 @@ export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
     }
     case 'npc_attack':
     case 'player_damage': {
-      const entry = patchWounds(playerVitals[e.charId], {
+      const prev = playerVitals[e.charId];
+      const entry = patchWounds(prev, {
         delta: Math.max(0, Math.floor(Number(e.amount) || 0)),
         crit: Math.max(0, Math.floor(Number(e.crit) || 0))
       });
-      return { patch: { playerVitals: { ...playerVitals, [e.charId]: entry } }, fields: ['playerVitals'], unknown: false };
+      // patchWounds only carries the Wounds fields; conditions stay, minus
+      // Unaware, which an attack ends whether or not it hit (RT p.241).
+      if (prev && prev.conditions) {
+        entry.conditions = e.id === 'npc_attack'
+          ? prev.conditions.filter((c) => c.id !== 'unaware') : prev.conditions;
+      }
+      return { patch: { playerVitals: { ...playerVitals, [e.charId]: { ...(prev || {}), ...entry } } }, fields: ['playerVitals'], unknown: false };
     }
 
     case 'player_heal': {
-      const entry = patchWounds(playerVitals[e.charId], {
+      const prev = playerVitals[e.charId];
+      const entry = patchWounds(prev, {
         delta: -Math.max(0, Math.floor(Number(e.amount) || 0))
       });
-      return { patch: { playerVitals: { ...playerVitals, [e.charId]: entry } }, fields: ['playerVitals'], unknown: false };
+      // Healing a wound does not clear a condition: keep what was there.
+      return { patch: { playerVitals: { ...playerVitals, [e.charId]: { ...(prev || {}), ...entry } } }, fields: ['playerVitals'], unknown: false };
     }
 
     case 'pinning_prompt':
@@ -735,7 +761,10 @@ export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
         crit: Math.max(0, Math.floor(Number(e.crit) || 0))
       });
       const nextNpcs = npcs.slice();
-      nextNpcs[i] = { ...npcs[i], ...entry };
+      // An attack ends Unaware, hit or miss: the player's miss is logged as
+      // a zero-damage npc_damage, so this is where it is seen.
+      nextNpcs[i] = { ...npcs[i], ...entry,
+        conditions: (npcs[i].conditions || []).filter((c) => c.id !== 'unaware') };
       return { patch: { ground: { ...ground, npcs: nextNpcs } }, fields: ['ground'], unknown: false };
     }
 

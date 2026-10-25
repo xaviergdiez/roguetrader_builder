@@ -60,7 +60,8 @@ import {
   weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll, resolveHits,
   ammoCost, spendAmmo, jamCheck, overheatResult, clearJam, reload as gcReload
 } from './groundcombat.js';
-import NervePanel from './NervePanel.jsx';
+import NervePanel, { SpotPanel } from './NervePanel.jsx';
+import { situationFor } from './awareness.js';
 import { insanityTrack, corruptionTrack, INSANITY_STEP, MALIGNANCY_STEP } from './sanity.js';
 import {
   rollNpc, bestiaryToNpc, BESTIARY, BESTIARY_GROUPS, byGroup,
@@ -6552,14 +6553,20 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     const npc = ground.npcs.find((n) => n.id === gAtkNpc);
     if (!npc) return;
     const roll = roll1d100();
+    // What the scene hands this shot: the target's Unaware/Surprised/Stunned
+    // conditions and the light the map is fought in.
+    const sit = situationFor({
+      targetConditions: gAtkTarget && playerVitals[gAtkTarget] ? playerVitals[gAtkTarget].conditions : [],
+      lighting: ground.map && ground.map.lighting
+    });
     const atk = npcAttackRoll(npc, {
-      size: gAtkSize, distanceM: gAtkDistance, actionId: gAtkAction, roll
+      size: gAtkSize, distanceM: gAtkDistance, actionId: gAtkAction, roll, situationIds: sit.ids
     });
     if (!atk) {
       setErr('This NPC has no ws/bs and weapon set — roll or add it through the generator to attack with it.');
       return;
     }
-    setGPreview({ ...atk, npc, roll });
+    setGPreview({ ...atk, npc, roll, sit });
   };
 
   const applyAttack = () => {
@@ -6600,8 +6607,10 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     const npc = ground.npcs.find((n) => n.id === gNpcTarget);
     if (!npc || !gMyWeapon) return;
     const roll = d(100);
+    const sit = situationFor({ targetConditions: npc.conditions, lighting: ground.map && ground.map.lighting });
     const atk = npcAttackRoll(myAttackChar, {
-      size: npc.size || 'average', distanceM: gMyDistance, actionId: gMyAction, roll
+      size: npc.size || 'average', distanceM: gMyDistance, actionId: gMyAction, roll,
+      situationIds: sit.ids
     });
     if (!atk) {
       setErr('No Weapon Skill or Ballistic Skill on this sheet for that weapon.');
@@ -6623,7 +6632,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     if (w.clip != null) setGAmmo((a) => ({ ...a, [gMyWeapon]: left - cost }));
     if (jam.jammed) setGJammed((j) => ({ ...j, [gMyWeapon]: true }));
     const jammedMiss = jam.jammed ? { success: false, hits: 0 } : {};
-    setGMyPreview({ ...atk, ...jammedMiss, roll, npcId: npc.id, npcName: npc.name, jam,
+    setGMyPreview({ ...atk, ...jammedMiss, roll, npcId: npc.id, npcName: npc.name, jam, sit,
       overheat: jam.overheated ? overheatResult(w) : null });
   };
 
@@ -7091,6 +7100,13 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
               )}
 
               {!isGmHere && charId && (
+                <SpotPanel
+                  perception={Number(characteristics?.per) || 0}
+                  charId={charId} name={characterName || 'A player'}
+                  emit={groundEvent} busy={busy}
+                />
+              )}
+              {!isGmHere && charId && (
                 <NervePanel
                   willpower={Number(characteristics?.wp) || 0}
                   charId={charId} name={characterName || 'A player'}
@@ -7276,6 +7292,9 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                               : gMyPreview.success
                                 ? `hit, ${gMyPreview.hits} hit${gMyPreview.hits === 1 ? '' : 's'} scored`
                                 : 'missed'} />
+                          {gMyPreview.sit && gMyPreview.sit.labels.length > 0 && (
+                            <p className="rt-vox-hint">Scene: {gMyPreview.sit.labels.join(' \u00b7 ')}</p>
+                          )}
                           {gMyPreview.jam && gMyPreview.jam.reliableSaved && (
                             <p className="rt-vox-hint">Reliable: it would have jammed, but the d10 saved it. A miss.</p>
                           )}
@@ -7478,6 +7497,9 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                             outcome={gPreview.success
                               ? `hit, ${gPreview.hits} hit${gPreview.hits === 1 ? '' : 's'} scored`
                               : 'missed'} />
+                          {gPreview.sit && gPreview.sit.labels.length > 0 && (
+                            <p className="rt-vox-hint">Scene: {gPreview.sit.labels.join(' \u00b7 ')}</p>
+                          )}
                           <div className="rt-btnrow">
                             <button className="rt-btn" disabled={busy || !gAtkTarget} onClick={applyAttack}>
                               Apply to target

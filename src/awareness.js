@@ -14,21 +14,32 @@
 //   numbers for either, so these are plain tables the GM can edit.
 
 import { resolveTest } from './dice.js';
-import { readMap, parseKey } from './battlemap.js';
+import { readMap, parseKey, obscuringById, lightingById } from './battlemap.js';
+import { situationFromConditions, SITUATION_MODIFIERS } from './groundcombat.js';
 
 /* ------------------------------ surprise ------------------------------ */
 
 export const SURPRISE = Object.freeze({ attackBonus: 30, losesFirstTurn: true });
 
-// Situation ids (groundcombat.js SITUATION_MODIFIERS) a map's conditions imply.
-export const LIGHTING_PRESETS = [
-  { id: 'clear', name: 'Clear', situationIds: [] },
-  { id: 'dim', name: 'Fog, Mist or Shadow', situationIds: ['poor_visibility'] },
-  { id: 'smoke', name: 'Smoke', situationIds: ['poor_visibility'] },
-  { id: 'rain', name: 'Rain or Ash Storm', situationIds: ['bad_weather'] },
-  { id: 'dark', name: 'Total Darkness', situationIds: ['total_darkness'] }
-];
-export const lightingById = (id) => LIGHTING_PRESETS.find((p) => p.id === id) || LIGHTING_PRESETS[0];
+// Lighting presets and obscuring terrain live in battlemap.js, where the map
+// stores them and lineBlocked reads them; re-exported so callers of this
+// module have one place to look.
+export { LIGHTING_PRESETS, lightingById, OBSCURING, obscuringById } from './battlemap.js';
+
+/* ------------------------------ what an attack knows ------------------------------ */
+
+// The situation modifiers an attack inherits from the scene: the target's
+// own conditions (Unaware, Surprised, Stunned) and the light the map is
+// fought in. Returns ids for toHit() and labels for the screen, so the GM
+// sees WHY the number moved.
+export function situationFor({ targetConditions = [], lighting = 'clear' } = {}) {
+  const ids = [...new Set([...situationFromConditions(targetConditions), ...lightingById(lighting).situationIds])];
+  const labels = ids.map((id) => {
+    const m = SITUATION_MODIFIERS.find((x) => x.id === id);
+    return m ? `${m.name} ${m.mod >= 0 ? '+' : ''}${m.mod}` : id;
+  });
+  return { ids, labels };
+}
 
 /* ------------------------------ opposed Awareness ------------------------------ */
 
@@ -81,17 +92,11 @@ export function noisePing(map, from, kindId) {
   return out;
 }
 
-/* ------------------------------ obscuring terrain (house) ------------------------------ */
-
-// Sight carries this far INTO foliage or smoke before it stops dead.
-export const OBSCURING = [
-  { id: 'light', name: 'Light foliage / thin smoke', blocksAfterM: 7 },
-  { id: 'medium', name: 'Medium foliage / smoke', blocksAfterM: 5 },
-  { id: 'heavy', name: 'Dense foliage / thick smoke', blocksAfterM: 4 }
-];
-export const obscuringById = (id) => OBSCURING.find((o) => o.id === id) || null;
+/* ------------------------------ obscuring terrain ------------------------------ */
 
 // `metresThrough` is how much of the line of sight passes through the stuff.
+// The map-level version of this is lineBlocked() in battlemap.js, which walks
+// the line and reports { reason: 'obscured' }.
 export function sightBlockedByObscuring(metresThrough, densityId) {
   const o = obscuringById(densityId);
   return Boolean(o) && (Number(metresThrough) || 0) > o.blocksAfterM;

@@ -44,3 +44,31 @@ assert.equal(adjustMax(1, 0, -1), 0, 'blocked: would leave a maximum of 0');
 assert.equal(adjustMax(3, -2, -1), -2, 'blocked at the floor, bonus unchanged');
 
 console.log('wounds: all checks passed');
+
+/* ---- downtime healing (Rogue Trader p.262) ---- */
+{
+  const { damageState, downtimeHealing } = await import('./wounds.js');
+  assert.equal(damageState(0, 4), 'healthy');
+  assert.equal(damageState(8, 4), 'light', 'twice TB is still Lightly Damaged');
+  assert.equal(damageState(9, 4), 'heavy');
+  assert.equal(damageState(3, 4, 2), 'critical');
+
+  // The book's examples: Grak, TB 4, 5 Damage: 1 a day, or 4 with a day's bed rest.
+  assert.equal(downtimeHealing({ damage: 5, toughnessBonus: 4, days: 1 }).damage, 4);
+  assert.equal(downtimeHealing({ damage: 5, toughnessBonus: 4, days: 1, rest: true }).damage, 1);
+  // 12 Damage is Heavily Damaged (> 8). A week's complete rest removes TB (4) -> 8,
+  // which is Lightly Damaged again.
+  const heavy = downtimeHealing({ damage: 12, toughnessBonus: 4, days: 7, rest: true });
+  assert.equal(heavy.damage, 8);
+  assert.equal(heavy.state, 'light');
+  // Without rest a Heavily Damaged character heals 1 a week.
+  assert.equal(downtimeHealing({ damage: 12, toughnessBonus: 4, days: 7 }).damage, 11);
+  assert.equal(downtimeHealing({ damage: 12, toughnessBonus: 4, days: 6 }).damage, 12, 'not before the week is out');
+  // Critical Damage needs rest AND medical attention, 1 a week.
+  assert.equal(downtimeHealing({ damage: 12, critical: 3, toughnessBonus: 4, days: 21, rest: true }).critical, 3);
+  assert.equal(downtimeHealing({ damage: 12, critical: 3, toughnessBonus: 4, days: 21, rest: true, medical: true }).critical, 0);
+  assert.equal(downtimeHealing({ damage: 12, critical: 3, toughnessBonus: 4, days: 14, rest: true, medical: true }).critical, 1);
+  assert.equal(downtimeHealing({ damage: 12, critical: 1, toughnessBonus: 4, days: 7, rest: true, medical: true }).state, 'heavy',
+    'once critical damage is gone he is Heavily Damaged');
+}
+console.log('wounds.check.mjs: downtime healing passed');

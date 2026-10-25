@@ -271,5 +271,26 @@ import {
   assert.equal(ids.size, 50, 'fresh ids must not repeat');
 }
 
+{
+  const { readScenario, redactEndeavour: red, subplotMessage, SCENARIO_CONCEPTS } = await import('./endeavours.js');
+  assert.equal(readMission({ name: 'plain' }).scenario, undefined, 'a plain Mission is unchanged');
+  const e = readEndeavour({ missions: [{ name: 'Deal', scenario: {
+    concept: "It's a Deal", conflict: 'person',
+    sides: [{ name: 'Crew' }, { name: 'Buyers' }, { name: 'Pirates' }],
+    subplots: [{ charId: 'c1', text: 'Sell the cargo twice.' }, { text: 'orphan' }]
+  }, objectives: [{ name: 'Meet' }] }] });
+  const sc = e.missions[0].scenario;
+  assert.equal(sc.sides.length, 3);
+  assert.equal(sc.conflict, 'person');
+  assert.equal(readScenario({ conflict: 'nonsense' }).conflict, 'situation');
+  assert.deepEqual(readEndeavour(e), e, 'a scenario survives a round trip');
+  assert.equal(red(e, { isGm: true }).missions[0].scenario.subplots.length, 2);
+  const seen = red(e, { isGm: false }).missions[0].scenario;
+  assert.equal(seen.subplots.length, 0, 'players never receive the sub-plots');
+  assert.equal(seen.concept, "It's a Deal");
+  assert.equal(subplotMessage(e.missions[0], sc.subplots[0]).to, 'c1');
+  assert.equal(subplotMessage(e.missions[0], sc.subplots[1]), null, 'no character, nowhere to send it');
+  assert.ok(SCENARIO_CONCEPTS.includes('Stowaway'));
+}
 console.log('endeavours.js OK (%d objective kinds, %d statuses)',
   OBJECTIVE_KINDS.length, STATUSES.length);

@@ -89,6 +89,42 @@ export function readObjective(o) {
   };
 }
 
+/* ------------------------------ scenarios ------------------------------
+   A Scenario sits inside a Mission: the conflict being played, who is in it,
+   and the private sub-plots handed to individual characters. The idea is
+   Inquisitor's (a game is built from a conflict, three-sided fights, and
+   secret agendas); the numbers are nobody's, so it is a record, not a rules
+   engine. Concept names are the book's own, listed as prompts only — read
+   the scenario itself in Inquisitor (pp.166-171) before running it. */
+
+export const SCENARIO_CONCEPTS = [
+  "It's a Deal", 'Stowaway', 'Triple Jeopardy', 'The Ogragron Hulk',
+  'Grox Mutilations', 'Brain Hunt', 'Payment'
+];
+
+export const CONFLICT_KINDS = ['object', 'person', 'place', 'situation'];
+
+export function readScenario(sc) {
+  const src = sc && typeof sc === 'object' ? sc : null;
+  if (!src) return null;
+  const sides = Array.isArray(src.sides) ? src.sides : [];
+  const subplots = Array.isArray(src.subplots) ? src.subplots : [];
+  return {
+    concept: str(src.concept, 120),
+    conflict: CONFLICT_KINDS.includes(src.conflict) ? src.conflict : 'situation',
+    sides: sides.filter((x) => x && typeof x === 'object')
+      .map((x) => ({ name: str(x.name, 80), note: str(x.note, 300) })).slice(0, 6),
+    // GM-only. One private agenda per character: a deadline, a hidden
+    // traitor, a personal target. `delivered` records that it has been sent.
+    subplots: subplots.filter((x) => x && typeof x === 'object').map((x) => ({
+      id: (typeof x.id === 'string' && x.id) || newId('sub'),
+      charId: typeof x.charId === 'string' ? x.charId : null,
+      text: str(x.text, 600),
+      delivered: Boolean(x.delivered)
+    })).slice(0, 40)
+  };
+}
+
 export function readMission(m) {
   const src = m && typeof m === 'object' ? m : null;
   const objectives = Array.isArray(src && src.objectives) ? src.objectives : [];
@@ -96,7 +132,9 @@ export function readMission(m) {
     id: (src && typeof src.id === 'string' && src.id) || newId('mis'),
     name: str(src && src.name, 120),
     note: str(src && src.note, 400),
-    objectives: objectives.filter((o) => o && typeof o === 'object').map(readObjective)
+    objectives: objectives.filter((o) => o && typeof o === 'object').map(readObjective),
+    // Only present when the GM has set one up, so a plain Mission is unchanged.
+    ...(src && src.scenario ? { scenario: readScenario(src.scenario) } : {})
   };
 }
 
@@ -202,7 +240,13 @@ export function redactEndeavour(end, { isGm = false } = {}) {
   if (!end) return null;
   if (isGm) return end;
   const missions = (end.missions || [])
-    .map((m) => ({ ...m, objectives: (m.objectives || []).filter((o) => !o.hidden) }))
+    .map((m) => {
+      const { scenario, ...rest } = m;
+      // The sub-plots are secret; sides and concept are what the table plays.
+      const shown = scenario ? { ...scenario, subplots: [] } : null;
+      return { ...rest, ...(shown ? { scenario: shown } : {}),
+        objectives: (m.objectives || []).filter((o) => !o.hidden) };
+    })
     .filter((m) => (m.objectives || []).length > 0);
   return { ...end, missions };
 }
@@ -225,3 +269,11 @@ export const encounterIdsIn = (end) =>
     .flatMap((m) => m.objectives || [])
     .map((o) => o.encounterId)
     .filter(Boolean);
+
+// The message a sub-plot becomes when it is delivered privately to one
+// player (bridge sendMessage). Returns null for a sub-plot with nowhere to go.
+export const subplotMessage = (mission, subplot) =>
+  subplot && subplot.charId && subplot.text
+    ? { to: subplot.charId, text: `Secret objective: ${subplot.text}`,
+        from: (mission && mission.scenario && mission.scenario.concept) || 'GM' }
+    : null;

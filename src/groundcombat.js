@@ -38,6 +38,11 @@ export const ACTIONS = [
     '1 hit + 1 per 2 Degrees of Success.', { requiresMode: 'semiAuto', toHitMod: 10, hitsPerDoS: 0.5 }),
   A('full_auto_burst', 'Full-Auto Burst', 'full',
     '1 hit + 1 per 1 Degree of Success.', { requiresMode: 'fullAuto', toHitMod: 20, hitsPerDoS: 1 }),
+  // Inquisitor's pinning rules: full auto pins the whole target group. The
+  // fire itself scores no hits; each target tests Willpower (pinningTest()).
+  A('suppressing_fire', 'Suppressing Fire', 'full',
+    'Spray a 45-degree zone. No hits scored; every target in it tests Willpower or is Pinned.',
+    { requiresMode: 'fullAuto', toHitMod: 0, suppresses: true, ammoMultiplier: 1 }),
   A('aim', 'Aim', 'half', '+10 to hit on the next attack.', { grantsNextAttack: 10 }),
   A('aim_extended', 'Aim (Extended)', 'full', '+20 to hit on the next attack.', { grantsNextAttack: 20 }),
   A('charge', 'Charge', 'full', 'Move up to 3x Agility Bonus. +10 WS (melee).', { wsMod: 10 }),
@@ -52,6 +57,81 @@ export const ACTIONS = [
 ];
 
 export const actionById = (id) => ACTIONS.find((a) => a.id === id) || null;
+
+/* ------------------------------ ammo, jams, overheats ------------------------------
+   gear.js already stores Clip and the weapon qualities in the stats string
+   and parseWeaponStats() reads them back; nothing spent a round or rolled a
+   jam. These are the pure halves: how many rounds an attack costs, and
+   whether the d100 that came with it jammed or overheated the weapon. The
+   caller keeps the counter per carried weapon. */
+
+export function ammoCost(weapon, actionId = 'standard_attack') {
+  if (!weapon || weapon.clip == null) return 0;
+  const action = actionById(actionId);
+  if (action && action.requiresMode && weapon.modes) {
+    const n = weapon.modes[action.requiresMode];
+    if (Number.isFinite(n)) return n;
+  }
+  return 1;
+}
+
+// Rounds left after the attack, or null when the clip cannot pay for it.
+export const spendAmmo = (rounds, cost) =>
+  (Number(rounds) >= cost ? Number(rounds) - cost : null);
+
+const hasQuality = (weapon, name) =>
+  Boolean(weapon && (weapon.qualities || []).some((q) => q.toLowerCase().startsWith(name)));
+
+// Jam thresholds: 96+ for a single shot, 94+ for an automatic burst,
+// Unreliable jams on 91+, Reliable only on 100. A weapon that Overheats
+// does that on 91+ instead of jamming. The attack roll is reused, as the
+// rules intend.
+export function jamCheck(weapon, roll, actionId = 'standard_attack') {
+  if (!weapon || weapon.skillType !== 'bs') return { jammed: false, overheated: false, threshold: null };
+  const action = actionById(actionId);
+  let threshold = action && action.requiresMode ? 94 : 96;
+  if (hasQuality(weapon, 'unreliable')) threshold = Math.min(threshold, 91);
+  if (hasQuality(weapon, 'reliable')) threshold = 100;
+  if (hasQuality(weapon, 'overheats')) {
+    return { jammed: false, overheated: roll >= 91, threshold: 91 };
+  }
+  return { jammed: roll >= threshold, overheated: false, threshold };
+}
+
+// Reload time off the weapon: "Rld" is not in the parsed stats, so the
+// default follows clip size — a pistol-sized clip is a Half Action, a belt a
+// Full Action, as a plain house rule the GM can overrule.
+export const reloadAction = (weapon) =>
+  (weapon && weapon.clip != null && weapon.clip > 30 ? 'full' : 'half');
+
+export const reload = (weapon) => (weapon && weapon.clip != null ? weapon.clip : 0);
+
+/* ------------------------------ pinning ------------------------------ */
+
+// A Willpower test, -10 per extra shot of volume is not modelled: the GM's
+// otherMod covers it. Failure pins until the end of the target's next turn.
+export function pinningTest({ willpower = 0, roll, otherMod = 0, blast = false } = {}) {
+  if (blast) return { pinned: true, automatic: true, success: false, degrees: 0, roll: null };
+  const test = resolveTest(Number(willpower) || 0, Number(otherMod) || 0, roll);
+  return { ...test, pinned: !test.success };
+}
+
+export const pinnedCondition = () => ({ id: 'pinned', rounds: 1 });
+
+/* ------------------------------ between turns ------------------------------ */
+
+// What the end of a round does to every combatant, as a report rather than
+// a silent mutation: toll taken, and which conditions ran out. The bridge
+// stores it on ground.between so the table sees the phase.
+export function betweenTurns(combatants, d10 = () => 5) {
+  return (combatants || []).map((c) => {
+    const toll = conditionToll(c.conditions, d10);
+    const before = c.conditions || [];
+    const after = tickConditions(before);
+    const expired = before.filter((x) => !after.some((y) => y.id === x.id)).map((x) => x.name || x.id);
+    return { id: c.id, name: c.name, toll, expired, conditions: after };
+  });
+}
 
 /* ------------------------------ to-hit modifiers ------------------------------ */
 
@@ -343,6 +423,8 @@ export const GROUND_CONDITIONS = [
     note: '1d10 Wounds each round, ignoring armour. An Agility Test puts it out.' }),
   C('stunned', 'Stunned', { note: 'No actions, and others attack at +20.' }),
   C('prone', 'Prone', { note: '-10 to melee attacks; melee attackers gain +10.' }),
+  C('fleeing', 'Fleeing', { note: 'Must move away from the source of fear. Ends on a passed Willpower Test.' }),
+  C('shaken', 'Shaken', { note: '-10 to all tests while the shock lasts.' }),
   C('pinned', 'Pinned', { note: 'No advancing, -20 Ballistic Skill from cover.' }),
   C('fatigued', 'Fatigued', { note: '-10 to all tests per level of Fatigue.' }),
   C('helpless', 'Helpless', { note: 'No actions, and open to a Coup de Grace.' }),
@@ -424,7 +506,11 @@ export const GROUND_EVENTS = [
   // A condition on your own character is yours to set, the same way your own
   // Wounds are; one on a hostile is anyone's, the same way its damage is.
   GE('player_condition', 'Condition on a character', { gmOnly: false, target: 'player' }),
-  GE('npc_condition', 'Condition on a hostile', { gmOnly: false, target: 'npc' })
+  GE('npc_condition', 'Condition on a hostile', { gmOnly: false, target: 'npc' }),
+  // The GM asks a player for a Pinning (or Fear) test; the result goes back
+  // as a player_condition or player_response. Nothing to write, only the log.
+  GE('pinning_prompt', 'GM prompts a Pinning test', { gmOnly: true, target: 'player', logOnly: true }),
+  GE('fear_prompt', 'GM prompts a Fear test', { gmOnly: true, target: 'player', logOnly: true })
 ];
 
 export const groundEventById = (id) => GROUND_EVENTS.find((e) => e.id === id) || null;
@@ -492,24 +578,27 @@ export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
       // The round wrapped. Durations come down and the two conditions that
       // cost Wounds every round take them now, before anyone acts.
       const round = (Number(ground.round) || 1) + 1;
+      const pcs = Object.entries(playerVitals).map(([id, v]) => ({ id, name: v.name || id, ...v }));
+      const pcReport = betweenTurns(pcs, d10);
       const nextVitals = {};
-      for (const [id, v] of Object.entries(playerVitals)) {
-        const toll = conditionToll(v.conditions, d10);
-        nextVitals[id] = {
-          ...v,
-          damage: applyDamage(v.damage, toll, v.max || 0),
-          conditions: tickConditions(v.conditions)
-        };
+      for (const r of pcReport) {
+        const v = playerVitals[r.id];
+        nextVitals[r.id] = { ...v, damage: applyDamage(v.damage, r.toll, v.max || 0), conditions: r.conditions };
       }
-      const nextNpcs = npcs.map((n) => ({
+      const npcReport = betweenTurns(npcs, d10);
+      const nextNpcs = npcs.map((n, i) => ({
         ...n,
-        damage: applyDamage(n.damage, conditionToll(n.conditions, d10), n.max || 0),
-        conditions: tickConditions(n.conditions)
+        damage: applyDamage(n.damage, npcReport[i].toll, n.max || 0),
+        conditions: npcReport[i].conditions
       }));
+      // The visible tidy-up phase: only combatants something happened to.
+      const between = [...pcReport, ...npcReport]
+        .filter((r) => r.toll || r.expired.length)
+        .map(({ conditions, ...r }) => r);
       return {
         patch: {
           playerVitals: nextVitals,
-          ground: { ...ground, npcs: nextNpcs, turn: 0, round }
+          ground: { ...ground, npcs: nextNpcs, turn: 0, round, between }
         },
         fields: ['playerVitals', 'ground'], unknown: false
       };
@@ -562,6 +651,8 @@ export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
       return { patch: { playerVitals: { ...playerVitals, [e.charId]: entry } }, fields: ['playerVitals'], unknown: false };
     }
 
+    case 'pinning_prompt':
+    case 'fear_prompt':
     case 'player_response':
       // Nothing to patch — the log entry (appended by the caller, same as
       // every other event) is the whole point of this one.
@@ -595,6 +686,12 @@ export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
         // Agility Bonus for the initiative roll. Absent means an average 3 —
         // most things the GM throws at a bridge crew are average.
         agilityBonus: Number.isFinite(Number(e.agilityBonus)) ? Math.floor(Number(e.agilityBonus)) : 3,
+        // Nerve and orders, all optional: absent means no Fear to test with
+        // and no written order for the break test to fall back from.
+        fear: Math.max(0, Math.floor(Number(e.fear) || 0)),
+        fearless: Boolean(e.fearless),
+        combatRole: e.combatRole ? String(e.combatRole).slice(0, 20) : null,
+        order: e.order ? String(e.order).slice(0, 20) : null,
         conditions: []
       };
       return { patch: { ground: { ...ground, npcs: [...npcs, npc] } }, fields: ['ground'], unknown: false };

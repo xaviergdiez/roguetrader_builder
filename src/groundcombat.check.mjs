@@ -515,3 +515,53 @@ console.log('groundcombat.check.mjs: ground combat events all passed');
 }
 
 console.log('groundcombat.check.mjs: damage resolver passed');
+
+/* ---- Inquisitor mechanics: ammo, jams, pinning, between turns ---- */
+{
+  const { ammoCost, spendAmmo, jamCheck, reload, pinningTest, betweenTurns, actionById } =
+    await import('./groundcombat.js');
+  const rifle = { skillType: 'bs', clip: 60, modes: { single: true, semiAuto: 3, fullAuto: 10 }, qualities: [] };
+  assert.equal(ammoCost(rifle, 'standard_attack'), 1);
+  assert.equal(ammoCost(rifle, 'semi_auto_burst'), 3);
+  assert.equal(ammoCost(rifle, 'full_auto_burst'), 10);
+  assert.equal(ammoCost({ skillType: 'ws', clip: null }, 'standard_attack'), 0, 'melee spends nothing');
+  assert.equal(spendAmmo(5, 3), 2);
+  assert.equal(spendAmmo(2, 3), null, 'a short clip cannot pay');
+  assert.equal(reload(rifle), 60);
+
+  assert.equal(jamCheck(rifle, 95).jammed, false);
+  assert.equal(jamCheck(rifle, 96).jammed, true);
+  assert.equal(jamCheck(rifle, 94, 'full_auto_burst').jammed, true, 'bursts jam on 94+');
+  assert.equal(jamCheck({ ...rifle, qualities: ['Reliable'] }, 99).jammed, false);
+  assert.equal(jamCheck({ ...rifle, qualities: ['Reliable'] }, 100).jammed, true);
+  assert.equal(jamCheck({ ...rifle, qualities: ['Unreliable'] }, 91).jammed, true);
+  const plasma = { ...rifle, qualities: ['Overheats'] };
+  assert.equal(jamCheck(plasma, 91).overheated, true);
+  assert.equal(jamCheck(plasma, 91).jammed, false);
+  assert.equal(jamCheck(plasma, 90).overheated, false);
+
+  assert.ok(actionById('suppressing_fire'), 'Suppressing Fire is a listed action');
+  assert.equal(actionById('suppressing_fire').suppresses, true);
+  assert.equal(pinningTest({ willpower: 40, roll: 30 }).pinned, false);
+  assert.equal(pinningTest({ willpower: 40, roll: 70 }).pinned, true);
+  assert.equal(pinningTest({ blast: true }).pinned, true, 'a blast pins without a test');
+
+  const report = betweenTurns([
+    { id: 'a', name: 'A', conditions: [{ id: 'blood_loss', name: 'Blood Loss', rounds: 1 }] },
+    { id: 'b', name: 'B', conditions: [] }
+  ]);
+  assert.equal(report[0].toll, 1);
+  assert.deepEqual(report[0].expired, ['Blood Loss']);
+  assert.equal(report[1].toll, 0);
+
+  // the round wrap publishes the report on ground.between
+  const combat = {
+    playerVitals: { pc1: { max: 12, damage: 0, critSoFar: 0, conditions: [{ id: 'blood_loss', rounds: 1 }] } },
+    ground: { npcs: [], order: [{ id: 'pc1', name: 'P' }], round: 1, turn: 0 }
+  };
+  const wrapped = applyGroundEvent(combat, { id: 'ground_advance' }, { d10: () => 5 });
+  assert.equal(wrapped.patch.ground.between.length, 1);
+  assert.equal(wrapped.patch.playerVitals.pc1.damage, 1);
+  assert.equal(applyGroundEvent(combat, { id: 'pinning_prompt' }, {}).unknown, false);
+}
+console.log('groundcombat.check.mjs: inquisitor mechanics passed');

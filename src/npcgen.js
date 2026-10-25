@@ -14,6 +14,8 @@
 // AP and damage numbers off it rather than this file guessing at them.
 
 import { armourProfile, weaponProfile } from './groundcombat.js';
+import { parseFear, isFearless } from './sanity.js';
+import { resolveTest } from './dice.js';
 
 const roll1d10 = (rng) => 1 + Math.floor(rng() * 10);
 const inRange = (rng, min, max) => min + Math.floor(rng() * (max - min + 1));
@@ -141,6 +143,69 @@ export const COMBAT_ROLES = [
   { min: 10, max: 10, id: 'fanatic', name: 'Fanatic',
     behaviour: 'Fights to the death, never checks Fear, spends Fate Points rather than flee.' }
 ];
+
+/* ============================ Orders and break tests ============================
+   Borrowed from Inquisitor's optional subordination rule: a hostile follows
+   its written order until something happens to it, then tests to see
+   whether the order holds. On a fail it drops to its combat role's own
+   behaviour (the text already on COMBAT_ROLES). */
+
+export const ORDERS = [
+  { id: 'hold', name: 'Hold', text: 'Stay put and cover the approach.' },
+  { id: 'advance', name: 'Advance', text: 'Press forward toward the party.' },
+  { id: 'guard', name: 'Guard', text: 'Protect a person, place or object.' },
+  { id: 'patrol', name: 'Patrol', text: 'Walk a route and investigate what it finds.' }
+];
+
+export const orderById = (id) => ORDERS.find((o) => o.id === id) || null;
+
+// A role's natural order: what it would be doing anyway if nobody told it.
+const ROLE_ORDERS = {
+  ambusher: 'hold', gunline: 'hold', berserker: 'advance', skirmisher: 'patrol',
+  coward: 'patrol', support: 'guard', fanatic: 'advance'
+};
+export const defaultOrder = (roleId) => ROLE_ORDERS[roleId] || 'hold';
+
+// The three triggers that call for a break test.
+export const BREAK_TRIGGERS = ['pinned', 'wounded', 'sees_enemy'];
+
+// Willpower (or Leadership if the caller passes it) against a -10 per
+// trigger already spent this scene. Fanatics never break; Fearless
+// hostiles ignore the test. `fallback` is the role's behaviour text.
+export function breakTest({ npc, trigger, roll, strikes = 0, stat = null } = {}) {
+  if (!BREAK_TRIGGERS.includes(trigger)) return null;
+  const role = COMBAT_ROLES.find((r) => r.id === (npc && npc.combatRole));
+  if (npc && (npc.combatRole === 'fanatic' || npc.fearless)) {
+    return { trigger, holds: true, skipped: true, fallback: null };
+  }
+  const base = Number.isFinite(stat) ? stat : (Number.isFinite(npc && npc.willpower) ? npc.willpower : 30);
+  const test = resolveTest(base, -10 * Math.max(0, strikes), roll);
+  return {
+    ...test, trigger, holds: test.success, skipped: false,
+    fallback: test.success ? null : (role ? role.behaviour : 'Falls back to the GM\'s judgement.')
+  };
+}
+
+/* ============================== Motivation oracle ==============================
+   Two tiny GM aids: a d6 yes/no for any question about an NPC (even is yes),
+   and Four Traits, a d6 each for Fitness, Intelligence, Morals and Bravery. */
+
+export const oracle = (rng = Math.random) => {
+  const die = 1 + Math.floor(rng() * 6);
+  return { die, answer: die % 2 === 0 };
+};
+
+export const TRAIT_NAMES = ['Fitness', 'Intelligence', 'Morals', 'Bravery'];
+const TRAIT_BANDS = ['Poor', 'Poor', 'Average', 'Average', 'Good', 'Exceptional'];
+
+export function fourTraits(rng = Math.random) {
+  const out = {};
+  for (const t of TRAIT_NAMES) {
+    const die = 1 + Math.floor(rng() * 6);
+    out[t.toLowerCase()] = { die, band: TRAIT_BANDS[die - 1] };
+  }
+  return out;
+}
 
 /* ================================ Section 6 ================================ */
 
@@ -285,6 +350,7 @@ export function rollNpc({
     tier: tier.id, origin: origin.id, originName: origin.name,
     combatRole: role.id, combatRoleName: role.name, behaviour: role.behaviour,
     motivation, quirks,
+    order: defaultOrder(role.id),
     gmChoice: Boolean(origin.gmChoice)
   };
 }
@@ -322,6 +388,8 @@ export function bestiaryToNpc(name) {
     ws: b.ws, bs: b.bs, toughnessBonus: b.toughnessBonus, armour: b.armour,
     weapon: b.weapon,
     custom: b.custom,
+    // Parsed out of the ability text so a Fear test can arm itself.
+    fear: parseFear(b.abilities), fearless: isFearless(b.abilities),
     // Carried through for the GM to read on the board: what the creature
     // can do beyond its one weapon line, where its armour is thickest, and
     // whether the sources disagreed about it.

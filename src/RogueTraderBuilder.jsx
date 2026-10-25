@@ -57,11 +57,15 @@ import {
 } from './voidcombat.js';
 import {
   ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES, GROUND_CONDITIONS,
-  weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll, resolveHits
+  weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll, resolveHits,
+  ammoCost, spendAmmo, jamCheck, overheatResult, clearJam, reload as gcReload
 } from './groundcombat.js';
+import NervePanel from './NervePanel.jsx';
+import { insanityTrack, corruptionTrack, INSANITY_STEP, MALIGNANCY_STEP } from './sanity.js';
 import {
   rollNpc, bestiaryToNpc, BESTIARY, BESTIARY_GROUPS, byGroup,
   THREAT_TIERS, ORIGINS
+  , orderById, BREAK_TRIGGERS, breakTest
 } from './npcgen.js';
 import { rollSystem, describeSystem, describePlanet } from './stargen.js';
 import {
@@ -2028,6 +2032,7 @@ const CSS = `
 .rt-der-v{font-family:var(--display);font-size:24px;font-weight:600;line-height:1.1;
   align-self:center;                     /* centre in the 1fr band, see .rt-der */
   color:var(--gold-lit);text-shadow:0 0 18px rgba(224,185,85,.35);}
+.rt-der-sub{font-family:var(--mono);font-size:8px;letter-spacing:.06em;color:var(--brass-lit);opacity:.8;margin-top:2px;}
 .rt-der-k{font-family:var(--mono);font-size:9px;color:var(--brass-lit);
   letter-spacing:.16em;margin-top:3px;opacity:.8;}
 
@@ -3570,6 +3575,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
           // mirrorPlayerWounds in lib/bridge.js), and read back afterward so
           // this sheet is the one place Wounds actually lives.
           characteristics={totals} charWounds={ws}
+          insanity={insanity} corruption={corruption}
+          onInsanity={(n) => setInsanity((v) => Math.max(0, v + n))}
+          onCorruption={(n) => setCorruption((v) => Math.max(0, v + n))}
           onDynastyPf={setDynastyPf}
           onClose={() => setBridgeOpen(false)}
         />
@@ -5770,9 +5778,11 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                 and are otherwise adjusted the same way Fate is. Past 90 a
                 character is lost to the warp or the madhouse either way, so
                 that threshold gets the same hot styling as ship corruption. */}
-            <div className={'rt-der' + (corruption >= 90 ? ' rt-corrhot' : '')}>
+            <div className={'rt-der' + (corruption >= 90 ? ' rt-corrhot' : '')}
+              title={`Malignancy Test at every ${MALIGNANCY_STEP} Corruption Points (Willpower, ${corruptionTrack(corruption).mod ?? 0}).`}>
               <div className="rt-der-k top">CORRUPTION</div>
               <div className="rt-der-v">{corruption}</div>
+              <div className="rt-der-sub">{corruptionTrack(corruption).degree.toUpperCase()}</div>
               <div className="rt-adjrow">
                 <button className="rt-adjb" onClick={() => onCorruption(-1)}
                   disabled={corruption <= 0} aria-label="Lower Corruption Points">{'−'}</button>
@@ -5780,9 +5790,11 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                   aria-label="Raise Corruption Points">+</button>
               </div>
             </div>
-            <div className={'rt-der' + (insanity >= 90 ? ' rt-corrhot' : '')}>
+            <div className={'rt-der' + (insanity >= 90 ? ' rt-corrhot' : '')}
+              title={`Trauma Test at every ${INSANITY_STEP} Insanity Points; Disorders at 40, 60 and 80.`}>
               <div className="rt-der-k top">INSANITY</div>
               <div className="rt-der-v">{insanity}</div>
+              <div className="rt-der-sub">{insanityTrack(insanity).degree.toUpperCase()}</div>
               <div className="rt-adjrow">
                 <button className="rt-adjb" onClick={() => onInsanity(-1)}
                   disabled={insanity <= 0} aria-label="Lower Insanity Points">{'−'}</button>
@@ -6263,6 +6275,7 @@ const QUICK_LINES = [
 
 function BridgePanel({ code, setCode, characterName, charId, shipRole,
   blueprint, fleet, combat, roster, card, characteristics, charWounds,
+  insanity = 0, corruption = 0, onInsanity, onCorruption,
   onDynastyPf, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
@@ -6306,6 +6319,10 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const [gMyDistance, setGMyDistance] = useState(0);
   const [gMyAction, setGMyAction] = useState('standard_attack');
   const [gMyPreview, setGMyPreview] = useState(null);
+  // Rounds left and jammed flags, per weapon label. Local to this panel: a
+  // clip is a table aid, not shared state, and a fresh weapon starts full.
+  const [gAmmo, setGAmmo] = useState({});
+  const [gJammed, setGJammed] = useState({});
   const [gCondWho, setGCondWho] = useState('');      // "pc:<charId>" or "npc:<id>"
   const [gCondId, setGCondId] = useState('blood_loss');
   const [gCondRounds, setGCondRounds] = useState(0); // 0 = until cleared
@@ -6499,7 +6516,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     return groundEvent({
       id: 'npc_add', name: npc.name, max: npc.max,
       ws: npc.ws, bs: npc.bs, toughnessBonus: npc.toughnessBonus, armour: npc.armour,
-      weapon: npc.weapon,
+      weapon: npc.weapon, combatRole: npc.combatRole, order: npc.order,
       text: `Rolled ${npc.name} (${npc.originName}, ${npc.tier}) — `
         + `${npc.combatRoleName}, ${npc.weapon || 'unarmed'}.`
     }, `Added ${npc.name} to the roster.`);
@@ -6513,7 +6530,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
     return groundEvent({
       id: 'npc_add', name: npc.name, max: npc.max,
       ws: npc.ws, bs: npc.bs, toughnessBonus: npc.toughnessBonus, armour: npc.armour,
-      weapon: npc.weapon,
+      weapon: npc.weapon, fear: npc.fear, fearless: npc.fearless, willpower: npc.willpower,
       text: npc.custom
         ? `Added ${npc.name} — no numeric stat block in the source; adjudicate by hand.`
         : `Added ${npc.name} from the bestiary.`
@@ -6590,7 +6607,24 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
       setErr('No Weapon Skill or Ballistic Skill on this sheet for that weapon.');
       return;
     }
-    setGMyPreview({ ...atk, roll, npcId: npc.id, npcName: npc.name });
+    // Rounds, jams and overheating (Rogue Trader pp.116, 249). A jammed
+    // weapon cannot fire until it is cleared; every shot spends rounds
+    // whether or not it hits; an unmodified 96+ (94+ on a burst) jams it and
+    // is an automatic miss.
+    const w = atk.weapon;
+    const cost = ammoCost(w, gMyAction);
+    const left = gAmmo[gMyWeapon] != null ? gAmmo[gMyWeapon] : w.clip;
+    if (gJammed[gMyWeapon]) { setErr(`${gMyWeapon} is jammed. Clear the jam first (a Full Action and a BS Test).`); return; }
+    if (w.clip != null && spendAmmo(left, cost) == null) {
+      setErr(`${gMyWeapon} has ${left} round${left === 1 ? '' : 's'}; that needs ${cost}. Reload.`);
+      return;
+    }
+    const jam = jamCheck(w, roll, gMyAction, { d10: d(10) });
+    if (w.clip != null) setGAmmo((a) => ({ ...a, [gMyWeapon]: left - cost }));
+    if (jam.jammed) setGJammed((j) => ({ ...j, [gMyWeapon]: true }));
+    const jammedMiss = jam.jammed ? { success: false, hits: 0 } : {};
+    setGMyPreview({ ...atk, ...jammedMiss, roll, npcId: npc.id, npcName: npc.name, jam,
+      overheat: jam.overheated ? overheatResult(w) : null });
   };
 
   const applyMyAttack = () => {
@@ -7029,7 +7063,44 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                     Roll initiative
                   </button>
                 )}
+                {isGmHere && (
+                  <button className="rt-opt" disabled={busy}
+                    onClick={() => groundEvent({ id: 'pinning_prompt',
+                      text: 'Under fire! Everyone in the kill zone: Hard (-20) Willpower Pinning Test or be Pinned.' },
+                    'Pinning test called.')}>
+                    Call Pinning Test
+                  </button>
+                )}
               </TurnStrip>
+
+              {/* The end-of-round tidy-up: what Blood Loss and fire cost, and
+                  which conditions ran out, as the round wrapped. */}
+              {(ground.between || []).length > 0 && (
+                <ul className="rt-list">
+                  {ground.between.map((b) => (
+                    <li key={b.id} className="rt-entry">
+                      <span className="rt-entry-t">{b.name}</span>
+                      <span className="rt-entry-c">
+                        {b.toll ? `${b.toll} Wound${b.toll === 1 ? '' : 's'}` : ''}
+                        {b.toll && b.expired.length ? ' \u00b7 ' : ''}
+                        {b.expired.length ? `${b.expired.join(', ')} ended` : ''}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {!isGmHere && charId && (
+                <NervePanel
+                  willpower={Number(characteristics?.wp) || 0}
+                  charId={charId} name={characterName || 'A player'}
+                  conditions={(myVitals && myVitals.conditions) || []}
+                  hostiles={ground.npcs}
+                  insanity={insanity} corruption={corruption}
+                  onInsanity={onInsanity} onCorruption={onCorruption}
+                  emit={groundEvent} busy={busy}
+                />
+              )}
 
               {myVitals && (
                 <div className="rt-gmvitals rt-bridgevitals">
@@ -7078,6 +7149,31 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                         {Math.max(0, n.max - n.damage)}/{n.max} Wounds
                         {n.critSoFar > 0 ? ' \u00B7 Crit ' + n.critSoFar : ''}
                       </span>
+                      {(n.order || n.fear > 0) && (
+                        <p className="rt-entry-s">
+                          {n.order && orderById(n.order) ? `Order: ${orderById(n.order).name}` : ''}
+                          {n.order && n.fear > 0 ? ' \u00B7 ' : ''}
+                          {n.fear > 0 ? `Fear (${n.fear})` : ''}
+                        </p>
+                      )}
+                      {isGmHere && n.order && (
+                        <div className="rt-btnrow">
+                          {BREAK_TRIGGERS.map((trigger) => (
+                            <button key={trigger} className="rt-opt" disabled={busy}
+                              title="Break test: does its order hold?"
+                              onClick={() => {
+                                const t = breakTest({ npc: n, trigger, roll: d(100) });
+                                if (!t) return;
+                                groundEvent({ id: 'gm_note', text: t.skipped
+                                  ? `${n.name} never breaks.`
+                                  : `${n.name} (${trigger.replace('_', ' ')}): rolled ${t.roll} vs ${t.target} \u2014 `
+                                    + (t.holds ? 'the order holds.' : `breaks. ${t.fallback}`) });
+                              }}>
+                              Break: {trigger.replace('_', ' ')}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <ConditionChips list={n.conditions}
                         onClear={(cid) => groundEvent({ id: 'npc_condition', npcId: n.id, clear: cid,
                           text: `${n.name} is no longer ${cid.replace(/_/g, ' ')}.` })} />
@@ -7126,6 +7222,34 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                         </select>
                       </label>
                       {gMyWeapon && <WeaponLine label={gMyWeapon} className="rt-vox-hint" />}
+                      {gMyWeapon && (() => {
+                        const w = gcWeaponProfile(gMyWeapon);
+                        if (!w || w.clip == null) return null;
+                        const left = gAmmo[gMyWeapon] != null ? gAmmo[gMyWeapon] : w.clip;
+                        return (
+                          <div className="rt-btnrow">
+                            <span className="rt-vox-hint">
+                              Rounds {left}/{w.clip}{gJammed[gMyWeapon] ? ' \u00b7 JAMMED' : ''}
+                            </span>
+                            <button className="rt-opt" disabled={busy || left === w.clip}
+                              onClick={() => { setGAmmo((a) => ({ ...a, [gMyWeapon]: gcReload(w) })); setGMyPreview(null); }}>
+                              Reload
+                            </button>
+                            {gJammed[gMyWeapon] && (
+                              <button className="rt-opt" disabled={busy} onClick={() => {
+                                const t = clearJam({ bs: Number(characteristics?.bs), roll: d(100) });
+                                setNote(t.cleared
+                                  ? 'Jam cleared. The weapon needs reloading and its ammo is lost.'
+                                  : `Still jammed (rolled ${t.roll} vs ${t.target}). Try again next round.`);
+                                if (t.cleared) {
+                                  setGJammed((j) => ({ ...j, [gMyWeapon]: false }));
+                                  setGAmmo((a) => ({ ...a, [gMyWeapon]: 0 }));
+                                }
+                              }}>Clear jam (BS Test)</button>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div className="rt-gmmods">
                         <label><span className="rt-der-k">Distance (m)</span>
                           {num(gMyDistance, setGMyDistance)}
@@ -7147,9 +7271,20 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
                         <div>
                           <TargetNumber total={gMyPreview.total} base={gMyPreview.base}
                             parts={gMyPreview.parts} band={gMyPreview.band} roll={gMyPreview.roll}
-                            outcome={gMyPreview.success
-                              ? `hit, ${gMyPreview.hits} hit${gMyPreview.hits === 1 ? '' : 's'} scored`
-                              : 'missed'} />
+                            outcome={gMyPreview.jam && gMyPreview.jam.jammed
+                              ? 'JAMMED \u2014 automatic miss'
+                              : gMyPreview.success
+                                ? `hit, ${gMyPreview.hits} hit${gMyPreview.hits === 1 ? '' : 's'} scored`
+                                : 'missed'} />
+                          {gMyPreview.jam && gMyPreview.jam.reliableSaved && (
+                            <p className="rt-vox-hint">Reliable: it would have jammed, but the d10 saved it. A miss.</p>
+                          )}
+                          {gMyPreview.overheat && (
+                            <p className="rt-vox-hint">
+                              Overheats! Take the weapon{'\u2019'}s own damage (no Penetration) to an arm, or drop it as a
+                              Free Action. It cannot fire again until the second round after.
+                            </p>
+                          )}
                           <div className="rt-btnrow">
                             <button className="rt-btn" disabled={busy} onClick={applyMyAttack}>
                               {gMyPreview.success ? 'Roll damage and apply' : 'Log the miss'}

@@ -389,7 +389,7 @@ export function bestiaryToNpc(name) {
     weapon: b.weapon,
     custom: b.custom,
     // Parsed out of the ability text so a Fear test can arm itself.
-    fear: parseFear(b.abilities), fearless: isFearless(b.abilities),
+    fear: parseFear(b.abilities), fearless: isFearless(b.abilities), willpower: b.wp,
     // Carried through for the GM to read on the board: what the creature
     // can do beyond its one weapon line, where its armour is thickest, and
     // whether the sources disagreed about it.

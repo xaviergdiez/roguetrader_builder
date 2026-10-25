@@ -576,7 +576,9 @@ export const GROUND_EVENTS = [
   // The GM asks a player for a Pinning (or Fear) test; the result goes back
   // as a player_condition or player_response. Nothing to write, only the log.
   GE('pinning_prompt', 'GM prompts a Pinning test', { gmOnly: true, target: 'player', logOnly: true }),
-  GE('fear_prompt', 'GM prompts a Fear test', { gmOnly: true, target: 'player', logOnly: true })
+  GE('fear_prompt', 'GM prompts a Fear test', { gmOnly: true, target: 'player', logOnly: true }),
+  // A note for the table's log that changes nothing (an NPC's break test).
+  GE('gm_note', 'GM note to the log', { gmOnly: true, target: 'npc', logOnly: true })
 ];
 
 export const groundEventById = (id) => GROUND_EVENTS.find((e) => e.id === id) || null;
@@ -719,6 +721,7 @@ export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
 
     case 'pinning_prompt':
     case 'fear_prompt':
+    case 'gm_note':
     case 'player_response':
       // Nothing to patch — the log entry (appended by the caller, same as
       // every other event) is the whole point of this one.
@@ -754,6 +757,7 @@ export function applyGroundEvent(combat, event, { d10 = () => 5 } = {}) {
         agilityBonus: Number.isFinite(Number(e.agilityBonus)) ? Math.floor(Number(e.agilityBonus)) : 3,
         // Nerve and orders, all optional: absent means no Fear to test with
         // and no written order for the break test to fall back from.
+        willpower: Number.isFinite(Number(e.willpower)) && e.willpower !== null ? Math.floor(Number(e.willpower)) : null,
         fear: Math.max(0, Math.floor(Number(e.fear) || 0)),
         fearless: Boolean(e.fearless),
         combatRole: e.combatRole ? String(e.combatRole).slice(0, 20) : null,

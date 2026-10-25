@@ -600,3 +600,14 @@ console.log('groundcombat.check.mjs: damage resolver passed');
   assert.equal(applyGroundEvent(combat, { id: 'pinning_prompt' }, {}).unknown, false);
 }
 console.log('groundcombat.check.mjs: ammo, jam and pinning rules passed');
+
+{
+  const r = applyGroundEvent({ ground: { npcs: [] } }, { id: 'npc_add', name: 'Cultist', max: 8, willpower: 35, fear: 2, order: 'hold', combatRole: 'gunline' }, {});
+  const n = r.patch.ground.npcs[0];
+  assert.equal(n.willpower, 35);
+  assert.equal(n.fear, 2);
+  assert.equal(n.order, 'hold');
+  assert.equal(applyGroundEvent({ ground: { npcs: [] } }, { id: 'npc_add', name: 'Plain', max: 8 }, {}).patch.ground.npcs[0].willpower, null);
+  assert.equal(authorizeGroundEvent({ id: 'gm_note' }, { isGm: false, isMember: true }).ok, false, 'only the GM writes notes');
+  assert.equal(applyGroundEvent({}, { id: 'gm_note' }, {}).unknown, false);
+}

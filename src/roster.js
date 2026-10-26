@@ -23,6 +23,30 @@ export function upsert(list, char) {
   return next;
 }
 
+/* A saved character with the same name as the one being built, which is not
+   the one being edited.
+
+   "Save current" overwrites whatever sheet is open, because the open sheet
+   carries its id. It is the OTHER road that duplicated: start a new
+   character, or import one, and the sheet has no id — so saving a name
+   already in the roster quietly made a second entry, and the GM found two
+   Hadriax Belisarius in the list with no way to tell which was which.
+
+   Names are compared case-insensitively with runs of whitespace collapsed,
+   because "hadriax  belisarius" is the same person as "Hadriax Belisarius"
+   to everyone except a string comparison. A blank name matches nothing:
+   every unnamed sheet would otherwise collide with every other. */
+const sameName = (a, b) => {
+  const norm = (v) => String(v == null ? '' : v).trim().replace(/\s+/g, ' ').toLowerCase();
+  const x = norm(a);
+  return Boolean(x) && x === norm(b);
+};
+
+export function sameNamed(list, name, currentId) {
+  if (!Array.isArray(list)) return null;
+  return list.find((c) => c && c.id !== currentId && sameName(c.name, name)) || null;
+}
+
 export function remove(list, id) {
   return list.filter((c) => c.id !== id);
 }

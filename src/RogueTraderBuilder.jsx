@@ -7,7 +7,7 @@ import {
   readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap,
   readThemeLibrary, readCustomTheme
 } from './battlemap.js';
-import { readRoster, writeRoster, upsert, remove as removeChar, newId,
+import { readRoster, writeRoster, upsert, remove as removeChar, newId, sameNamed,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
 import { parseGear, gearInfo, CRAFT, GEAR, availabilityOf } from './gear.js';
 import { woundState, applyDamage, adjustMax } from './wounds.js';
@@ -2775,6 +2775,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [extras, setExtras] = useState(EMPTY_EXTRAS);
   const [roster, setRoster] = useState([]);
   const [charId, setCharId] = useState(null);  // null = unsaved sheet
+  // A saved character of the same name, found while saving a sheet that has
+  // no id of its own. Held until the GM says which they meant.
+  const [clash, setClash] = useState(null);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);   // the phone header panel
@@ -3114,8 +3117,23 @@ export default function RogueTraderBuilder({ me, cloud }) {
     return entry;
   };
 
-  const saveCharacter = async () => {
-    const id = charId || newId();
+  /* `mode` is how an already-saved name was resolved: undefined asks,
+     'overwrite' takes the existing character's id, 'new' insists on a fresh
+     one. The open sheet carries its own id and is simply written back, which
+     is the ordinary case and never asks. */
+  const saveCharacter = async (arg) => {
+    // Wired straight to a click handler in the roster dialog, so the first
+    // argument is usually a MouseEvent. Only the two words mean anything;
+    // an event read as a mode would skip the question entirely.
+    const mode = (arg === 'overwrite' || arg === 'new') ? arg : undefined;
+    let id = charId;
+    if (!id) {
+      const existing = sameNamed(roster, name, charId);
+      if (existing && !mode) { setClash(existing); return; }
+      if (existing && mode === 'overwrite') id = existing.id;
+    }
+    if (!id) id = newId();
+    setClash(null);
     setRosterBusy(true);
     try {
       const meta = await persist({
@@ -3494,11 +3512,21 @@ export default function RogueTraderBuilder({ me, cloud }) {
         </div>
       </nav>
 
+      {clash && (
+        <SaveClashDialog
+          existing={clash}
+          name={name}
+          onOverwrite={() => saveCharacter('overwrite')}
+          onNew={() => saveCharacter('new')}
+          onCancel={() => setClash(null)}
+        />
+      )}
+
       {rosterOpen && (
         <RosterDialog
           roster={roster} currentId={charId} err={rosterErr} me={me}
           cloud={cloud} note={rosterNote} busy={rosterBusy}
-          onSave={saveCharacter} onOpen={openCharacter}
+          onSave={() => saveCharacter()} onOpen={openCharacter}
           onDelete={deleteCharacter} onNew={newCharacter}
           onClose={() => setRosterOpen(false)}
         />
@@ -3852,6 +3880,40 @@ async function signOut() {
     // no /api under plain `vite dev` — reloading re-stubs the dev user
   }
   window.location.reload();
+}
+
+/* Asked when a sheet with no id of its own is saved under a name already in
+   the roster. Three ways out, and none of them is the default: overwriting
+   the wrong character and silently making a duplicate are both losses, so
+   the GM says which they meant. */
+function SaveClashDialog({ existing, name, onOverwrite, onNew, onCancel }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  return (
+    <dialog ref={ref} className="rt-framer" aria-label="Already saved"
+      onCancel={(e) => { e.preventDefault(); onCancel(); }}>
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">Already in your roster</span>
+        <button className="rt-close" onClick={onCancel} aria-label="Close">&times;</button>
+      </div>
+      <p className="rt-vox-hint">
+        <strong>{existing.name || 'An unnamed adept'}</strong>
+        {existing.career ? ` (${existing.career})` : ''} is already saved, and this
+        sheet is not the one you opened. Saving it as new would leave you two
+        of them.
+      </p>
+      <div className="rt-btnrow">
+        <button className="rt-btn" onClick={onOverwrite}>
+          Overwrite {name ? `“${name}”` : 'it'}
+        </button>
+        <button className="rt-btn ghost" onClick={onNew}>Save as a new character</button>
+        <button className="rt-opt" onClick={onCancel}>Cancel</button>
+      </div>
+    </dialog>
+  );
 }
 
 function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose,

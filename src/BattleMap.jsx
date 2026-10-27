@@ -311,6 +311,11 @@ export default function BattleMap({
   const [showRings, setShowRings] = useState(true);
   const [coneAngle, setConeAngle] = useState(15);
 
+  // A clean map: every toolbar and readout hidden, only the deck left. The
+  // overlays, templates and fog still draw, because those are the map.
+  const [showOptions, setShowOptions] = useState(true);
+  const [isFull, setIsFull] = useState(false);
+  const presentingRef = useRef(false);
   const [showZones, setShowZones] = useState(false);
   const [showCalibration, setShowCalibration] = useState(false);
 
@@ -536,13 +541,62 @@ export default function BattleMap({
   useEffect(() => {
     const target = win || window;
     const onKey = (e) => {
-      if (e.key !== 'r' && e.key !== 'R') return;
       const tag = (e.target && e.target.tagName) || '';
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-      setRotation((r) => (r + 90) % 360);
+      if (e.metaKey || e.ctrlKey || e.altKey) return;    // leave browser shortcuts alone
+      const k = e.key.toLowerCase();
+      if (k === 'r') setRotation((r) => (r + 90) % 360);
+      // H hides or brings back the toolbars; F takes the map's window
+      // full screen; P does both at once, for the projector.
+      else if (k === 'h') setShowOptions((v) => !v);
+      else if (k === 'f' && win) toggleFullscreen();
+      else if (k === 'p' && win) present();
     };
     target.addEventListener('keydown', onKey);
     return () => target.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [win]);
+
+  /* ---- full screen ----
+     The Fullscreen API has to be asked from a click or keypress inside the
+     window that is going full screen, which is why the button and the key
+     live here rather than on the dashboard that opened it. The prefixed names
+     are Safari's. */
+  const fsDoc = () => (win || window).document;
+  const fsActive = () => Boolean(fsDoc().fullscreenElement || fsDoc().webkitFullscreenElement);
+  function toggleFullscreen() {
+    const doc = fsDoc();
+    const el = doc.documentElement;
+    try {
+      const done = fsActive()
+        ? (doc.exitFullscreen || doc.webkitExitFullscreen).call(doc)
+        : (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+      if (done && typeof done.catch === 'function') done.catch(() => {});
+    } catch { /* the browser refused; the window is still as large as the screen */ }
+  }
+  // A clean, full-screen map in one step. Leaving full screen (Esc) brings
+  // the toolbars back, so the GM is never stranded without them.
+  function present() {
+    if (!fsActive()) {
+      presentingRef.current = true;
+      setShowOptions(false);
+    }
+    toggleFullscreen();
+  }
+  useEffect(() => {
+    if (!win) return undefined;
+    const doc = win.document;
+    const onChange = () => {
+      const on = Boolean(doc.fullscreenElement || doc.webkitFullscreenElement);
+      setIsFull(on);
+      if (!on && presentingRef.current) { presentingRef.current = false; setShowOptions(true); }
+    };
+    doc.addEventListener('fullscreenchange', onChange);
+    doc.addEventListener('webkitfullscreenchange', onChange);
+    return () => {
+      doc.removeEventListener('fullscreenchange', onChange);
+      doc.removeEventListener('webkitfullscreenchange', onChange);
+    };
   }, [win]);
 
   /* ---- overlay geometry ---- */
@@ -1055,6 +1109,16 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [win, m.pxPerSquare]);
 
+  // Hiding the toolbars frees the height they held; in the map's own window
+  // the grid grows into it, as it does on a resize. Waits a frame for the
+  // layout to settle before measuring.
+  useEffect(() => {
+    if (!win) return undefined;
+    const id = win.requestAnimationFrame(() => fitToStage());
+    return () => win.cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showOptions, isFull]);
+
   const allExplored = () => {
     const out = {};
     for (let x = 0; x < m.cols; x++) for (let y = 0; y < m.rows; y++) out[cellKey(x, y)] = true;
@@ -1153,7 +1217,12 @@ export default function BattleMap({
   const bar = calibrationBar(m, { targetMm: 100 });
 
   return (
-    <div className={'rt-bm' + (win ? ' rt-bm-win' : '')}>
+    <div className={'rt-bm' + (win ? ' rt-bm-win' : '')} style={{ position: 'relative' }}>
+      {!showOptions && (
+        <button type="button" className="rt-btn rt-bm-peek" onClick={() => setShowOptions(true)}
+          title="Show the map options (H)">Options</button>
+      )}
+      {showOptions && (<>
       <div className="rt-bm-bar">
         <select value={m.theme}
           onChange={(e) => patch({ theme: e.target.value, customTexture: null })}>
@@ -1178,6 +1247,14 @@ export default function BattleMap({
         ))}
         <button type="button" className="rt-btn" onClick={exportPng}>Export PNG</button>
         <button type="button" className="rt-btn" onClick={clearAll}>Clear deck</button>
+        <button type="button" className="rt-btn" onClick={() => setShowOptions(false)}
+          title="Hide every toolbar for a clean map. H brings them back.">Hide options (H)</button>
+        {win && (<>
+          <button type="button" className="rt-btn" onClick={toggleFullscreen}
+            title="Full screen. Esc leaves it.">{isFull ? 'Exit full screen (F)' : 'Full screen (F)'}</button>
+          <button type="button" className="rt-btn" onClick={present}
+            title="Full screen with the options hidden, for the projector. Esc leaves it.">Present (P)</button>
+        </>)}
       </div>
 
       {genOpen && (
@@ -1466,6 +1543,8 @@ export default function BattleMap({
           )}
         </div>
       )}
+
+      </>)}
 
       <div className="rt-bm-stage" ref={stageRef}>
         <canvas

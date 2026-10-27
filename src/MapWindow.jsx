@@ -18,12 +18,26 @@ export default function MapWindow({ title = 'Battle map', width = 1400, height =
   const [container, setContainer] = useState(null);
 
   useEffect(() => {
-    const w = window.open('', 'rt-battlemap', `width=${width},height=${height}`);
+    // Opened at the size of the screen it was opened from, not a fixed
+    // 1400x900. On a Mac a script cannot put a popup into a full-screen
+    // Space; the nearest it gets is a window that already fills the usable
+    // screen, and the map's own Full screen button (or F) does the rest from
+    // inside, where the browser will accept a keypress as permission.
+    const scr = window.screen || {};
+    const sw = Math.max(800, scr.availWidth || width);
+    const sh = Math.max(600, scr.availHeight || height);
+    const left = scr.availLeft || 0;
+    const top = scr.availTop || 0;
+    const w = window.open('', 'rt-battlemap',
+      `popup=yes,width=${sw},height=${sh},left=${left},top=${top}`);
     // Blocked, almost always because the open did not come from a click.
     // Say so rather than silently rendering nothing.
     if (!w) { if (onClose) onClose('blocked'); return undefined; }
 
     w.document.title = title;
+    // Some browsers ignore the size in the features string for a popup that
+    // already exists (the name is reused), so ask again.
+    try { w.moveTo(left, top); w.resizeTo(sw, sh); } catch { /* refused */ }
 
     // A popup starts with an empty document and inherits no styling, so the
     // app's stylesheet is cloned across. Cloned, not moved: the original is

@@ -1913,6 +1913,11 @@ const CSS = `
   font-size:10px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase;}
 .rt-bm-num input{width:62px;}
 .rt-bm-hint{font-size:11px;color:var(--dim);font-style:italic;}
+/* The way back from a clean map: nearly invisible until the pointer finds it,
+   so a projector never shows a button. H does the same thing. */
+.rt-bm-peek{position:absolute;top:8px;right:18px;z-index:5;opacity:.1;
+  transition:opacity .15s;}
+.rt-bm-peek:hover,.rt-bm-peek:focus{opacity:1;}
 /* The canvas can be far wider than the dialog; scroll it rather than
    squashing it, so a square stays the size the GM calibrated it to. */
 /* A definite height, not just a cap: the stage is measured to work out how

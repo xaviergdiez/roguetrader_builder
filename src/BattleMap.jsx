@@ -7,6 +7,7 @@ import {
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
   clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice,
+  expandMap, expandPlan, MIN_GRID, MAX_GRID,
   resolveTheme, themeNumbersFor,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
@@ -336,6 +337,21 @@ export default function BattleMap({
   const [deckOpen, setDeckOpen] = useState(false);
   const [genStyle, setGenStyle] = useState(DECK_STYLES[0].id);
   const [genSeed, setGenSeed] = useState('');
+  // Held as text, not numbers: a half-typed "1" on the way to "120" must not
+  // be read as a grid of one and clamp the box out from under the typing.
+  const [growCols, setGrowCols] = useState('');
+  const [growRows, setGrowRows] = useState('');
+  const [growMirror, setGrowMirror] = useState(true);
+
+  /* Opening the panel offers double the current deck, which is the thing
+     almost everyone wants and saves typing two numbers to get it. */
+  useEffect(() => {
+    if (!deckOpen) return;
+    setGrowCols(String(Math.min(MAX_GRID, m.cols * 2)));
+    setGrowRows(String(Math.min(MAX_GRID, m.rows * 2)));
+    // Only when the panel opens, not on every change to the deck underneath.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deckOpen]);
   const [hover, setHover] = useState(null);
 
   const [weaponKey, setWeaponKey] = useState('lasgun');
@@ -1085,6 +1101,20 @@ export default function BattleMap({
     setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
   };
 
+  /* Grows the deck by repeating what is already built, rather than adding
+     bare grid for the GM to paint. Nothing is asked first: it is additive
+     where it grows, and `Expand deck` back to the old numbers puts it back —
+     except where it SHRINKS, which drops squares, so that is confirmed. */
+  const growDeck = () => {
+    const plan = expandPlan(m, growCols, growRows);
+    if (plan.shrinking
+      && !window.confirm(
+        `${plan.cols}×${plan.rows} is smaller than this deck. Squares outside it are dropped.`)) {
+      return;
+    }
+    if (onChange) onChange(expandMap(m, growCols, growRows, { mirror: growMirror }));
+  };
+
   /* Lays out a deck: compartments, the runs between them, and a door at
      every junction. The seed is what makes it a deck rather than a roll —
      written down, it comes back, so an edit that goes wrong is recoverable
@@ -1362,6 +1392,47 @@ export default function BattleMap({
               Generate deck
             </button>
           </div>
+
+          {/* Growing a built deck, rather than laying out a new one. Here
+              because "make it bigger" and "make me one" are the same
+              question asked at different points. */}
+          <div className="rt-bm-bar">
+            <label className="rt-bm-num">
+              <span>Expand to cols</span>
+              <input type="number" min={MIN_GRID} max={MAX_GRID} value={growCols}
+                onChange={(e) => setGrowCols(e.target.value)} />
+            </label>
+            <label className="rt-bm-num">
+              <span>rows</span>
+              <input type="number" min={MIN_GRID} max={MAX_GRID} value={growRows}
+                onChange={(e) => setGrowRows(e.target.value)} />
+            </label>
+            <label className="rt-bm-num">
+              <input type="checkbox" checked={growMirror}
+                onChange={(e) => setGrowMirror(e.target.checked)} />
+              <span>Mirror at the seams</span>
+            </label>
+            <button type="button" className="rt-btn" onClick={growDeck}>
+              Expand deck
+            </button>
+          </div>
+
+          <p className="rt-bm-hint">
+            {(() => {
+              // Said before the button is pressed, because turning one deck
+              // into nine is worth being told about first.
+              const p = expandPlan(m, growCols, growRows);
+              if (p.shrinking) {
+                return `${p.cols}×${p.rows} is smaller than this deck. `
+                  + 'Anything outside the new grid is dropped.';
+              }
+              if (p.copies <= 1) return `${p.cols}×${p.rows} holds one copy of this deck.`;
+              return `${p.across}×${p.down} copies of the current ${m.cols}×${m.rows} deck`
+                + `${p.partial ? ', the last one cut short' : ''}`
+                + `${growMirror ? ', flipped at each seam so the runs meet' : ', repeated as-is'}.`
+                + ' Hostiles and fog are not copied.';
+            })()}
+          </p>
 
           <p className="rt-bm-hint">
             {styleById(genStyle).note} Laid out across the current

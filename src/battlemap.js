@@ -831,6 +831,94 @@ export function paintCells(floor, cells, on = true) {
   return next;
 }
 
+/* ---------------------------- expanding a deck ----------------------------
+
+   Growing a deck used to mean typing a bigger number into Cols, which added
+   bare grid: a 20x20 boarding action became a 20x20 boarding action with a
+   lot of void east of it, and the GM painted the rest by hand.
+
+   This repeats what is already built instead. The CURRENT GRID is the tile —
+   not the floor's bounding box — so the repeat keeps whatever margin was
+   designed around the deck, and the number of copies is just the new size
+   over the old.
+
+   MIRRORED AT THE SEAMS by default, which is the whole reason this is worth
+   doing: butt two copies of a deck together and every corridor that ran to
+   the east edge dies against the west wall of its neighbour. Flip the odd
+   blocks and those corridors meet their own mouths, so the repeat reads as
+   one larger complex rather than as a deck photocopied four times.
+
+   WHAT DOES NOT REPEAT, and why:
+   - contacts: a hostile is one creature from one encounter. Copying it makes
+     three more that the GM never placed and the auspex would ping.
+   - explored: fog is a record of where the party has BEEN. Copying it reveals
+     rooms nobody has walked into.
+   Both are kept where they are and cropped to the new grid.
+
+   Shrinking falls out of the same arithmetic — with a target smaller than the
+   source, the modulo never wraps and the result is a plain crop. */
+export function expandMap(map, cols, rows, { mirror = true } = {}) {
+  const src = readMap(map);
+  const w = int(cols, src.cols, MIN_GRID, MAX_GRID);
+  const h = int(rows, src.rows, MIN_GRID, MAX_GRID);
+  const sw = src.cols, sh = src.rows;
+
+  const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {};
+  for (let x = 0; x < w; x++) {
+    // Which copy this column falls in, and whether that copy is flipped.
+    const lx = (mirror && Math.floor(x / sw) % 2) ? sw - 1 - (x % sw) : x % sw;
+    for (let y = 0; y < h; y++) {
+      const ly = (mirror && Math.floor(y / sh) % 2) ? sh - 1 - (y % sh) : y % sh;
+      const from = cellKey(lx, ly);
+      const to = cellKey(x, y);
+      // Each layer is copied on its own rather than gated on the floor: a
+      // marker may legitimately sit off the deck, and gating would drop it.
+      if (src.floor[from]) floor[to] = true;
+      if (src.cover[from]) cover[to] = src.cover[from];
+      if (src.hazards[from]) hazards[to] = src.hazards[from];
+      if (src.doors[from]) doors[to] = { ...src.doors[from] };
+      if (src.markers[from]) markers[to] = { ...src.markers[from] };
+    }
+  }
+
+  const inside = (k) => {
+    const p = parseKey(k);
+    return Boolean(p) && p.x >= 0 && p.y >= 0 && p.x < w && p.y < h;
+  };
+  const explored = {};
+  for (const k of Object.keys(src.explored)) if (inside(k)) explored[k] = true;
+  const contacts = {};
+  for (const [k, v] of Object.entries(src.contacts)) if (inside(k)) contacts[k] = v;
+  const viewpoint = src.viewpoint && inside(cellKey(src.viewpoint.x, src.viewpoint.y))
+    ? src.viewpoint : null;
+
+  return {
+    ...src,
+    cols: w, rows: h,
+    floor, cover, hazards, doors, markers,
+    explored, contacts, viewpoint
+  };
+}
+
+/* What expanding to this size would do, for the button to say so before it is
+   pressed. A GM about to turn one deck into nine should be told that. */
+export function expandPlan(map, cols, rows) {
+  const src = readMap(map);
+  const w = int(cols, src.cols, MIN_GRID, MAX_GRID);
+  const h = int(rows, src.rows, MIN_GRID, MAX_GRID);
+  const across = Math.ceil(w / src.cols);
+  const down = Math.ceil(h / src.rows);
+  const copies = across * down;
+  return {
+    cols: w, rows: h, across, down, copies,
+    // A partial copy is the normal case — 50 wide off a 30-wide deck is one
+    // whole copy and two thirds of another — and it is worth saying, because
+    // it is the one that cuts a room in half.
+    partial: w % src.cols !== 0 || h % src.rows !== 0,
+    shrinking: w < src.cols || h < src.rows
+  };
+}
+
 /* --------------------------- walls, derived --------------------------- */
 
 export const WALL_N = 1, WALL_E = 2, WALL_S = 4, WALL_W = 8;

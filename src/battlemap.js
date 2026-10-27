@@ -277,6 +277,16 @@ export const EMPTY_MAP = {
   mmPerSquare: 25,
   pxPerSquare: 40,      // screen pixels per square, adjusted until it matches
   floor: {},            // { 'x,y': true } — the single source of truth for deck
+  /* PER-CELL GROUND. One deck is rarely one terrain: a boarding action runs
+     from the ice outside to the deck plate inside, and an agri-world fight
+     crosses ploughed soil, an irrigation ditch and the rockcrete apron.
+
+     A cell named here is drawn with that ground instead of the deck's own.
+     It is PAINT, nothing more: the floor stays binary, so the walls derived
+     from it, the regions flood-filled over it and the fog that follows them
+     are all untouched by what a square looks like. That is the whole reason
+     this is a separate layer and not a second kind of floor. */
+  ground: {},           // { 'x,y': themeId }
   doors: {},            // { 'x,y': { kind, state } }
   cover: {},            // { 'x,y': coverTypeId } — things standing on the deck
   hazards: {},          // { 'x,y': hazardTypeId } — dangerous to stand in
@@ -453,6 +463,15 @@ export function readMap(m) {
   for (const [k, v] of Object.entries(src.hazards || {})) {
     if (parseKey(k) && hazardById(v)) hazards[k] = v;
   }
+  /* Ground ids are KEPT AS WRITTEN, exactly as the deck's own theme is: a
+     saved ground's id is unknown to this module, and matching against the
+     built-in list here is the bug that silently moved every deck built on a
+     generated floor back to the default. resolveTheme decides, at the point
+     of drawing, where the library is actually in hand. */
+  const ground = {};
+  for (const [k, v] of Object.entries(src.ground || {})) {
+    if (parseKey(k) && typeof v === 'string' && v.trim()) ground[k] = v.trim().slice(0, 64);
+  }
   const explored = {};
   for (const k of Object.keys(src.explored || {})) {
     if (src.explored[k] && parseKey(k)) explored[k] = true;
@@ -503,8 +522,24 @@ export function readMap(m) {
       const x = Math.round(Number(v.x)), y = Math.round(Number(v.y));
       return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
     })(),
-    floor, doors, cover, hazards, markers, explored, contacts
+    floor, doors, cover, hazards, markers, explored, contacts, ground
   };
+}
+
+/* Every ground a deck actually draws with, the deck's own first. What the
+   renderer has to have loaded before it can paint, and nothing more — a deck
+   that uses two grounds should not fetch the other seven. */
+export function groundsUsed(map) {
+  const m = map && typeof map === 'object' ? map : EMPTY_MAP;
+  const out = [];
+  const add = (id) => { if (id && !out.includes(id)) out.push(id); };
+  add(typeof m.theme === 'string' ? m.theme : DEFAULT_THEME);
+  for (const k of Object.keys(m.ground || {})) {
+    // Only where there is deck to paint: a ground left behind on an erased
+    // square is not drawn, so it should not be fetched either.
+    if (!m.floor || m.floor[k]) add(m.ground[k]);
+  }
+  return out;
 }
 
 /* --------------------------- projector calibration ---------------------------
@@ -863,7 +898,7 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   const h = int(rows, src.rows, MIN_GRID, MAX_GRID);
   const sw = src.cols, sh = src.rows;
 
-  const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {};
+  const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {}, ground = {};
   for (let x = 0; x < w; x++) {
     // Which copy this column falls in, and whether that copy is flipped.
     const lx = (mirror && Math.floor(x / sw) % 2) ? sw - 1 - (x % sw) : x % sw;
@@ -878,6 +913,9 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
       if (src.hazards[from]) hazards[to] = src.hazards[from];
       if (src.doors[from]) doors[to] = { ...src.doors[from] };
       if (src.markers[from]) markers[to] = { ...src.markers[from] };
+      // The terrain repeats with the deck it is painted on, or an expanded
+      // ice shelf would come back as deck plate.
+      if (src.ground[from]) ground[to] = src.ground[from];
     }
   }
 
@@ -895,7 +933,7 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   return {
     ...src,
     cols: w, rows: h,
-    floor, cover, hazards, doors, markers,
+    floor, cover, hazards, doors, markers, ground,
     explored, contacts, viewpoint
   };
 }

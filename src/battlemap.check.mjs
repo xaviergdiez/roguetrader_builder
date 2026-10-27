@@ -14,7 +14,7 @@ import {
   fitGrid, MAX_CUSTOM_TEXTURE, brushCells, MAX_GRID, MIN_GRID,
   clampZoom, MIN_ZOOM, MAX_ZOOM,
   themeNumbersFor, BRIGHT_FLOOR, readCustomTheme, readThemeLibrary, resolveTheme,
-  textureAdvice, SQUARE_TOLERANCE, expandMap, expandPlan,
+  textureAdvice, SQUARE_TOLERANCE, expandMap, expandPlan, groundsUsed,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -1541,6 +1541,75 @@ import { GEAR } from './gear.js';
     assert.equal(q.partial, true);
     assert.equal(expandPlan(readMap({ cols: 30, rows: 20 }), 10, 20).shrinking, true);
     assert.equal(expandPlan(readMap({ cols: 30, rows: 20 }), 30, 20).copies, 1);
+  }
+}
+
+/* ------------------------- more than one terrain -------------------------
+
+   A deck is rarely one ground: a boarding action runs from the ice outside
+   to the deck plate inside. A cell named in `ground` is drawn with that
+   ground instead of the deck's own, and nothing else changes. */
+
+{
+  const m = readMap({
+    cols: 10, rows: 10,
+    theme: 'space_hulk',
+    floor: { '0,0': true, '1,0': true, '2,0': true, '5,5': true },
+    ground: { '1,0': 'ice', '2,0': 'env-saved-3', '9,9': 'jungle', '': 'x', '4,4': '   ' }
+  });
+
+  /* ---- read as paint, kept as written ---- */
+  {
+    assert.equal(m.ground['1,0'], 'ice');
+    // A saved ground's id is unknown here. Coercing it to a built-in is the
+    // bug that moved every deck built on a generated floor back to default.
+    assert.equal(m.ground['2,0'], 'env-saved-3', 'a custom ground id survives the reader');
+    assert.ok(!('' in m.ground), 'an unparseable key is dropped');
+    assert.ok(!('4,4' in m.ground), 'so is a blank ground id');
+    // Off-deck paint is harmless and kept: erase a square, put it back, and
+    // the terrain that was on it is still there.
+    assert.equal(m.ground['9,9'], 'jungle');
+  }
+
+  /* ---- THE POINT: it is paint, so the deck is unchanged ---- */
+  {
+    // The floor stays binary, so everything derived from it is untouched by
+    // what a square looks like. If painting terrain could move a wall or
+    // split a region, this would be a second kind of floor, not paint.
+    const plain = readMap({ ...m, ground: {} });
+    assert.equal(wallMask(m.floor, 0, 0), wallMask(plain.floor, 0, 0), 'walls do not notice');
+    assert.deepEqual(regionAt(m, { x: 0, y: 0 }).length, regionAt(plain, { x: 0, y: 0 }).length,
+      'regions do not notice');
+    assert.deepEqual(revealArea(m, { x: 0, y: 0 }), revealArea(plain, { x: 0, y: 0 }),
+      'and neither does the fog');
+  }
+
+  /* ---- what has to be loaded before it can be drawn ---- */
+  {
+    const used = groundsUsed(m);
+    assert.equal(used[0], 'space_hulk', "the deck's own ground comes first");
+    assert.ok(used.includes('ice') && used.includes('env-saved-3'));
+    // (9,9) is painted but has no deck on it, so there is nothing to draw
+    // with it and no reason to fetch it.
+    assert.ok(!used.includes('jungle'), 'paint with no floor under it is not loaded');
+    assert.equal(new Set(used).size, used.length, 'each ground once, however many cells use it');
+
+    // A plain deck needs exactly one.
+    assert.deepEqual(groundsUsed(readMap({ theme: 'ice' })), ['ice']);
+    assert.deepEqual(groundsUsed(null), [DEFAULT_THEME], 'and nothing still names one');
+    assert.deepEqual(groundsUsed(EMPTY_MAP), [EMPTY_MAP.theme]);
+  }
+
+  /* ---- it repeats with the deck it is painted on ---- */
+  {
+    const big = expandMap(m, 20, 20, { mirror: false });
+    assert.equal(big.ground[cellKey(11, 0)], 'ice',
+      'an expanded ice shelf must not come back as deck plate');
+    assert.equal(big.ground[cellKey(12, 10)], 'env-saved-3');
+    const mir = expandMap(m, 20, 10, { mirror: true });
+    assert.equal(mir.ground[cellKey(19 - 1, 0)], 'ice', 'and it mirrors with it');
+    // Still a map afterwards.
+    assert.equal(readMap(big).ground[cellKey(11, 0)], 'ice');
   }
 }
 

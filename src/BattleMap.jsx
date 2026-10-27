@@ -8,7 +8,7 @@ import {
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
   clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice,
   expandMap, expandPlan, MIN_GRID, MAX_GRID,
-  resolveTheme, themeNumbersFor,
+  resolveTheme, themeNumbersFor, groundsUsed,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   weaponOverlay, calibrationBar, deploymentRows
@@ -38,6 +38,7 @@ const CROP_BOX = 240;
 const MODES = [
   { id: 'stamp', label: 'Stamp tile' },
   { id: 'paint', label: 'Paint deck' },
+  { id: 'ground', label: 'Paint ground' },
   { id: 'erase', label: 'Erase' },
   { id: 'door', label: 'Door' },
   { id: 'cover', label: 'Cover' },
@@ -342,6 +343,9 @@ export default function BattleMap({
   const [growCols, setGrowCols] = useState('');
   const [growRows, setGrowRows] = useState('');
   const [growMirror, setGrowMirror] = useState(true);
+  // The terrain the ground brush lays down. Defaults to the deck's own,
+  // which is the "lift it off again" option.
+  const [paintGround, setPaintGround] = useState(m.theme);
 
   /* Opening the panel offers double the current deck, which is the thing
      almost everyone wants and saves typing two numbers to get it. */
@@ -373,7 +377,8 @@ export default function BattleMap({
   // captured map would write back a deck that is several edits old.
   const mapRef = useRef(m);
   mapRef.current = m;
-  const textureRef = useRef(null);
+  // src -> decoded image, for every ground the deck draws with.
+  const texturesRef = useRef(new Map());
   const [textureTick, setTextureTick] = useState(0);
 
   // The two-click tools read their first click back on the second one. State
@@ -400,33 +405,71 @@ export default function BattleMap({
     return entry ? weaponOverlay(entry.stats) : null;
   }, [weaponKey]);
 
+  /* Every ground this deck draws with — its own, plus any painted onto
+     individual squares. Joined to a string so the effects below re-run when
+     the SET changes rather than on every redraw of the same set. */
+  const groundIds = useMemo(() => groundsUsed(m), [m]);
+  const groundKey = groundIds.join('|');
+
+  /* Where a ground's floor comes from. The deck's generated floor overrides
+     its own theme's file; a ground painted onto a square always uses its
+     own, or painting ice onto a deck with a generated floor would paint the
+     generated floor again. */
+  const groundSrc = (id) => {
+    if (id === m.theme && m.customTexture) return m.customTexture;
+    const t = resolveTheme(id, customThemes);
+    return (t && t.texture) || null;
+  };
+
   /* A saved ground is listed without its floor — the index would be
-     megabytes otherwise — so the one actually being drawn is asked for the
-     first time a deck lands on it. */
+     megabytes otherwise — so the ones actually being drawn are asked for the
+     first time a deck lands on them. Every painted ground, not just the
+     deck's own: a square of saved fen in the corner needs its floor too. */
   useEffect(() => {
     if (!onNeedTexture) return;
-    if (theme && theme.custom && !theme.texture) onNeedTexture(theme.id);
-  }, [theme, onNeedTexture]);
+    for (const id of groundIds) {
+      const t = resolveTheme(id, customThemes);
+      if (t && t.custom && !t.texture) onNeedTexture(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groundKey, customThemes, onNeedTexture]);
 
-  /* ---- the floor texture, loaded once per theme ---- */
+  /* ---- the floor textures, one per ground in use ----
+
+     Keyed by SOURCE rather than by ground id, so two grounds pointing at the
+     same file share one decode, and a ground whose floor arrives later
+     replaces nothing it should not. */
   useEffect(() => {
     let cancelled = false;
-    const img = new Image();
-    // A generated ground overrides the theme's own file. The theme still
-    // supplies the grid colour, the wash and the rest — only the floor
-    // changes.
-    const src = m.customTexture || theme.texture;
-    // A saved ground whose floor has not arrived yet: the flat fallback
-    // holds the deck until it does, rather than a blank rectangle.
-    if (!src) { textureRef.current = null; setTextureTick((t) => t + 1); return undefined; }
-    img.onload = () => { if (!cancelled) { textureRef.current = img; setTextureTick((t) => t + 1); } };
-    // A missing texture is not an error: the deck is painted in the theme's
-    // flat fallback colour instead, which still reads on a projector. It
-    // just loses the grain.
-    img.onerror = () => { if (!cancelled) { textureRef.current = null; setTextureTick((t) => t + 1); } };
-    img.src = src;
-    return () => { cancelled = true; textureRef.current = null; };
-  }, [theme, m.customTexture]);
+    const wanted = new Set();
+    for (const id of groundIds) {
+      const src = groundSrc(id);
+      if (src) wanted.add(src);
+    }
+    // Anything no longer painted anywhere is dropped, or a GM trying grounds
+    // keeps every one they rejected decoded in memory.
+    for (const key of [...texturesRef.current.keys()]) {
+      if (!wanted.has(key)) texturesRef.current.delete(key);
+    }
+    for (const src of wanted) {
+      if (texturesRef.current.has(src)) continue;
+      const img = new Image();
+      img.onload = () => {
+        if (cancelled) return;
+        texturesRef.current.set(src, img);
+        setTextureTick((t) => t + 1);
+      };
+      /* A missing texture is not an error: those squares are painted in that
+         ground's flat fallback colour instead, which still reads on a
+         projector. It just loses the grain. */
+      img.onerror = () => { if (!cancelled) setTextureTick((t) => t + 1); };
+      img.src = src;
+    }
+    // Redraw now as well, for the sources already decoded.
+    setTextureTick((t) => t + 1);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groundKey, customThemes, m.theme, m.customTexture]);
 
   const measurement = useMemo(() => {
     if (!measureFrom || !measureTo) return null;
@@ -460,6 +503,21 @@ export default function BattleMap({
       patch({ floor: paintCells(m.floor, brushCells(pos, brush, m), true) });
       return;
     }
+    /* Painting terrain, not deck. Only what a square LOOKS like changes, so
+       this writes nothing but `ground` — the floor it paints over is left
+       exactly as it is, and with it every wall, region and fog state
+       derived from it. */
+    if (mode === 'ground') {
+      const ground = { ...m.ground };
+      for (const c of brushCells(pos, brush, m)) {
+        const ck = cellKey(c.x, c.y);
+        // The deck's own ground is the absence of paint rather than a value,
+        // so choosing it is how paint is lifted off again.
+        if (paintGround === m.theme) delete ground[ck]; else ground[ck] = paintGround;
+      }
+      patch({ ground });
+      return;
+    }
     if (mode === 'erase') {
       // Everything standing on a square goes with the square. Erasing the
       // floor and leaving its bulkhead behind would put a door in the void.
@@ -468,11 +526,13 @@ export default function BattleMap({
       const markers = { ...m.markers };
       const cover = { ...m.cover };
       const hazards = { ...m.hazards };
+      const ground = { ...m.ground };
       for (const c of cells) {
         const ck = cellKey(c.x, c.y);
         delete doors[ck]; delete markers[ck]; delete cover[ck]; delete hazards[ck];
+        delete ground[ck];
       }
-      patch({ floor: paintCells(m.floor, cells, false), doors, markers, cover, hazards });
+      patch({ floor: paintCells(m.floor, cells, false), doors, markers, cover, hazards, ground });
       return;
     }
     // Revealing is a drag as well as a click: a corridor is swept, not
@@ -656,23 +716,40 @@ export default function BattleMap({
     // 1. The deck, textured, clipped to the painted cells so unbuilt grid
     //    stays void rather than becoming a rectangle of corridor.
     if (floorKeys.length) {
-      ctx.save();
-      ctx.beginPath();
+      /* Grouped by the ground painted on each square, so a deck that runs
+         from ice to deck plate is drawn in one pass per terrain rather than
+         one per square. Unpainted squares fall to the deck's own ground. */
+      const byGround = new Map();
       for (const k of floorKeys) {
-        const p = parseKey(k);
-        if (p) ctx.rect(p.x * px, p.y * px, px, px);
+        const id = m.ground[k] || m.theme;
+        const list = byGround.get(id);
+        if (list) list.push(k); else byGround.set(id, [k]);
       }
-      ctx.clip();
-      const img = textureRef.current;
-      ctx.fillStyle = img ? (ctx.createPattern(img, 'repeat') || theme.fallback) : theme.fallback;
-      ctx.fillRect(0, 0, w, h);
-      // The wash knocks a busy photographic deck back so tokens, the grid
-      // and the templates read over it. A pale drawn deck has none of that
-      // noise and a dark grid of its own, so washing it would only turn a
-      // deliberately clean floor grey.
-      ctx.fillStyle = `rgba(0,0,0,${theme.wash})`;
-      ctx.fillRect(0, 0, w, h);
-      ctx.restore();
+
+      for (const [id, keys] of byGround) {
+        // Each ground brings its OWN fallback and wash: the wash is tuned to
+        // how bright that particular floor is, so sharing the deck's would
+        // wash a pale ice shelf like dark deck plate.
+        const t = resolveTheme(id, customThemes) || theme;
+        const src = groundSrc(id);
+        const img = src ? texturesRef.current.get(src) : null;
+        ctx.save();
+        ctx.beginPath();
+        for (const k of keys) {
+          const p = parseKey(k);
+          if (p) ctx.rect(p.x * px, p.y * px, px, px);
+        }
+        ctx.clip();
+        ctx.fillStyle = img ? (ctx.createPattern(img, 'repeat') || t.fallback) : t.fallback;
+        ctx.fillRect(0, 0, w, h);
+        // The wash knocks a busy photographic deck back so tokens, the grid
+        // and the templates read over it. A pale drawn deck has none of that
+        // noise and a dark grid of its own, so washing it would only turn a
+        // deliberately clean floor grey.
+        ctx.fillStyle = `rgba(0,0,0,${t.wash})`;
+        ctx.fillRect(0, 0, w, h);
+        ctx.restore();
+      }
     }
 
     // 2. Deployment zones, under everything else.
@@ -976,9 +1053,13 @@ export default function BattleMap({
         ctx.fillRect(c.x * px, c.y * px, px, px);
         ctx.strokeRect(c.x * px, c.y * px, px, px);
       }
-    } else if (hover && (mode === 'paint' || mode === 'erase')) {
+    } else if (hover && (mode === 'paint' || mode === 'erase' || mode === 'ground')) {
       fill(brushCells(hover, brush, m),
-        mode === 'erase' ? 'rgba(231,76,60,0.4)' : 'rgba(46,204,113,0.4)');
+        mode === 'erase' ? 'rgba(231,76,60,0.4)'
+          // Terrain lays down rather than builds, so it gets its own colour:
+          // a green brush would read as "this adds deck".
+          : mode === 'ground' ? 'rgba(0,229,255,0.35)'
+            : 'rgba(46,204,113,0.4)');
     }
 
     // 9. The measuring tape.
@@ -1335,7 +1416,10 @@ export default function BattleMap({
         ))}
         {onSaveDeck && (<>
           <select value={deckTarget} onChange={(e) => { setDeckTarget(e.target.value); setDeckNote(''); }}>
-            <option value="">Save as a new deck\u2026</option>
+            {/* Written as the character itself: a backslash-u escape in JSX
+                TEXT is not an escape, it is the six characters, and the GM
+                reads the backslash. */}
+            <option value="">Save as a new deck…</option>
             {decks.map((d) => (
               <option key={d.id} value={d.id}>Save over: {d.name || 'Untitled deck'}</option>
             ))}
@@ -1631,16 +1715,49 @@ export default function BattleMap({
             onClick={() => setRotation((r) => (r + 90) % 360)}>Rotate {rotation}° (R)</button>
         </>)}
 
-        {(mode === 'paint' || mode === 'erase') && (
+        {(mode === 'paint' || mode === 'erase' || mode === 'ground') && (
           <label className="rt-bm-num">
             <span>Brush</span>
             <select value={String(brush)} onChange={(e) => setBrush(Number(e.target.value))}>
               {[1, 2, 3, 5, 7, 10].map((n) => (
-                <option key={n} value={String(n)}>{n}\u00d7{n}</option>
+                <option key={n} value={String(n)}>{n}×{n}</option>
               ))}
             </select>
           </label>
         )}
+
+        {/* Which terrain the brush lays down. The deck's own ground is first
+            and named as such, because picking it is how paint comes off. */}
+        {mode === 'ground' && (<>
+          <label className="rt-bm-num">
+            <span>Terrain</span>
+            <select value={paintGround} onChange={(e) => setPaintGround(e.target.value)}>
+              <option value={m.theme}>
+                {`This deck's ground (${theme.name}) \u2014 lifts paint off`}
+              </option>
+              <optgroup label="Built in">
+                {MAP_THEMES.filter((t) => t.id !== m.theme).map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </optgroup>
+              {customThemes.length > 0 && (
+                <optgroup label="Saved grounds">
+                  {customThemes.filter((t) => t.id !== m.theme).map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+          <span className="rt-bm-hint">
+            {(() => {
+              const n = Object.keys(m.ground).filter((k) => m.floor[k]).length;
+              return n
+                ? `${n} square${n === 1 ? '' : 's'} painted, ${groundIds.length} grounds on this deck.`
+                : 'Paint terrain over the deck. Walls, rooms and fog are unaffected \u2014 this is only what a square looks like.';
+            })()}
+          </span>
+        </>)}
 
         {mode === 'marker' && (
           <select value={markerType} onChange={(e) => setMarkerType(e.target.value)}>
@@ -1860,7 +1977,9 @@ export default function BattleMap({
           onMouseMove={(e) => {
             const pos = posFromEvent(e);
             setHover(pos);
-            if (e.buttons === 1 && (mode === 'paint' || mode === 'erase')) applyAt(pos, true);
+            if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground')) {
+              applyAt(pos, true);
+            }
           }}
           onMouseLeave={() => setHover(null)}
           onMouseDown={(e) => {

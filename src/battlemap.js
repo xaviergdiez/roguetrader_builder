@@ -319,19 +319,19 @@ export const MAX_CUSTOM_TEXTURE = 1_500_000;
 
 /* The largest grid a deck may be.
 
-   NOT a design preference — a browser canvas has a hard pixel ceiling
-   (16384 a side in Chrome, lower on some machines) and the deck is drawn as
-   one canvas of cols x px. At 200 squares and a 40px square that is already
-   8000px a side, which is where MAX_CANVAS_PX sits. Past this the square
-   would have to shrink below the size of the miniature standing on it, which
-   decalibrates the projector — the one thing the calibration exists to stop.
-   Zoom is the answer to a big deck, not a smaller square. */
+   Not a canvas limit any more: the map is drawn a window at a time (see
+   BattleMap.jsx), so a deck can be far wider than any browser could hold as
+   one image, and a square keeps the size the projector was calibrated to.
+   What bounds it now is the cost of the per-square records the editor works
+   on, and the size a saved deck may take once packed (packMap). 500 x 500 is
+   a quarter of a million squares: a district, a hive spire's footprint, a
+   forest. */
 /* Zoom is a VIEW control: it scales what is already drawn so the GM can read
    a corner or take in a whole deck. It is deliberately not stored on the map
    — px/square is the projector's calibration and must not move — and it is
    bounded because a canvas scaled past a few hundred per cent is a wall of
-   blur, and one scaled under a tenth is unclickable. */
-export const MIN_ZOOM = 0.1;
+   blur, and one scaled under a fiftieth is a dot. */
+export const MIN_ZOOM = 0.02;
 export const MAX_ZOOM = 8;
 export const clampZoom = (z) => {
   // An empty box means "nothing typed yet", not zero. Number('') is 0 and
@@ -344,7 +344,7 @@ export const clampZoom = (z) => {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, n));
 };
 
-export const MAX_GRID = 200;
+export const MAX_GRID = 500;
 export const MIN_GRID = 5;
 
 export const cellKey = (x, y) => `${Math.round(x)},${Math.round(y)}`;
@@ -470,57 +470,220 @@ export const MARKER_TYPES = [
 ];
 export const markerTypeById = (id) => MARKER_TYPES.find((m) => m.id === id) || MARKER_TYPES[0];
 
+/* ----------------------- big decks: clean layers, packed storage -----------------------
+
+   A deck is a record per square, and a big one is a quarter of a million of
+   them. Two things follow, and both live here so the rest of the code does not
+   have to know.
+
+   CLEAN LAYERS. readMap used to walk every square of every layer on every
+   call, and it is called on every render and every edit. A layer it has already
+   walked is remembered (by identity, never by contents) and handed straight
+   back, so reading a map costs what changed rather than what exists. Layers
+   are never mutated in place anywhere, so identity is a safe key. A layer a
+   caller builds from a clean one with only well-formed squares (paintCells,
+   keepClean) joins the set without a second walk.
+
+   PACKED STORAGE. Saved to the library, kept in the shared ship document and
+   sent over the wire, a layer is written as runs along its rows instead of a
+   key per square — a filled 500 x 500 floor is a few kilobytes, not three
+   megabytes. readMap accepts either form, so a deck saved before this was
+   written still opens, and nothing that reads a map needs to ask which it is. */
+const CLEAN = new WeakSet();
+
+export function keepClean(base, next) {
+  if (base && typeof base === 'object' && CLEAN.has(base)) CLEAN.add(next);
+  return next;
+}
+
+const isPackedLayer = (v) => Boolean(v) && typeof v === 'object' && v.rle === 1
+  && Array.isArray(v.runs) && Array.isArray(v.vals);
+
+// A packed layer back to { 'x,y': value }. Bounded by the largest grid, so a
+// hostile or corrupt runs array cannot ask for a billion squares.
+function unpackLayer(raw) {
+  if (!isPackedLayer(raw)) return raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  const { runs, vals } = raw;
+  let y = 0, end = -1;
+  for (let i = 0; i + 3 < runs.length; i += 4) {
+    const dy = Math.round(Number(runs[i]));
+    const dx = Math.round(Number(runs[i + 1]));
+    const len = Math.round(Number(runs[i + 2]));
+    const v = vals[Number(runs[i + 3])];
+    if (!Number.isFinite(dy) || !Number.isFinite(dx) || !Number.isFinite(len)) continue;
+    y += dy;
+    const x0 = dy > 0 ? dx : end + 1 + dx;
+    const x1 = x0 + Math.max(0, len);
+    end = x1;
+    if (v === undefined || y < 0 || y >= MAX_GRID) continue;
+    const lo = Math.max(0, x0);
+    const hi = Math.min(MAX_GRID - 1, x1);
+    for (let x = lo; x <= hi; x++) out[x + ',' + y] = v;
+  }
+  return out;
+}
+
+function layer(raw, build) {
+  const plain = unpackLayer(raw);
+  if (CLEAN.has(plain)) return plain;
+  const out = build(plain);
+  CLEAN.add(out);
+  return out;
+}
+
+/* One layer as runs, four numbers each: how many rows down from the last run,
+   how far along (from the left edge for the first run on a row, from the end of
+   the previous run after that), how many squares past the first it covers, and
+   which of the distinct values (listed once in `vals`) it holds. Sorted by row
+   then column. A run is a row-wise stretch of neighbours holding one value.
+   Differences rather than positions, because small numbers are short ones: a
+   big deck's layers come out about half the size they would otherwise. */
+export function packLayer(layerObj) {
+  const cells = [];
+  for (const [k, v] of Object.entries(layerObj || {})) {
+    const p = parseKey(k);
+    if (p) cells.push([p.y, p.x, v]);
+  }
+  cells.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const vals = [];
+  const index = new Map();
+  const runs = [];
+  let cur = null;
+  let py = 0, pend = -1;
+  const flush = () => {
+    if (!cur) return;
+    const dy = cur.y - py;
+    runs.push(dy, dy > 0 ? cur.x0 : cur.x0 - pend - 1, cur.x1 - cur.x0, cur.vi);
+    py = cur.y; pend = cur.x1;
+  };
+  for (const [y, x, v] of cells) {
+    const id = typeof v === 'object' && v !== null ? JSON.stringify(v) : v;
+    let vi = index.get(id);
+    if (vi === undefined) { vi = vals.length; vals.push(v); index.set(id, vi); }
+    if (cur && cur.y === y && cur.x1 + 1 === x && cur.vi === vi) {
+      cur.x1 = x;
+    } else {
+      flush();
+      cur = { y, x0: x, x1: x, vi };
+    }
+  }
+  flush();
+  return { rle: 1, vals, runs };
+}
+
+// Layers that run into the thousands on a big deck. Doors, markers and
+// contacts are a handful of records each and stay as they are.
+const PACKED_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'explored'];
+const PACK_FROM = 64;     // below this a plain layer is smaller and easier to read
+
+/* The map as it should be stored or sent. Round-trips exactly through readMap.
+   Remembered per map object: the autosave, the library write and the bridge
+   write all ask for the same map within a second of each other, and packing a
+   big one is the slowest thing here. */
+const PACKED = new WeakMap();
+export function packMap(map) {
+  if (map && typeof map === 'object' && PACKED.has(map)) return PACKED.get(map);
+  const m = readMap(map);
+  const out = { ...m };
+  for (const key of PACKED_LAYERS) {
+    if (Object.keys(m[key]).length >= PACK_FROM) out[key] = packLayer(m[key]);
+  }
+  if (map && typeof map === 'object') PACKED.set(map, out);
+  return out;
+}
+
+/* The ground-combat state with its map packed, for the shared ship document
+   and the autosave. Anything without a map is returned as it is. */
+export function packCombat(combat) {
+  const g = combat && combat.ground;
+  if (!g || !g.map) return combat;
+  return { ...combat, ground: { ...g, map: packMap(g.map) } };
+}
+
+/* The same state with the map left out, for comparing two states cheaply:
+   stringifying a big map just to find out whether it changed is the cost
+   packing exists to avoid. */
+export function combatSansMap(combat) {
+  const g = combat && combat.ground;
+  if (!g || !g.map) return combat;
+  const { map, ...rest } = g;
+  return { ...combat, ground: rest };
+}
+
+// A saved deck with its map packed. Anything else about the entry, and an
+// entry with no map yet, is left exactly as it was.
+export const packSavedMap = (x) => (x && typeof x === 'object' && x.map && typeof x.map === 'object'
+  ? { ...x, map: packMap(x.map) } : x);
+
 // Anything absent is defaulted rather than trusted, the same way readBlueprint
 // treats a blueprint saved before a field existed.
 export function readMap(m) {
   const src = m && typeof m === 'object' ? m : {};
 
-  const floor = {};
-  for (const k of Object.keys(src.floor || {})) {
-    if (src.floor[k] && parseKey(k)) floor[k] = true;
-  }
-  const doors = {};
-  for (const [k, v] of Object.entries(src.doors || {})) {
-    if (!parseKey(k)) continue;
-    const d = readDoor(v);
-    if (d) doors[k] = d;
-  }
-  const cover = {};
-  for (const [k, v] of Object.entries(src.cover || {})) {
-    if (parseKey(k) && coverById(v)) cover[k] = v;
-  }
-  const hazards = {};
-  for (const [k, v] of Object.entries(src.hazards || {})) {
-    if (parseKey(k) && hazardById(v)) hazards[k] = v;
-  }
-  const obscuring = {};
-  for (const [k, v] of Object.entries(src.obscuring || {})) {
-    if (parseKey(k) && obscuringById(v)) obscuring[k] = v;
-  }
+  const floor = layer(src.floor, (raw) => {
+    const out = {};
+    for (const k of Object.keys(raw)) if (raw[k] && parseKey(k)) out[k] = true;
+    return out;
+  });
+  const doors = layer(src.doors, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (!parseKey(k)) continue;
+      const d = readDoor(v);
+      if (d) out[k] = d;
+    }
+    return out;
+  });
+  const cover = layer(src.cover, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) if (parseKey(k) && coverById(v)) out[k] = v;
+    return out;
+  });
+  const hazards = layer(src.hazards, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) if (parseKey(k) && hazardById(v)) out[k] = v;
+    return out;
+  });
+  const obscuring = layer(src.obscuring, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) if (parseKey(k) && obscuringById(v)) out[k] = v;
+    return out;
+  });
   /* Ground ids are KEPT AS WRITTEN, exactly as the deck's own theme is: a
      saved ground's id is unknown to this module, and matching against the
      built-in list here is the bug that silently moved every deck built on a
      generated floor back to the default. resolveTheme decides, at the point
      of drawing, where the library is actually in hand. */
-  const ground = {};
-  for (const [k, v] of Object.entries(src.ground || {})) {
-    if (parseKey(k) && typeof v === 'string' && v.trim()) ground[k] = v.trim().slice(0, 64);
-  }
-  const explored = {};
-  for (const k of Object.keys(src.explored || {})) {
-    if (src.explored[k] && parseKey(k)) explored[k] = true;
-  }
-  const contacts = {};
-  for (const [k, v] of Object.entries(src.contacts || {})) {
-    if (!parseKey(k)) continue;
-    const c = readContact(v);
-    if (c) contacts[k] = c;
-  }
-  const markers = {};
-  for (const [k, v] of Object.entries(src.markers || {})) {
-    if (!parseKey(k) || !v || typeof v !== 'object') continue;
-    markers[k] = { type: markerTypeById(v.type).id, label: String(v.label || '') };
-  }
+  const ground = layer(src.ground, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (parseKey(k) && typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 64);
+    }
+    return out;
+  });
+  const explored = layer(src.explored, (raw) => {
+    const out = {};
+    for (const k of Object.keys(raw)) if (raw[k] && parseKey(k)) out[k] = true;
+    return out;
+  });
+  const contacts = layer(src.contacts, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (!parseKey(k)) continue;
+      const c = readContact(v);
+      if (c) out[k] = c;
+    }
+    return out;
+  });
+  const markers = layer(src.markers, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (!parseKey(k) || !v || typeof v !== 'object') continue;
+      out[k] = { type: markerTypeById(v.type).id, label: String(v.label || '') };
+    }
+    return out;
+  });
   return {
     /* KEPT AS WRITTEN, not matched against the built-in list. A saved
        ground's id is unknown to this module by design, and coercing it here
@@ -829,6 +992,8 @@ export const readSavedMap = (x) => {
 };
 export const readMapLibrary = (list) =>
   (Array.isArray(list) ? list : []).map(readSavedMap);
+export const packMapLibrary = (list) =>
+  (Array.isArray(list) ? list : []).map(packSavedMap);
 
 let mapSeq = 0;
 const newMapId = () => 'bmap-' + Date.now().toString(36) + '-' + (mapSeq++).toString(36);
@@ -909,7 +1074,7 @@ export function paintCells(floor, cells, on = true) {
     const k = cellKey(c.x, c.y);
     if (on) next[k] = true; else delete next[k];
   }
-  return next;
+  return keepClean(floor, next);
 }
 
 /* ---------------------------- expanding a deck ----------------------------
@@ -1395,15 +1560,26 @@ export function onDeck(map, cells) {
    Still a straight line between centres, not true line of sight — no cover,
    no corner cases. It answers "is there a wall between these two", which is
    the question that actually comes up at the table. */
+/* How far a sight check reaches when nothing says otherwise. A deck can be
+   500 squares across now, and asking "what can be seen from here" of every
+   square on it is a quarter of a million lines walked. Eighty squares is far
+   past anything a line of sight is used for at the table (a long gallery, a
+   firing lane) and keeps the answer to a fraction of a second. */
+export const LOS_MAX_SQUARES = 80;
+
 export function visibleCells(map, origin, radiusM = null) {
   const m = readMap(map);
   if (!origin) return [];
   const perSquare = m.metresPerSquare || 1;
-  const limit = radiusM === null ? Infinity : (Number(radiusM) || 0) / perSquare;
-  if (limit <= 0) return [];
+  const asked = radiusM === null ? Infinity : (Number(radiusM) || 0) / perSquare;
+  if (asked <= 0) return [];
+  const limit = Math.min(asked, LOS_MAX_SQUARES);
+  // Only the box the circle fits in, not the whole grid.
+  const x0 = Math.max(0, Math.floor(origin.x - limit)), x1 = Math.min(m.cols - 1, Math.ceil(origin.x + limit));
+  const y0 = Math.max(0, Math.floor(origin.y - limit)), y1 = Math.min(m.rows - 1, Math.ceil(origin.y + limit));
   const out = [];
-  for (let x = 0; x < m.cols; x++) {
-    for (let y = 0; y < m.rows; y++) {
+  for (let x = x0; x <= x1; x++) {
+    for (let y = y0; y <= y1; y++) {
       if (Math.hypot(x - origin.x, y - origin.y) > limit) continue;
       if (!walkLine(m, origin, { x, y })) out.push({ x, y });
     }

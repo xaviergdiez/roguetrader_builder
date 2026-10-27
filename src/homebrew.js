@@ -9,6 +9,8 @@
 //
 // The list operations are pure so homebrew.check.mjs can exercise them in node.
 
+import { packMapLibrary } from './battlemap.js';
+
 export const HOMEBREW_KEY = 'rt:homebrew';
 
 // `encounters` rides here rather than on a route of its own. The Hobby plan
@@ -42,6 +44,15 @@ export function normalise(h) {
   };
 }
 
+/* What goes to storage and over the wire: saved decks with their dense layers
+   packed (see battlemap.js packMap). Kept out of normalise() on purpose —
+   that runs on every read, and a deck that was just unpacked should not be
+   packed again before anyone has looked at it. */
+export const forStorage = (h) => {
+  const n = normalise(h);
+  return { ...n, battlemaps: packMapLibrary(n.battlemaps) };
+};
+
 export const isEmpty = (h) => {
   const n = normalise(h);
   return n.hulls.length === 0 && n.components.length === 0
@@ -63,7 +74,7 @@ export function readLocal() {
 // say so. Far smaller than a portrait, but the quota is shared.
 export function writeLocal(homebrew) {
   try {
-    localStorage.setItem(HOMEBREW_KEY, JSON.stringify(normalise(homebrew)));
+    localStorage.setItem(HOMEBREW_KEY, JSON.stringify(forStorage(homebrew)));
     return true;
   } catch {
     return false;
@@ -93,5 +104,5 @@ export const cloudGet = async () => normalise((await callApi()).homebrew);
 export const cloudPut = async (homebrew) => normalise((await callApi({
   method: 'PUT',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ homebrew: normalise(homebrew) })
+  body: JSON.stringify({ homebrew: forStorage(homebrew) })
 })).homebrew);

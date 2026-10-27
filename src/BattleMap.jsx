@@ -11,14 +11,15 @@ import {
   resolveTheme, themeNumbersFor, groundsUsed,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
-  OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText,
+  OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText, lineBlocked, LOS_MAX_SQUARES, keepClean,
   weaponOverlay, calibrationBar, deploymentRows
 } from './battlemap.js';
 import { NOISE, noiseById, noisePing } from './awareness.js';
 import { GEAR } from './gear.js';
 import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
 import { centreCrop, cropRect, dragBy, zoomTo, scaleBounds } from './texturecrop.js';
-import { generateDeck, newSeed, DECK_STYLES, styleById } from './mapgen.js';
+import { generateDeck, growDeck as buildAroundDeck, newSeed, DECK_STYLES, styleById } from './mapgen.js';
+import { generateTerrain, readTerrainPrompt, TERRAIN_SIZES, TERRAIN_SCOPES } from './terrain.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
 /* The boarding map, projected under physical miniatures.
@@ -38,30 +39,86 @@ import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 const CROP_BOX = 240;
 
 const MODES = [
-  { id: 'stamp', label: 'Stamp tile' },
-  { id: 'paint', label: 'Paint deck' },
-  { id: 'ground', label: 'Paint ground' },
-  { id: 'erase', label: 'Erase' },
-  { id: 'door', label: 'Door' },
-  { id: 'cover', label: 'Cover' },
-  { id: 'hazard', label: 'Hazard' },
-  { id: 'obscure', label: 'Foliage / smoke' },
-  { id: 'contact', label: 'Contacts' },
-  { id: 'noise', label: 'Noise' },
-  { id: 'fog', label: 'Fog' },
-  { id: 'marker', label: 'Marker' },
-  { id: 'overlay', label: 'Overlay' },
-  { id: 'measure', label: 'Measure' }
+  { id: 'stamp', label: 'Stamp tile', icon: 'stamp' },
+  { id: 'paint', label: 'Paint deck', icon: 'paint' },
+  { id: 'ground', label: 'Paint ground', icon: 'ground' },
+  { id: 'erase', label: 'Erase', icon: 'erase' },
+  { id: 'door', label: 'Door', icon: 'door' },
+  { id: 'cover', label: 'Cover', icon: 'cover' },
+  { id: 'hazard', label: 'Hazard', icon: 'hazard' },
+  { id: 'obscure', label: 'Foliage / smoke', icon: 'foliage' },
+  { id: 'contact', label: 'Contacts', icon: 'contact' },
+  { id: 'noise', label: 'Noise', icon: 'noise' },
+  { id: 'fog', label: 'Fog', icon: 'fog' },
+  { id: 'marker', label: 'Marker', icon: 'marker' },
+  { id: 'overlay', label: 'Overlay', icon: 'overlay' },
+  { id: 'measure', label: 'Measure', icon: 'measure' }
 ];
-
-// A canvas larger than this eats hundreds of megabytes and stalls the tab.
-const MAX_CANVAS_PX = 4000;
 
 // Only things with a combat line are worth drawing an overlay for.
 const ARMED = Object.entries(GEAR)
   .filter(([, v]) => v.stats && ['Pistol', 'Basic', 'Heavy', 'Thrown', 'Melee', 'Field'].includes(v.kind))
   .map(([k, v]) => ({ key: k, label: k.replace(/\b\w/g, (c) => c.toUpperCase()), kind: v.kind, stats: v.stats }))
   .sort((a, b) => a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label));
+
+/* ---- the toolbar's icons ----
+   Drawn here rather than imported: a dozen strokes each, no dependency, and
+   they take their colour from the button they sit in. Every one is a 24-square
+   grid of lines, so they read as one set. A button that is only an icon always
+   carries its name as a tooltip and an aria-label. */
+const ICONS = {
+  stamp: <><path d="M9 3h6v6l3 3v3H6v-3l3-3z" /><path d="M5 20h14" /></>,
+  paint: <><rect x="4" y="4" width="16" height="16" /><path d="M12 4v16M4 12h16" /><rect x="4" y="4" width="8" height="8" fill="currentColor" /></>,
+  ground: <><path d="M3 18l6-9 4 5 3-4 5 8z" /><path d="M3 21h18" /></>,
+  erase: <><path d="M4 15l9-9 6 6-7 7H8z" /><path d="M9 10l6 6M13 20h7" /></>,
+  door: <><path d="M6 21V4h12v17M4 21h16" /><circle cx="15" cy="12.5" r="1" fill="currentColor" /></>,
+  cover: <><rect x="4" y="5" width="16" height="14" /><path d="M4 5l16 14M20 5L4 19" /></>,
+  hazard: <><path d="M12 3l10 18H2z" /><path d="M12 10v5M12 18v.5" /></>,
+  foliage: <><path d="M7 18a4 4 0 010-8 5 5 0 019.5-1A4.5 4.5 0 0117 18z" /></>,
+  contact: <><circle cx="12" cy="12" r="2" fill="currentColor" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="10" /></>,
+  noise: <><path d="M4 9v6h4l5 4V5L8 9z" /><path d="M16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11" /></>,
+  fog: <><path d="M3 8h12M6 12h15M3 16h10M9 20h12" /></>,
+  marker: <><path d="M12 21s-7-6-7-11a7 7 0 0114 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></>,
+  overlay: <><circle cx="12" cy="12" r="6" /><path d="M12 2v5M12 17v5M2 12h5M17 12h5" /></>,
+  measure: <><path d="M3 17L17 3l4 4L7 21z" /><path d="M7 13l2 2M10 10l2 2M13 7l2 2" /></>,
+  undo: <><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 010 12h-3" /></>,
+  redo: <><path d="M15 14l5-5-5-5" /><path d="M20 9H10a6 6 0 000 12h3" /></>,
+  rotateLeft: <><path d="M3 4v6h6" /><path d="M5.5 15a8 8 0 105-9.5L3 10" /></>,
+  rotateRight: <><path d="M21 4v6h-6" /><path d="M18.5 15a8 8 0 11-5-9.5L21 10" /></>,
+  pan: <><path d="M12 2v20M2 12h20" /><path d="M9 5l3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3" /></>,
+  zoomIn: <><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.5-4.5M11 8v6M8 11h6" /></>,
+  zoomOut: <><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.5-4.5M8 11h6" /></>,
+  fit: <><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /></>,
+  download: <><path d="M12 3v12M7 10l5 5 5-5M4 21h16" /></>,
+  trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" /></>,
+  hide: <><path d="M3 3l18 18" /><path d="M10.6 6.1A9.8 9.8 0 0112 6c5 0 8.5 4 10 6-.7 1-1.8 2.3-3.2 3.4M6.5 7.3C4.2 8.8 2.6 10.9 2 12c1.5 2 5 6 10 6 1.5 0 2.8-.3 4-.9" /></>,
+  show: <><path d="M2 12c1.5-2 5-6 10-6s8.5 4 10 6c-1.5 2-5 6-10 6S3.5 14 2 12z" /><circle cx="12" cy="12" r="3" /></>,
+  full: <><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></>,
+  present: <><rect x="3" y="4" width="18" height="12" /><path d="M8 20h8M12 16v4" /></>,
+  save: <><path d="M5 3h11l3 3v15H5z" /><path d="M8 3v6h8V3M8 21v-7h8v7" /></>,
+  grid: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" /></>
+};
+
+function Icon({ name, size = 18 }) {
+  return (
+    <svg className="rt-ico" viewBox="0 0 24 24" width={size} height={size} fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {ICONS[name]}
+    </svg>
+  );
+}
+
+// A button that is only a picture, with its name on it for the pointer and the
+// screen reader alike.
+function IconButton({ icon, label, onClick, on = false, disabled = false, className = '' }) {
+  return (
+    <button type="button" className={'rt-ico-btn' + (on ? ' on' : '') + (className ? ' ' + className : '')}
+      title={label} aria-label={label} aria-pressed={on || undefined}
+      disabled={disabled} onClick={onClick}>
+      <Icon name={icon} />
+    </button>
+  );
+}
 
 /* ---- overlay art ----
    Drawn rather than blitted. A template has to be whatever radius or length
@@ -313,6 +370,7 @@ export default function BattleMap({
   const [deckTarget, setDeckTarget] = useState('');
   const [deckName, setDeckName] = useState('');
   const [deckNote, setDeckNote] = useState('');
+  const [deckMsg, setDeckMsg] = useState('');
   const [doorKind, setDoorKind] = useState('bulkhead');
   const [coverType, setCoverType] = useState('crates');
   const [hazardType, setHazardType] = useState('fire');
@@ -350,10 +408,47 @@ export default function BattleMap({
   // be read as a grid of one and clamp the box out from under the typing.
   const [growCols, setGrowCols] = useState('');
   const [growRows, setGrowRows] = useState('');
-  const [growMirror, setGrowMirror] = useState(true);
   // The terrain the ground brush lays down. Defaults to the deck's own,
   // which is the "lift it off again" option.
   const [paintGround, setPaintGround] = useState(m.theme);
+
+  // The Pan tool. While it is on a plain drag moves the view, the way holding
+  // Space does for as long as Space is down.
+  const [panOn, setPanOn] = useState(false);
+  const panOnRef = useRef(false);
+  panOnRef.current = panOn;
+  // Panels that used to be rows of controls on the bar, folded away until they
+  // are wanted: saving and loading decks, and the grid and its scale.
+  const [libOpen, setLibOpen] = useState(false);
+  const [gridOpen, setGridOpen] = useState(false);
+  // The right-click menu: where it was opened, and which group is unfolded.
+  const [menu, setMenu] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(null);
+  const menuRef = useRef(null);
+  const [menuAt, setMenuAt] = useState({ x: 0, y: 0 });
+  // Procedural terrain, in the Ground panel. `terrainPick` is the grounds the
+  // GM has ticked; until they tick any it is the deck's own plus every saved one.
+  const [terrainPrompt, setTerrainPrompt] = useState('');
+  const [terrainPick, setTerrainPick] = useState(null);
+  const [terrainSeed, setTerrainSeed] = useState('');
+  const [terrainSize, setTerrainSize] = useState('auto');
+  const [terrainScope, setTerrainScope] = useState('deck');
+  const [terrainNote, setTerrainNote] = useState('');
+  // Which half of the Ground panel is showing: making a ground (generated or
+  // uploaded) or laying terrain from the grounds there are.
+  const [groundTab, setGroundTab] = useState('make');
+  // Every ground there is — built in, generated, uploaded; once saved they are
+  // all the same kind of thing — described by the words they answer to.
+  const allGrounds = useMemo(() => [...MAP_THEMES, ...customThemes].map((t) => ({
+    id: t.id, name: t.name, subtitle: t.subtitle, desc: t.desc, prompt: t.prompt,
+    custom: Boolean(t.custom), fallback: t.fallback
+  })), [customThemes]);
+  const terrainRead = useMemo(() => readTerrainPrompt(terrainPrompt, allGrounds), [terrainPrompt, allGrounds]);
+  // How Expand grows a deck: from what is painted (the default), or by
+  // repeating the deck, or repeating it flipped at the seams.
+  const [growHow, setGrowHow] = useState('grow');
+  // Generate a deck builds around what is painted, rather than over it.
+  const [buildAround, setBuildAround] = useState(true);
 
   /* Opening the panel offers double the current deck, which is the thing
      almost everyone wants and saves typing two numbers to get it. */
@@ -520,10 +615,9 @@ export default function BattleMap({
   // not see; the GM's own tab shows it.
   const projecting = Boolean(win);
 
-  const px = Math.min(
-    m.pxPerSquare,
-    Math.floor(MAX_CANVAS_PX / Math.max(m.cols, m.rows))
-  );
+  // Never shrunk to fit a canvas: the deck is drawn a window at a time (see
+  // `paint`), so a square is always the size the projector was calibrated to.
+  const px = m.pxPerSquare;
 
   const weapon = useMemo(() => {
     const entry = GEAR[weaponKey];
@@ -606,16 +700,16 @@ export default function BattleMap({
 
   /* ---- input ---- */
 
+  // Which square a pointer event is over. Worked out from where the stage is
+  // scrolled to, because the canvas is only a window onto the deck.
   const posFromEvent = (e) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
-    // The canvas is displayed at CSS size, which may differ from its pixel
-    // size; scale the click back or every placement drifts right and down.
-    const sx = canvas.width / rect.width;
-    const sy = canvas.height / rect.height;
-    const x = Math.floor(((e.clientX - rect.left) * sx) / px);
-    const y = Math.floor(((e.clientY - rect.top) * sy) / px);
+    const stage = stageRef.current;
+    if (!stage) return null;
+    const rect = stage.getBoundingClientRect();
+    const sx = e.clientX - rect.left - stage.clientLeft + stage.scrollLeft;
+    const sy = e.clientY - rect.top - stage.clientTop + stage.scrollTop;
+    const x = Math.floor(sx / zoom / px);
+    const y = Math.floor(sy / zoom / px);
     if (x < 0 || y < 0 || x >= m.cols || y >= m.rows) return null;
     return { x, y };
   };
@@ -855,6 +949,7 @@ export default function BattleMap({
     const typing = (e) => ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target && e.target.tagName) || '');
     let over = false;
     let drag = null;
+    const armed = () => spaceRef.current || panOnRef.current;
     const cursor = (state) => {
       el.classList.toggle('pan-ready', state === 'ready');
       el.classList.toggle('panning', state === 'panning');
@@ -870,10 +965,10 @@ export default function BattleMap({
       if (e.code !== 'Space') return;
       if (spaceRef.current) e.preventDefault();    // no click on a focused button
       spaceRef.current = false;
-      if (!drag) cursor(null);
+      if (!drag) cursor(armed() ? 'ready' : null);
     };
     const onDown = (e) => {
-      if (!spaceRef.current || e.button !== 0) return;
+      if (!armed() || e.button !== 0) return;
       e.preventDefault(); e.stopPropagation();
       drag = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
       cursor('panning');
@@ -886,9 +981,9 @@ export default function BattleMap({
     const onUp = () => {
       if (!drag) return;
       drag = null;
-      cursor(spaceRef.current ? 'ready' : null);
+      cursor(armed() ? 'ready' : null);
     };
-    const onBlur = () => { spaceRef.current = false; drag = null; cursor(null); };
+    const onBlur = () => { spaceRef.current = false; drag = null; cursor(armed() ? 'ready' : null); };
     el.addEventListener('mouseenter', onEnter);
     el.addEventListener('mouseleave', onLeave);
     el.addEventListener('mousedown', onDown, true);
@@ -909,6 +1004,13 @@ export default function BattleMap({
       cursor(null);
     };
   }, [win]);
+
+  // The Pan tool's cursor, set from here because the effect above only knows
+  // about the moment a drag starts and ends.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (el && !el.classList.contains('panning')) el.classList.toggle('pan-ready', panOn);
+  }, [panOn]);
 
   /* ---- full screen ----
      The Fullscreen API has to be asked from a click or keypress inside the
@@ -974,7 +1076,6 @@ export default function BattleMap({
       shot,
       target,
       rings: showRings && weapon && !weapon.isField ? rangeRings(weapon.range, m) : [],
-      los: showLos ? visibleCells(m, origin, weapon && weapon.range ? weapon.range * 3 : null) : [],
       blast: weapon && weapon.blastM && target
         ? onDeck(m, unobstructed(m, target, areaCells(m, target, weapon.blastM))) : [],
       cone: weapon && weapon.isFlame && target
@@ -982,42 +1083,164 @@ export default function BattleMap({
       aura: kind === 'field'
         ? onDeck(m, unobstructed(m, origin, areaCells(m, origin, weapon.auraM))) : []
     };
-  }, [mode, origin, aim, hover, weapon, showRings, showLos, coneAngle, m]);
+  }, [mode, origin, aim, hover, weapon, showRings, coneAngle, m]);
 
-  /* ---- rendering ---- */
+  /* ---- rendering ----
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+     THE CANVAS IS A WINDOW ONTO THE DECK, NOT THE DECK. It used to be one
+     bitmap of cols x px by rows x px, which is why a deck could not be bigger
+     than a browser's largest image and why a big one had its squares shrunk to
+     fit (decalibrating the projector, the one thing that must not move). Now
+     the bitmap is only as big as the stage, sticks to the top-left of what is
+     scrolled into view, and is redrawn for whatever part of the deck is under
+     it, at the current zoom. Squares stay the size they were calibrated to,
+     and a deck can be as big as its data.
+
+     Only the squares in view are visited, found by looking them up rather than
+     by walking every record, so a redraw costs what is on screen. Zoomed so
+     far out that a square is a few pixels, the details are not worth drawing
+     and an overview (one pixel per square, kept until the map changes) is
+     scaled up instead. */
+
+  // What the fog shows, worked out when the deck changes, not on every redraw.
+  const shown = useMemo(
+    () => (m.fog ? visibleExplored(m) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [m.fog, m.explored, m.doors, m.floor, m.viewpoint]);
+
+  /* Dead ground for the sight overlay, asked of a square the first time it is
+     drawn and remembered. Working out every square a weapon might see used to
+     be done up front, on every move of the pointer. */
+  const seeable = useMemo(() => {
+    if (mode !== 'overlay' || !origin || !showLos) return null;
+    const per = m.metresPerSquare || 1;
+    const reach = weapon && weapon.range ? (weapon.range * 3) / per : Infinity;
+    const limit = Math.min(reach, LOS_MAX_SQUARES);
+    const cache = new Map();
+    return (x, y) => {
+      const k = x + ',' + y;
+      let v = cache.get(k);
+      if (v === undefined) {
+        v = Math.hypot(x - origin.x, y - origin.y) <= limit && !lineBlocked(m, origin, { x, y });
+        cache.set(k, v);
+      }
+      return v;
+    };
+  }, [mode, origin, showLos, weapon, m]);
+
+  const drawRef = useRef(() => {});
+  const overviewRef = useRef(null);
+  const OVERVIEW_BELOW = 6;       // screen pixels per square under which only the overview is drawn
+
+  // One pixel per square, for when the whole deck is on screen at once.
+  const buildOverview = () => {
+    const have = overviewRef.current;
+    if (have && have.m === m && have.shown === shown && have.projecting === projecting && have.tick === textureTick) return have.canvas;
+    const doc = (win || window).document;
+    const c = have && have.canvas ? have.canvas : doc.createElement('canvas');
+    c.width = m.cols; c.height = m.rows;
+    const g = c.getContext('2d');
+    g.fillStyle = '#05070a';
+    g.fillRect(0, 0, m.cols, m.rows);
+    const tint = new Map();
+    const colourOf = (id) => {
+      if (!tint.has(id)) tint.set(id, (resolveTheme(id, customThemes) || theme).fallback);
+      return tint.get(id);
+    };
+    for (const k of Object.keys(m.floor)) {
+      const p = parseKey(k);
+      if (!p) continue;
+      g.fillStyle = colourOf(m.ground[k] || m.theme);
+      g.fillRect(p.x, p.y, 1, 1);
+    }
+    for (const [k, id] of Object.entries(m.hazards)) {
+      const p = parseKey(k); const hz = hazardById(id);
+      if (p && hz) { g.fillStyle = hz.colour; g.fillRect(p.x, p.y, 1, 1); }
+    }
+    for (const [k, id] of Object.entries(m.cover)) {
+      const p = parseKey(k);
+      if (p && coverById(id)) { g.fillStyle = '#7d8991'; g.fillRect(p.x, p.y, 1, 1); }
+    }
+    for (const [k, id] of Object.entries(m.obscuring)) {
+      const p = parseKey(k); const ob = obscuringById(id);
+      if (p && ob) { g.globalAlpha = Math.min(0.85, ob.alpha + 0.3); g.fillStyle = ob.colour; g.fillRect(p.x, p.y, 1, 1); g.globalAlpha = 1; }
+    }
+    for (const [k, door] of Object.entries(m.doors)) {
+      const p = parseKey(k);
+      if (p) {
+        g.fillStyle = door.state === 'open' ? '#2ecc71' : door.state === 'jammed' ? '#f39c12' : '#e74c3c';
+        g.fillRect(p.x, p.y, 1, 1);
+      }
+    }
+    for (const [k, mk] of Object.entries(m.markers)) {
+      const p = parseKey(k);
+      if (p) { g.fillStyle = markerTypeById(mk.type).colour; g.fillRect(p.x, p.y, 1, 1); }
+    }
+    if (shown) {
+      g.fillStyle = projecting ? 'rgb(3,4,6)' : 'rgba(3,4,6,0.82)';
+      for (let x = 0; x < m.cols; x++) {
+        for (let y = 0; y < m.rows; y++) if (!shown[x + ',' + y]) g.fillRect(x, y, 1, 1);
+      }
+    }
+    overviewRef.current = { m, shown, projecting, tick: textureTick, canvas: c };
+    return c;
+  };
+
+  /* Draws the deck into `ctx` as seen through `frame`: the part of the
+     zoomed deck, in screen pixels, that the canvas shows. Everything below is
+     in map pixels; the transform does the scrolling and the zoom. */
+  const paint = (ctx, frame) => {
+    const z = frame.zoom;
     const w = m.cols * px;
     const h = m.rows * px;
-    canvas.width = w;
-    canvas.height = h;
+    // The visible part of the deck, in map pixels and in squares.
+    const vx0 = frame.left / z, vy0 = frame.top / z;
+    const vw = frame.width / z, vh = frame.height / z;
+    const vx1 = vx0 + vw, vy1 = vy0 + vh;
+    const c0 = Math.max(0, Math.floor(vx0 / px) - 1), c1 = Math.min(m.cols - 1, Math.ceil(vx1 / px));
+    const r0 = Math.max(0, Math.floor(vy0 / px) - 1), r1 = Math.min(m.rows - 1, Math.ceil(vy1 / px));
+    const overview = px * z < OVERVIEW_BELOW;
+    // The squares in view that hold something in a layer.
+    const each = (layer, fn) => {
+      for (let x = c0; x <= c1; x++) {
+        for (let y = r0; y <= r1; y++) {
+          const v = layer[x + ',' + y];
+          if (v) fn(x, y, v);
+        }
+      }
+    };
 
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = '#05070a';
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(0, 0, frame.width, frame.height);
+    ctx.setTransform(z, 0, 0, z, -frame.left, -frame.top);
 
-    const floorKeys = Object.keys(m.floor);
     const fill = (cells, colour) => {
       ctx.fillStyle = colour;
       for (const c of cells) ctx.fillRect(c.x * px, c.y * px, px, px);
     };
 
-    // 1. The deck, textured, clipped to the painted cells so unbuilt grid
-    //    stays void rather than becoming a rectangle of corridor.
-    if (floorKeys.length) {
+    if (overview) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(buildOverview(), 0, 0, w, h);
+    } else {
+      // 1. The deck, textured, clipped to the painted cells so unbuilt grid
+      //    stays void rather than becoming a rectangle of corridor.
       /* Grouped by the ground painted on each square, so a deck that runs
          from ice to deck plate is drawn in one pass per terrain rather than
          one per square. Unpainted squares fall to the deck's own ground. */
       const byGround = new Map();
-      for (const k of floorKeys) {
-        const id = m.ground[k] || m.theme;
-        const list = byGround.get(id);
-        if (list) list.push(k); else byGround.set(id, [k]);
+      for (let x = c0; x <= c1; x++) {
+        for (let y = r0; y <= r1; y++) {
+          const k = x + ',' + y;
+          if (!m.floor[k]) continue;
+          const id = m.ground[k] || m.theme;
+          const list = byGround.get(id);
+          if (list) list.push(x, y); else byGround.set(id, [x, y]);
+        }
       }
-
-      for (const [id, keys] of byGround) {
+      for (const [id, xy] of byGround) {
         // Each ground brings its OWN fallback and wash: the wash is tuned to
         // how bright that particular floor is, so sharing the deck's would
         // wash a pale ice shelf like dark deck plate.
@@ -1026,203 +1249,194 @@ export default function BattleMap({
         const img = src ? texturesRef.current.get(src) : null;
         ctx.save();
         ctx.beginPath();
-        for (const k of keys) {
-          const p = parseKey(k);
-          if (p) ctx.rect(p.x * px, p.y * px, px, px);
-        }
+        for (let i = 0; i < xy.length; i += 2) ctx.rect(xy[i] * px, xy[i + 1] * px, px, px);
         ctx.clip();
         ctx.fillStyle = img ? (ctx.createPattern(img, 'repeat') || t.fallback) : t.fallback;
-        ctx.fillRect(0, 0, w, h);
+        ctx.fillRect(c0 * px, r0 * px, (c1 - c0 + 1) * px, (r1 - r0 + 1) * px);
         // The wash knocks a busy photographic deck back so tokens, the grid
         // and the templates read over it. A pale drawn deck has none of that
         // noise and a dark grid of its own, so washing it would only turn a
         // deliberately clean floor grey.
         ctx.fillStyle = `rgba(0,0,0,${t.wash})`;
-        ctx.fillRect(0, 0, w, h);
+        ctx.fillRect(c0 * px, r0 * px, (c1 - c0 + 1) * px, (r1 - r0 + 1) * px);
         ctx.restore();
       }
     }
 
     // 2. Deployment zones, under everything else.
     if (showZones) {
-      const z = deploymentRows(m, 1);
+      const zn = deploymentRows(m, 1);
       ctx.fillStyle = 'rgba(192,57,43,0.18)';
-      ctx.fillRect(0, z.hostile.y0 * px, w, (z.hostile.y1 - z.hostile.y0 + 1) * px);
+      ctx.fillRect(0, zn.hostile.y0 * px, w, (zn.hostile.y1 - zn.hostile.y0 + 1) * px);
       ctx.fillStyle = 'rgba(52,152,219,0.18)';
-      ctx.fillRect(0, z.crew.y0 * px, w, (z.crew.y1 - z.crew.y0 + 1) * px);
+      ctx.fillRect(0, zn.crew.y0 * px, w, (zn.crew.y1 - zn.crew.y0 + 1) * px);
     }
 
-    // 3. Walls, derived from the floor every frame — never stored, so they
-    //    cannot disagree with the deck they edge.
-    const thick = Math.max(3, Math.floor(px * 0.16));
-    for (const k of floorKeys) {
-      const p = parseKey(k);
-      if (!p) continue;
-      const x0 = p.x * px, y0 = p.y * px;
-      const mask = wallMask(m.floor, p.x, p.y);
-      ctx.fillStyle = 'rgba(8,10,14,0.92)';
-      if (mask & WALL_N) ctx.fillRect(x0, y0, px, thick);
-      if (mask & WALL_S) ctx.fillRect(x0, y0 + px - thick, px, thick);
-      if (mask & WALL_W) ctx.fillRect(x0, y0, thick, px);
-      if (mask & WALL_E) ctx.fillRect(x0 + px - thick, y0, thick, px);
-
+    if (!overview) {
+      // 3. Walls, derived from the floor every frame — never stored, so they
+      //    cannot disagree with the deck they edge.
+      const thick = Math.max(3, Math.floor(px * 0.16));
       ctx.strokeStyle = theme.accent;
       ctx.lineWidth = 1;
       const line = (ax, ay, bx, by) => { ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); };
-      if (mask & WALL_N) line(x0, y0 + thick, x0 + px, y0 + thick);
-      if (mask & WALL_S) line(x0, y0 + px - thick, x0 + px, y0 + px - thick);
-      if (mask & WALL_W) line(x0 + thick, y0, x0 + thick, y0 + px);
-      if (mask & WALL_E) line(x0 + px - thick, y0, x0 + px - thick, y0 + px);
+      each(m.floor, (cx, cy) => {
+        const x0 = cx * px, y0 = cy * px;
+        const mask = wallMask(m.floor, cx, cy);
+        if (mask) {
+          ctx.fillStyle = 'rgba(8,10,14,0.92)';
+          if (mask & WALL_N) ctx.fillRect(x0, y0, px, thick);
+          if (mask & WALL_S) ctx.fillRect(x0, y0 + px - thick, px, thick);
+          if (mask & WALL_W) ctx.fillRect(x0, y0, thick, px);
+          if (mask & WALL_E) ctx.fillRect(x0 + px - thick, y0, thick, px);
+          if (mask & WALL_N) line(x0, y0 + thick, x0 + px, y0 + thick);
+          if (mask & WALL_S) line(x0, y0 + px - thick, x0 + px, y0 + px - thick);
+          if (mask & WALL_W) line(x0 + thick, y0, x0 + thick, y0 + px);
+          if (mask & WALL_E) line(x0 + px - thick, y0, x0 + px - thick, y0 + px);
+        }
+        // Corner pillars, including the inner corner a four-sided mask misses.
+        // Drawn as structure, not highlight: in the grid colour they lit every
+        // corner and buried the deck under confetti.
+        ctx.fillStyle = 'rgba(4,6,9,0.95)';
+        const c = thick + 1;
+        if (cornerPillar(m.floor, cx, cy, -1, -1)) ctx.fillRect(x0, y0, c, c);
+        if (cornerPillar(m.floor, cx, cy, 1, -1)) ctx.fillRect(x0 + px - c, y0, c, c);
+        if (cornerPillar(m.floor, cx, cy, -1, 1)) ctx.fillRect(x0, y0 + px - c, c, c);
+        if (cornerPillar(m.floor, cx, cy, 1, 1)) ctx.fillRect(x0 + px - c, y0 + px - c, c, c);
+      });
 
-      // Corner pillars, including the inner corner a four-sided mask misses.
-      // Drawn as structure, not highlight: in the grid colour they lit every
-      // corner and buried the deck under confetti.
-      ctx.fillStyle = 'rgba(4,6,9,0.95)';
-      const c = thick + 1;
-      if (cornerPillar(m.floor, p.x, p.y, -1, -1)) ctx.fillRect(x0, y0, c, c);
-      if (cornerPillar(m.floor, p.x, p.y, 1, -1)) ctx.fillRect(x0 + px - c, y0, c, c);
-      if (cornerPillar(m.floor, p.x, p.y, -1, 1)) ctx.fillRect(x0, y0 + px - c, c, c);
-      if (cornerPillar(m.floor, p.x, p.y, 1, 1)) ctx.fillRect(x0 + px - c, y0 + px - c, c, c);
-    }
-
-    // 3b. Hazards, as a tinted square with a warning stripe. Under the
-    //     cover and the markers, because something can stand in a fire.
-    for (const [k, id] of Object.entries(m.hazards)) {
-      const p = parseKey(k);
-      const hz = hazardById(id);
-      if (!p || !hz) continue;
-      const x0 = p.x * px, y0 = p.y * px;
-      ctx.save();
-      ctx.beginPath(); ctx.rect(x0, y0, px, px); ctx.clip();
-      ctx.fillStyle = hz.colour;
-      ctx.globalAlpha = 0.22;
-      ctx.fillRect(x0, y0, px, px);
-      ctx.globalAlpha = 0.5;
-      ctx.strokeStyle = hz.colour;
-      ctx.lineWidth = Math.max(2, px * 0.09);
-      for (let o = -px; o < px * 2; o += px * 0.34) {
-        ctx.beginPath();
-        ctx.moveTo(x0 + o, y0 + px);
-        ctx.lineTo(x0 + o + px, y0);
-        ctx.stroke();
-      }
-      ctx.restore();
-      ctx.strokeStyle = hz.colour;
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(x0 + 1, y0 + 1, px - 2, px - 2);
-    }
-
-    // 3c. Cover. Sight-blocking cover fills its square; cover you can shoot
-    //     over is drawn as a low bar, so the two are told apart at a glance
-    //     from across the table rather than by remembering which is which.
-    for (const [k, id] of Object.entries(m.cover)) {
-      const p = parseKey(k);
-      const cv = coverById(id);
-      if (!p || !cv) continue;
-      const x0 = p.x * px, y0 = p.y * px;
-      if (cv.blocksSight) {
-        ctx.fillStyle = 'rgba(78,88,96,0.92)';
-        ctx.fillRect(x0 + px * 0.1, y0 + px * 0.1, px * 0.8, px * 0.8);
-        ctx.strokeStyle = 'rgba(190,205,215,0.85)';
+      // 3b. Hazards, as a tinted square with a warning stripe. Under the
+      //     cover and the markers, because something can stand in a fire.
+      each(m.hazards, (cx, cy, id) => {
+        const hz = hazardById(id);
+        if (!hz) return;
+        const x0 = cx * px, y0 = cy * px;
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x0, y0, px, px); ctx.clip();
+        ctx.fillStyle = hz.colour;
+        ctx.globalAlpha = 0.22;
+        ctx.fillRect(x0, y0, px, px);
+        ctx.globalAlpha = 0.5;
+        ctx.strokeStyle = hz.colour;
+        ctx.lineWidth = Math.max(2, px * 0.09);
+        for (let o = -px; o < px * 2; o += px * 0.34) {
+          ctx.beginPath();
+          ctx.moveTo(x0 + o, y0 + px);
+          ctx.lineTo(x0 + o + px, y0);
+          ctx.stroke();
+        }
+        ctx.restore();
+        ctx.strokeStyle = hz.colour;
         ctx.lineWidth = 1.5;
-        ctx.strokeRect(x0 + px * 0.1, y0 + px * 0.1, px * 0.8, px * 0.8);
-        ctx.beginPath();
-        ctx.moveTo(x0 + px * 0.1, y0 + px * 0.9);
-        ctx.lineTo(x0 + px * 0.9, y0 + px * 0.1);
-        ctx.stroke();
-      } else {
-        const h = Math.max(3, px * 0.2);
-        ctx.fillStyle = 'rgba(120,135,145,0.9)';
-        ctx.fillRect(x0 + px * 0.08, y0 + px - h - px * 0.12, px * 0.84, h);
-        ctx.strokeStyle = 'rgba(200,215,225,0.9)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x0 + px * 0.08, y0 + px - h - px * 0.12, px * 0.84, h);
-      }
-    }
+        ctx.strokeRect(x0 + 1, y0 + 1, px - 2, px - 2);
+      });
 
-    // 3d. Foliage and smoke: a green wash, denser where sight stops sooner.
-    //     Drawn on the projector too — it is terrain, not a secret.
-    for (const [k, id] of Object.entries(m.obscuring)) {
-      const p = parseKey(k);
-      const ob = obscuringById(id);
-      if (!p || !ob) continue;
+      // 3c. Cover. Sight-blocking cover fills its square; cover you can shoot
+      //     over is drawn as a low bar, so the two are told apart at a glance
+      //     from across the table rather than by remembering which is which.
+      each(m.cover, (cx, cy, id) => {
+        const cv = coverById(id);
+        if (!cv) return;
+        const x0 = cx * px, y0 = cy * px;
+        if (cv.blocksSight) {
+          ctx.fillStyle = 'rgba(78,88,96,0.92)';
+          ctx.fillRect(x0 + px * 0.1, y0 + px * 0.1, px * 0.8, px * 0.8);
+          ctx.strokeStyle = 'rgba(190,205,215,0.85)';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(x0 + px * 0.1, y0 + px * 0.1, px * 0.8, px * 0.8);
+          ctx.beginPath();
+          ctx.moveTo(x0 + px * 0.1, y0 + px * 0.9);
+          ctx.lineTo(x0 + px * 0.9, y0 + px * 0.1);
+          ctx.stroke();
+        } else {
+          const bh = Math.max(3, px * 0.2);
+          ctx.fillStyle = 'rgba(120,135,145,0.9)';
+          ctx.fillRect(x0 + px * 0.08, y0 + px - bh - px * 0.12, px * 0.84, bh);
+          ctx.strokeStyle = 'rgba(200,215,225,0.9)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x0 + px * 0.08, y0 + px - bh - px * 0.12, px * 0.84, bh);
+        }
+      });
+
+      // 3d. Foliage and smoke: a green wash, denser where sight stops sooner.
+      //     Drawn on the projector too — it is terrain, not a secret.
+      each(m.obscuring, (cx, cy, id) => {
+        const ob = obscuringById(id);
+        if (!ob) return;
+        ctx.save();
+        ctx.globalAlpha = ob.alpha;
+        ctx.fillStyle = ob.colour;
+        ctx.fillRect(cx * px, cy * px, px, px);
+        ctx.globalAlpha = Math.min(0.9, ob.alpha + 0.25);
+        ctx.fillStyle = ob.colour;
+        for (const [fx, fy] of [[0.28, 0.3], [0.7, 0.35], [0.45, 0.7]]) {
+          ctx.beginPath();
+          ctx.arc(cx * px + px * fx, cy * px + px * fy, px * 0.12, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      });
+
+      // 4. The grid, for the table to count squares off. Only the lines in
+      //    view: a deck 500 across has a thousand of them.
       ctx.save();
-      ctx.globalAlpha = ob.alpha;
-      ctx.fillStyle = ob.colour;
-      ctx.fillRect(p.x * px, p.y * px, px, px);
-      ctx.globalAlpha = Math.min(0.9, ob.alpha + 0.25);
-      ctx.fillStyle = ob.colour;
-      for (const [fx, fy] of [[0.28, 0.3], [0.7, 0.35], [0.45, 0.7]]) {
-        ctx.beginPath();
-        ctx.arc(p.x * px + px * fx, p.y * px + px * fy, px * 0.12, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      ctx.globalAlpha = theme.gridAlpha;
+      ctx.strokeStyle = theme.grid;
+      ctx.lineWidth = 1;
+      const gy0 = r0 * px, gy1 = (r1 + 1) * px, gx0 = c0 * px, gx1 = (c1 + 1) * px;
+      for (let c = c0; c <= c1 + 1; c++) { ctx.beginPath(); ctx.moveTo(c * px, gy0); ctx.lineTo(c * px, gy1); ctx.stroke(); }
+      for (let r = r0; r <= r1 + 1; r++) { ctx.beginPath(); ctx.moveTo(gx0, r * px); ctx.lineTo(gx1, r * px); ctx.stroke(); }
       ctx.restore();
-    }
 
-    // 4. The grid, for the table to count squares off.
-    ctx.save();
-    ctx.globalAlpha = theme.gridAlpha;
-    ctx.strokeStyle = theme.grid;
-    ctx.lineWidth = 1;
-    for (let c = 0; c <= m.cols; c++) { ctx.beginPath(); ctx.moveTo(c * px, 0); ctx.lineTo(c * px, h); ctx.stroke(); }
-    for (let r = 0; r <= m.rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * px); ctx.lineTo(w, r * px); ctx.stroke(); }
-    ctx.restore();
+      // 5. Bulkheads.
+      each(m.doors, (cx, cy, door) => {
+        const { kind, state } = door;
+        const x0 = cx * px, y0 = cy * px;
+        ctx.fillStyle = state === 'open' ? '#2ecc71' : state === 'jammed' ? '#f39c12' : '#e74c3c';
+        const leaf = Math.max(3, px * 0.16);
+        // A hatch is drawn narrow and short of the walls, a bulkhead spans the
+        // opening: the one you can crawl through should not look like the one
+        // you need a melta for.
+        const hatch = kind === 'hatch';
+        const inset = hatch ? px * 0.26 : 2;
+        const bh = hatch ? Math.max(4, px * 0.17) : Math.max(6, px * 0.3);
+        if (state === 'open') {
+          ctx.fillRect(x0 + inset, y0 + inset, leaf, px - inset * 2);
+          ctx.fillRect(x0 + px - inset - leaf, y0 + inset, leaf, px - inset * 2);
+        } else {
+          ctx.fillRect(x0 + inset, y0 + px / 2 - bh / 2, px - inset * 2, bh);
+          ctx.strokeStyle = '#0b0e14';
+          ctx.lineWidth = hatch ? 1 : 2;
+          ctx.strokeRect(x0 + inset, y0 + px / 2 - bh / 2, px - inset * 2, bh);
+        }
+      });
 
-    // 5. Bulkheads.
-    for (const [k, door] of Object.entries(m.doors)) {
-      const p = parseKey(k);
-      if (!p) continue;
-      const { kind, state } = door;
-      const x0 = p.x * px, y0 = p.y * px;
-      ctx.fillStyle = state === 'open' ? '#2ecc71' : state === 'jammed' ? '#f39c12' : '#e74c3c';
-      const leaf = Math.max(3, px * 0.16);
-      // A hatch is drawn narrow and short of the walls, a bulkhead spans the
-      // opening: the one you can crawl through should not look like the one
-      // you need a melta for.
-      const hatch = kind === 'hatch';
-      const inset = hatch ? px * 0.26 : 2;
-      const bh = hatch ? Math.max(4, px * 0.17) : Math.max(6, px * 0.3);
-      if (state === 'open') {
-        ctx.fillRect(x0 + inset, y0 + inset, leaf, px - inset * 2);
-        ctx.fillRect(x0 + px - inset - leaf, y0 + inset, leaf, px - inset * 2);
-      } else {
-        ctx.fillRect(x0 + inset, y0 + px / 2 - bh / 2, px - inset * 2, bh);
-        ctx.strokeStyle = '#0b0e14';
-        ctx.lineWidth = hatch ? 1 : 2;
-        ctx.strokeRect(x0 + inset, y0 + px / 2 - bh / 2, px - inset * 2, bh);
-      }
-    }
+      // 6. Markers.
+      each(m.markers, (cx, cy, mk) => {
+        const mx = cx * px + px / 2, my = cy * px + px / 2;
+        ctx.fillStyle = markerTypeById(mk.type).colour;
+        ctx.globalAlpha = 0.55;
+        ctx.beginPath(); ctx.arc(mx, my, px * 0.36, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+      });
 
-    // 6. Markers.
-    for (const [k, mk] of Object.entries(m.markers)) {
-      const p = parseKey(k);
-      if (!p) continue;
-      const cx = p.x * px + px / 2, cy = p.y * px + px / 2;
-      ctx.fillStyle = markerTypeById(mk.type).colour;
-      ctx.globalAlpha = 0.55;
-      ctx.beginPath(); ctx.arc(cx, cy, px * 0.36, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
-    }
-
-    // 6b. Fog of war, over the deck and the grid both: an unexplored square
-    //     must not even show how big it is.
-    //
-    //     IT IS DRAWN DIFFERENTLY IN THE TWO WINDOWS. The projector's copy is
-    //     solid, because the table must not read through it. The GM's own tab
-    //     is dimmed rather than blacked, because the GM is the one building
-    //     the deck and reaching for the next square to reveal, and a tool you
-    //     cannot see to aim is no tool.
-    if (m.fog) {
-      // What is DRAWN is what they have seen and can still reach through
-      // open doors, so shutting a bulkhead takes the room beyond it off the
-      // board without forgetting it was ever found.
-      const shown = visibleExplored(m);
-      ctx.fillStyle = projecting ? 'rgb(3,4,6)' : 'rgba(3,4,6,0.82)';
-      for (let x = 0; x < m.cols; x++) {
-        for (let y = 0; y < m.rows; y++) {
-          if (!shown[cellKey(x, y)]) ctx.fillRect(x * px, y * px, px, px);
+      // 6b. Fog of war, over the deck and the grid both: an unexplored square
+      //     must not even show how big it is.
+      //
+      //     IT IS DRAWN DIFFERENTLY IN THE TWO WINDOWS. The projector's copy is
+      //     solid, because the table must not read through it. The GM's own tab
+      //     is dimmed rather than blacked, because the GM is the one building
+      //     the deck and reaching for the next square to reveal, and a tool you
+      //     cannot see to aim is no tool.
+      if (shown) {
+        // What is DRAWN is what they have seen and can still reach through
+        // open doors, so shutting a bulkhead takes the room beyond it off the
+        // board without forgetting it was ever found.
+        ctx.fillStyle = projecting ? 'rgb(3,4,6)' : 'rgba(3,4,6,0.82)';
+        for (let x = c0; x <= c1; x++) {
+          for (let y = r0; y <= r1; y++) {
+            if (!shown[x + ',' + y]) ctx.fillRect(x * px, y * px, px, px);
+          }
         }
       }
     }
@@ -1231,38 +1445,36 @@ export default function BattleMap({
     //     models on a board — they are what the GM knows and the auspex
     //     leaks. A ping is drawn OVER the fog on purpose: that is the whole
     //     mechanic, something on the scope with the deck still dark.
-    for (const [k, c] of Object.entries(m.contacts)) {
-      const p = parseKey(k);
-      if (!p) continue;
-      const cx = p.x * px + px / 2, cy = p.y * px + px / 2;
+    each(m.contacts, (cx, cy, c) => {
+      const mx = cx * px + px / 2, my = cy * px + px / 2;
       if (c.state === 'hidden') {
         // Never on the projector: the GM's note to themselves.
-        if (projecting) continue;
+        if (projecting) return;
         ctx.save();
         ctx.setLineDash([3, 3]);
         ctx.strokeStyle = 'rgba(220,120,120,0.55)';
         ctx.lineWidth = 1.5;
-        ctx.beginPath(); ctx.arc(cx, cy, px * 0.3, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(mx, my, px * 0.3, 0, Math.PI * 2); ctx.stroke();
         ctx.restore();
-        continue;
+        return;
       }
       if (c.state === 'ping') {
         // A contact, not a creature: concentric rings, no name, no shape.
         // The party learns that something is out there and nothing else.
         for (const r of [0.44, 0.3, 0.16]) {
           ctx.beginPath();
-          ctx.arc(cx, cy, px * r, 0, Math.PI * 2);
+          ctx.arc(mx, my, px * r, 0, Math.PI * 2);
           ctx.strokeStyle = `rgba(255,70,70,${0.35 + (0.5 - r)})`;
           ctx.lineWidth = 2;
           ctx.stroke();
         }
         ctx.fillStyle = 'rgba(255,70,70,0.9)';
-        ctx.beginPath(); ctx.arc(cx, cy, px * 0.07, 0, Math.PI * 2); ctx.fill();
-        continue;
+        ctx.beginPath(); ctx.arc(mx, my, px * 0.07, 0, Math.PI * 2); ctx.fill();
+        return;
       }
       // seen
       ctx.beginPath();
-      ctx.arc(cx, cy, px * 0.34, 0, Math.PI * 2);
+      ctx.arc(mx, my, px * 0.34, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(192,57,43,0.85)';
       ctx.fill();
       ctx.strokeStyle = '#0b0e14';
@@ -1271,8 +1483,8 @@ export default function BattleMap({
       ctx.fillStyle = '#fff';
       ctx.font = `${Math.max(8, Math.floor(px * 0.26))}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
-      ctx.fillText(c.name.slice(0, 2).toUpperCase(), cx, cy + px * 0.09);
-    }
+      ctx.fillText(c.name.slice(0, 2).toUpperCase(), mx, my + px * 0.09);
+    });
 
     // 7. THE OVERLAYS — the reason this is worth projecting at all.
     if (overlay) {
@@ -1280,13 +1492,13 @@ export default function BattleMap({
 
       // Dead ground first, so everything else paints over it: what cannot be
       // seen from the firing square is dimmed rather than hidden, because
-      // the GM still needs to see the deck they are ruling on.
-      if (showLos && overlay.los.length) {
-        const lit = new Set(overlay.los.map((c) => cellKey(c.x, c.y)));
+      // the GM still needs to see the deck they are ruling on. Not at an
+      // overview, where the squares are too small to read it.
+      if (seeable && !overview) {
         ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        for (let x = 0; x < m.cols; x++) {
-          for (let y = 0; y < m.rows; y++) {
-            if (!lit.has(cellKey(x, y))) ctx.fillRect(x * px, y * px, px, px);
+        for (let x = c0; x <= c1; x++) {
+          for (let y = r0; y <= r1; y++) {
+            if (!seeable(x, y)) ctx.fillRect(x * px, y * px, px, px);
           }
         }
       }
@@ -1385,10 +1597,11 @@ export default function BattleMap({
     }
 
     // 10. The calibration bar. Drawn last and over everything, because its
-    //     whole job is to be measured against a ruler on the table.
+    //     whole job is to be measured against a ruler on the table. Kept in
+    //     the corner of what is in view, so it is never off-screen.
     if (showCalibration) {
       const bar = calibrationBar(m, { targetMm: 100 });
-      const bx = px, by = h - px * 0.9;
+      const bx = Math.max(0, vx0) + px, by = Math.min(h, vy1) - px * 0.9;
       ctx.fillStyle = 'rgba(0,0,0,0.75)';
       ctx.fillRect(bx - 6, by - px * 0.55, bar.px + 12, px * 0.8);
       ctx.strokeStyle = '#fff';
@@ -1404,9 +1617,49 @@ export default function BattleMap({
       ctx.textAlign = 'left';
       ctx.fillText(bar.label, bx + 4, by - px * 0.3);
     }
+    ctx.restore();
+  };
+
+  // Sizes the canvas to the part of the deck in view and draws it. Called from
+  // the effect below whenever anything it shows changes, and straight from the
+  // scroll listener, so the picture never trails the scroll by a frame.
+  const draw = () => {
+    const canvas = canvasRef.current;
+    const stage = stageRef.current;
+    if (!canvas || !stage) return;
+    const wrapW = Math.max(1, Math.round(m.cols * px * zoom));
+    const wrapH = Math.max(1, Math.round(m.rows * px * zoom));
+    const cw = Math.max(1, Math.min(stage.clientWidth || wrapW, wrapW));
+    const ch = Math.max(1, Math.min(stage.clientHeight || wrapH, wrapH));
+    if (canvas.width !== cw) canvas.width = cw;
+    if (canvas.height !== ch) canvas.height = ch;
+    const left = Math.max(0, Math.min(stage.scrollLeft, wrapW - cw));
+    const top = Math.max(0, Math.min(stage.scrollTop, wrapH - ch));
+    paint(canvas.getContext('2d'), { left, top, width: cw, height: ch, zoom });
+  };
+  drawRef.current = draw;
+
+  useEffect(() => {
+    draw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
-      measureFrom, measureTo, measurement, showZones, showCalibration, showLos, textureTick,
-      noiseKind]);
+      measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick,
+      noiseKind, zoom, showOptions]);
+
+  // Scrolling and resizing the stage move the window over the deck.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const w = win || window;
+    const again = () => drawRef.current();
+    el.addEventListener('scroll', again, { passive: true });
+    const ro = typeof w.ResizeObserver === 'function' ? new w.ResizeObserver(again) : null;
+    if (ro) ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', again);
+      if (ro) ro.disconnect();
+    };
+  }, [win]);
 
   /* ---- controls ---- */
 
@@ -1433,7 +1686,7 @@ export default function BattleMap({
   const fitToStage = () => {
     const el = stageRef.current;
     if (!el) return;
-    const pad = 10;   // the stage's own padding and border
+    const pad = 2;    // the stage's border
     const cur = mapRef.current;
     const cols = fitGrid(el.clientWidth - pad, cur.pxPerSquare);
     const rows = fitGrid(el.clientHeight - pad, cur.pxPerSquare);
@@ -1501,6 +1754,34 @@ export default function BattleMap({
      scrolling, so the deck zoomed and slid at the same time. */
   const zHeldRef = useRef(false);
   const rightZoomedRef = useRef(false);
+
+  /* Zooms to `target`, holding the point under (clientX, clientY) still. The
+     wheel passes the pointer; the buttons pass the middle of the stage. Only
+     refs and setters are touched, so the effect below can keep the copy it
+     was bound with. */
+  const zoomAt = (target, clientX, clientY) => {
+    const el = stageRef.current;
+    if (!el) return;
+    const w = win || window;
+    const box = el.getBoundingClientRect();
+    const px0 = clientX === undefined ? box.left + el.clientWidth / 2 : clientX;
+    const py0 = clientY === undefined ? box.top + el.clientHeight / 2 : clientY;
+    const atX = px0 - box.left + el.scrollLeft;
+    const atY = py0 - box.top + el.scrollTop;
+    const cur = zoomRef.current;
+    const next = clampZoom(target);
+    if (next === cur) return;
+    const k = next / cur;
+    zoomRef.current = next;
+    setZoom(next);
+    setZoomPct(String(Math.round(next * 100)));
+    // About the point, after the browser has laid the bigger deck out.
+    // Without the correction the deck slides out from under the cursor.
+    w.requestAnimationFrame(() => {
+      el.scrollLeft = atX * k - (px0 - box.left);
+      el.scrollTop = atY * k - (py0 - box.top);
+    });
+  };
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return undefined;
@@ -1520,32 +1801,30 @@ export default function BattleMap({
       const rightHeld = (e.buttons & 2) === 2;
       if (!(rightHeld || zHeldRef.current || e.ctrlKey)) return;   // a plain wheel scrolls
       e.preventDefault();
-      if (rightHeld) rightZoomedRef.current = true;
-      const box = el.getBoundingClientRect();
-      const atX = e.clientX - box.left + el.scrollLeft;
-      const atY = e.clientY - box.top + el.scrollTop;
-      const cur = zoomRef.current;
+      if (rightHeld) { rightZoomedRef.current = true; setMenu(null); }
       // A pinch arrives as many small deltas; a wheel notch as one large one.
       const step = e.ctrlKey ? Math.exp(-e.deltaY * 0.01) : (e.deltaY < 0 ? 1.12 : 1 / 1.12);
-      const next = clampZoom(cur * step);
-      if (next === cur) return;
-      const k = next / cur;
-      zoomRef.current = next;
-      setZoom(next);
-      setZoomPct(String(Math.round(next * 100)));
-      // About the pointer, after the browser has laid the bigger canvas out.
-      // Without the correction the deck slides out from under the cursor.
-      w.requestAnimationFrame(() => {
-        el.scrollLeft = atX * k - (e.clientX - box.left);
-        el.scrollTop = atY * k - (e.clientY - box.top);
-      });
+      zoomAt(zoomRef.current * step, e.clientX, e.clientY);
     };
-    // Releasing the right button after zooming would open the context menu
-    // over the map. Swallow it once, and only when a zoom just happened.
+    /* The right button does two things here: with the wheel it zooms, on its
+       own it opens the menu. Which one it was is only known once the button
+       comes up — except that macOS reports the menu on the press — so a press
+       is held as "maybe a menu" and opened on release if no zoom happened.
+       Ctrl-click is left to the fog tool, which uses it to take a place back. */
+    let pending = null;
     const onContextMenu = (e) => {
-      if (rightZoomedRef.current) { e.preventDefault(); rightZoomedRef.current = false; }
+      e.preventDefault();
+      if (rightZoomedRef.current) { rightZoomedRef.current = false; pending = null; return; }
+      if (e.ctrlKey) return;
+      if ((e.buttons & 2) === 2) { pending = { x: e.clientX, y: e.clientY }; return; }
+      setMenu({ x: e.clientX, y: e.clientY });
     };
-    const onMouseDown = (e) => { if (e.button === 2) rightZoomedRef.current = false; };
+    const onMouseUp = (e) => {
+      if (e.button !== 2) return;
+      if (pending && !rightZoomedRef.current) setMenu(pending);
+      pending = null;
+    };
+    const onMouseDown = (e) => { if (e.button === 2) { rightZoomedRef.current = false; pending = null; } };
 
     el.addEventListener('wheel', onWheel, { passive: false });
     el.addEventListener('contextmenu', onContextMenu);
@@ -1553,7 +1832,9 @@ export default function BattleMap({
     w.addEventListener('keydown', onKeyDown);
     w.addEventListener('keyup', onKeyUp);
     w.addEventListener('blur', onBlur);
+    w.addEventListener('mouseup', onMouseUp);
     return () => {
+      w.removeEventListener('mouseup', onMouseUp);
       el.removeEventListener('wheel', onWheel);
       el.removeEventListener('contextmenu', onContextMenu);
       el.removeEventListener('mousedown', onMouseDown);
@@ -1590,14 +1871,30 @@ export default function BattleMap({
      bare grid for the GM to paint. Nothing is asked first: it is additive
      where it grows, and `Expand deck` back to the old numbers puts it back —
      except where it SHRINKS, which drops squares, so that is confirmed. */
-  const growDeck = () => {
+  const expandDeck = () => {
     const plan = expandPlan(m, growCols, growRows);
+    if (!onChange) return;
+    /* THE DEFAULT GROWS FROM WHAT IS PAINTED. The painted deck stays where it
+       is and new rooms are built in the added space, each joined to the deck
+       and carrying its ground on. Repeating the deck (flipped or not) is still
+       here for the one case it suits, a deck designed to be tiled. */
+    if (growHow === 'grow' && !plan.shrinking) {
+      const out = buildAroundDeck(m, { cols: plan.cols, rows: plan.rows, style: genStyle, seed: genSeed.trim() || undefined });
+      setGenSeed(out.seed);
+      const g = out.map;
+      patch({ cols: g.cols, rows: g.rows, floor: g.floor, doors: g.doors, ground: g.ground });
+      setDeckMsg(`Built ${out.rooms} new room${out.rooms === 1 ? '' : 's'} off the painted deck (seed ${out.seed}).`);
+      return;
+    }
     if (plan.shrinking
       && !window.confirm(
         `${plan.cols}×${plan.rows} is smaller than this deck. Squares outside it are dropped.`)) {
       return;
     }
-    if (onChange) onChange(expandMap(m, growCols, growRows, { mirror: growMirror }));
+    remember(mapRef.current);
+    gestureRef.current = false;
+    onChange(expandMap(m, growCols, growRows, { mirror: growHow !== 'repeat' }));
+    setDeckMsg('');
   };
 
   /* Lays out a deck: compartments, the runs between them, and a door at
@@ -1609,12 +1906,46 @@ export default function BattleMap({
      touch is the ground, the calibration or the deck's name: those are the
      GM's, and a generator that reset them would be taking more than it was
      asked for. */
+  /* Lays terrain over the deck (or the whole grid) from the prompt and the
+     grounds ticked. One undoable step, and it says what it understood. */
+  const generateTerrainNow = () => {
+    const ticked = terrainPick || [...new Set([m.theme, ...customThemes.map((t) => t.id)])];
+    const out = generateTerrain({
+      map: m, grounds: allGrounds, palette: ticked, prompt: terrainPrompt,
+      seed: terrainSeed.trim() || undefined, size: terrainSize, scope: terrainScope
+    });
+    setTerrainSeed(out.seed);
+    if (out.empty) {
+      setTerrainNote('There is nothing to cover: the deck has no squares without terrain on them. Try \u201cOver the painted deck\u201d or \u201cThe whole grid\u201d.');
+      return;
+    }
+    const next = { ground: out.ground, obscuring: out.obscuring, cover: out.cover, hazards: out.hazards };
+    if (out.laid) next.floor = out.floor;
+    patch(next);
+    const c = out.counts;
+    setTerrainNote(
+      `Laid ${c.squares.toLocaleString()} squares in ${c.regions} regions from ${c.grounds} ground${c.grounds === 1 ? '' : 's'}`
+      + `${c.foliage ? `, ${c.foliage} of foliage` : ''}${c.cover ? `, ${c.cover} of cover` : ''}`
+      + `${c.hazards ? `, ${c.hazards} of hazard` : ''}${c.band ? ', and a ' + (terrainRead.band ? terrainRead.band.kind : 'band') : ''}. Seed ${out.seed}.`);
+  };
+
   const rollDeck = () => {
+    const seed = genSeed.trim() || newSeed();
+    /* With a deck already painted, the default is to build around it: the
+       generator fills the empty ground with rooms joined to what is there,
+       and nothing painted is touched. Replacing it is the other choice. */
+    if (Object.keys(m.floor).length && buildAround) {
+      const built = buildAroundDeck(m, { cols: m.cols, rows: m.rows, style: genStyle, seed });
+      setGenSeed(built.seed);
+      const g = built.map;
+      patch({ floor: g.floor, doors: g.doors, ground: g.ground });
+      setDeckMsg(`Built ${built.rooms} new room${built.rooms === 1 ? '' : 's'} around the painted deck (seed ${built.seed}).`);
+      return;
+    }
     if (Object.keys(m.floor).length
       && !window.confirm('Replace the deck with a generated one? The ground and calibration are kept.')) {
       return;
     }
-    const seed = genSeed.trim() || newSeed();
     const out = generateDeck({ cols: m.cols, rows: m.rows, style: genStyle, seed });
     setGenSeed(out.seed);
     patch({
@@ -1778,16 +2109,146 @@ export default function BattleMap({
     setGenOpen(false);
   };
 
+  // The whole deck, drawn into a canvas of its own: the one on screen is only
+  // the part in view. Scaled down so a very big deck stays a picture a browser
+  // will make rather than a canvas it refuses.
   const exportPng = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const a = document.createElement('a');
-    a.download = `boarding-map-${m.theme}.png`;
-    a.href = canvas.toDataURL('image/png');
-    a.click();
+    const doc = (win || window).document;
+    const scale = Math.min(1, 8000 / (Math.max(m.cols, m.rows) * px));
+    const c = doc.createElement('canvas');
+    c.width = Math.max(1, Math.round(m.cols * px * scale));
+    c.height = Math.max(1, Math.round(m.rows * px * scale));
+    paint(c.getContext('2d'), { left: 0, top: 0, width: c.width, height: c.height, zoom: scale });
+    const el = doc.createElement('a');
+    el.download = `boarding-map-${m.theme}.png`;
+    el.href = c.toDataURL('image/png');
+    el.click();
   };
 
+  /* ---- the right-click menu ----
+     The toolbar can be hidden for a clean map, and the map is then all there
+     is on the glass. A right click brings up the tools and what they need
+     without bringing the toolbar back: pick a tool, set its option (door kind,
+     brush, terrain, weapon…), switch fog, set the light, undo, turn, zoom.
+     Everything here is what the toolbar does, through the same handlers.
+
+     Every choice closes the menu; only a group's heading unfolds it. */
+  const doMenu = (fn) => () => { fn(); setMenu(null); };
+  const radio = (key, label, checked, run) => ({ key, label, checked, run });
+  const menuGroups = () => {
+    const out = [];
+    const add = (id, title, items) => out.push({
+      id, title, items, current: (items.find((i) => i.checked) || {}).label || ''
+    });
+    if (mode === 'stamp') {
+      add('tile', 'Tile', TILE_CATALOG.map((t) => radio(t.id, `${t.name} (${t.w}\u00d7${t.h})`, tileId === t.id, () => setTileId(t.id))));
+    }
+    if (['paint', 'erase', 'ground', 'obscure'].includes(mode)) {
+      add('brush', 'Brush size', [1, 2, 3, 5, 7, 10].map((n) => radio('b' + n, `${n}\u00d7${n}`, brush === n, () => setBrush(n))));
+    }
+    if (mode === 'ground') {
+      add('terrain', 'Terrain', [
+        radio('own', `This deck's ground (${theme.name}) \u2014 lifts paint`, paintGround === m.theme, () => setPaintGround(m.theme)),
+        ...allGrounds.filter((t) => t.id !== m.theme).map((t) => radio(t.id, t.name + (t.custom ? ' \u2605' : ''), paintGround === t.id, () => setPaintGround(t.id)))
+      ]);
+    }
+    if (mode === 'obscure') {
+      add('density', 'Density', OBSCURING.map((o) => radio(o.id, `${o.name} \u00b7 stops sight after ${o.blocksAfterM} m`, obscureType === o.id, () => setObscureType(o.id))));
+    }
+    if (mode === 'door') add('door', 'Door kind', DOOR_KINDS.map((d) => radio(d.id, `${d.name} \u00b7 AP ${d.ap}`, doorKind === d.id, () => setDoorKind(d.id))));
+    if (mode === 'cover') add('cover', 'Cover', COVER_TYPES.map((c) => radio(c.id, `${c.name} \u00b7 AP ${c.ap}`, coverType === c.id, () => setCoverType(c.id))));
+    if (mode === 'hazard') add('hazard', 'Hazard', HAZARD_TYPES.map((h) => radio(h.id, h.name, hazardType === h.id, () => setHazardType(h.id))));
+    if (mode === 'noise') add('noise', 'Sound', NOISE.map((n) => radio(n.id, `${n.name} \u00b7 heard to ${n.radiusM} m`, noiseKind === n.id, () => setNoiseKind(n.id))));
+    if (mode === 'marker') add('marker', 'Marker', MARKER_TYPES.map((t) => radio(t.id, t.name, markerType === t.id, () => setMarkerType(t.id))));
+    if (mode === 'contact') {
+      add('enc', 'Encounter', [
+        radio('none', '\u2014 none \u2014', !contactEnc, () => { setContactEnc(''); setContactHostile(''); }),
+        ...encounters.map((e) => radio(e.id, e.name || 'Untitled', contactEnc === e.id, () => { setContactEnc(e.id); setContactHostile(''); }))
+      ]);
+      const enc = encounters.find((e) => e.id === contactEnc);
+      if (enc) add('hostile', 'Hostile', (enc.hostiles || []).map((h, i) => radio('h' + i, h.name, contactHostile === String(i), () => setContactHostile(String(i)))));
+    }
+    if (mode === 'overlay' || mode === 'measure') {
+      add('weapon', 'Weapon', [
+        radio('none', 'No weapon', !weaponKey, () => setWeaponKey('')),
+        ...ARMED.map((a) => radio(a.key, `${a.label} \u00b7 ${a.kind}`, weaponKey === a.key, () => setWeaponKey(a.key)))
+      ]);
+    }
+    add('light', 'Light', LIGHTING_PRESETS.map((p) => radio(p.id, p.name, m.lighting === p.id, () => patch({ lighting: p.id }))));
+    return out;
+  };
+  const menuActions = () => {
+    const a = [];
+    if (mode === 'stamp') a.push({ key: 'rot', label: `Rotate the tile (now ${rotation}\u00b0)`, hint: 'R', run: () => setRotation((r) => (r + 90) % 360) });
+    if (mode === 'ground') {
+      a.push({
+        key: 'terrain', label: 'Procedural terrain\u2026', icon: 'ground',
+        run: () => { setGroundTab('terrain'); setGenOpen(true); setShowOptions(true); }
+      });
+    }
+    if (mode === 'fog') {
+      a.push({ key: 'reveal', label: 'Reveal everything', run: () => patch({ explored: allExplored() }) });
+      a.push({ key: 'hide', label: 'Hide everything', run: () => patch({ explored: {} }) });
+    }
+    if (mode === 'overlay') {
+      a.push({ key: 'bands', label: 'Range bands', checked: showRings, run: () => setShowRings((v) => !v) });
+      a.push({ key: 'los', label: 'Line of sight', checked: showLos, run: () => setShowLos((v) => !v) });
+      a.push({ key: 'clear', label: 'Clear the overlay', run: () => { originRef.current = null; setOrigin(null); setAim(null); } });
+    }
+    return a;
+  };
+  const menuItem = (i) => (
+    <button key={i.key} type="button" disabled={i.disabled}
+      role={i.checked === undefined ? 'menuitem' : 'menuitemcheckbox'} aria-checked={i.checked}
+      className={'rt-bm-menu-item' + (i.checked ? ' on' : '')} onClick={doMenu(i.run)}>
+      {i.icon ? <Icon name={i.icon} size={15} /> : <span className="rt-bm-menu-tick">{i.checked ? '\u2713' : ''}</span>}
+      <span>{i.label}</span>
+      {i.hint ? <kbd>{i.hint}</kbd> : null}
+    </button>
+  );
+
+  // Kept on the screen: opened low or at the right edge, it is moved back in.
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const el = menuRef.current;
+    if (!el) return;
+    const w = win || window;
+    const r = el.getBoundingClientRect();
+    setMenuAt({
+      x: Math.max(4, Math.min(menu.x, w.innerWidth - r.width - 4)),
+      y: Math.max(4, Math.min(menu.y, w.innerHeight - r.height - 4))
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menu, menuOpen]);
+
+  // A click elsewhere, Escape, or leaving the window closes it. The click that
+  // dismisses it on the map is not also a click on the map.
+  useEffect(() => {
+    if (!menu) return undefined;
+    const w = win || window;
+    const onDown = (e) => {
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      setMenu(null);
+      if (e.button === 0 && stageRef.current && stageRef.current.contains(e.target)) {
+        e.preventDefault(); e.stopPropagation();
+      }
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); setMenu(null); } };
+    const close = () => setMenu(null);
+    w.addEventListener('mousedown', onDown, true);
+    w.addEventListener('keydown', onKey);
+    w.addEventListener('blur', close);
+    w.addEventListener('resize', close);
+    return () => {
+      w.removeEventListener('mousedown', onDown, true);
+      w.removeEventListener('keydown', onKey);
+      w.removeEventListener('blur', close);
+      w.removeEventListener('resize', close);
+    };
+  }, [menu, win]);
+
   const bar = calibrationBar(m, { targetMm: 100 });
+  const tool = MODES.find((x) => x.id === mode) || MODES[0];
 
   return (
     <div className={'rt-bm' + (win ? ' rt-bm-win' : '')} style={{ position: 'relative' }}>
@@ -1796,7 +2257,7 @@ export default function BattleMap({
           title="Show the map options (H)">Options</button>
       )}
       {showOptions && (<>
-      <div className="rt-bm-bar">
+      <div className="rt-bm-bar rt-bm-top">
         <select value={m.theme}
           onChange={(e) => patch({ theme: e.target.value, customTexture: null })}>
           <optgroup label="Built in">
@@ -1808,76 +2269,155 @@ export default function BattleMap({
             </optgroup>
           )}
         </select>
-        <button type="button"
-          className={'rt-btn rt-bm-mode' + (genOpen ? ' on' : '')}
-          onClick={() => setGenOpen((v) => !v)}>
-          Ground{m.customTexture ? ' \u00b7 generated' : ''}
-        </button>
-        <button type="button"
-          className={'rt-btn rt-bm-mode' + (deckOpen ? ' on' : '')}
-          onClick={() => setDeckOpen((v) => !v)}>
-          Deck
-        </button>
-        {MODES.map((x) => (
-          <button key={x.id} type="button"
-            className={'rt-btn rt-bm-mode' + (mode === x.id ? ' on' : '')}
-            onClick={() => setMode(x.id)}>{x.label}</button>
-        ))}
-        {onSaveDeck && (<>
-          <select value={deckTarget} onChange={(e) => { setDeckTarget(e.target.value); setDeckNote(''); }}>
-            {/* Written as the character itself: a backslash-u escape in JSX
-                TEXT is not an escape, it is the six characters, and the GM
-                reads the backslash. */}
-            <option value="">Save as a new deck…</option>
-            {decks.map((d) => (
-              <option key={d.id} value={d.id}>Save over: {d.name || 'Untitled deck'}</option>
-            ))}
-          </select>
-          {!deckTarget && (
-            <input className="rt-field" value={deckName} maxLength={80}
-              placeholder="Name this deck"
-              onChange={(e) => setDeckName(e.target.value)} />
-          )}
-          <button type="button" className="rt-btn" onClick={() => {
-            const saved = onSaveDeck({ id: deckTarget || null, name: deckName, map: m });
-            if (saved) {
-              setDeckNote(`Saved to \u201c${saved.name}\u201d.`);
-              setDeckTarget(saved.id);
-              setDeckName('');
-            }
-          }}>Save deck</button>
-          {deckNote ? <span className="rt-bm-hint">{deckNote}</span> : null}
-        </>)}
-        {onLoadDeck && decks.length > 0 && (<>
-          <select value={loadId} onChange={(e) => setLoadId(e.target.value)}>
-            <option value="">Load a deck…</option>
-            {decks.map((d) => <option key={d.id} value={d.id}>{d.name || 'Untitled deck'}</option>)}
-          </select>
-          <button type="button" className="rt-btn" disabled={!loadId} onClick={loadChosenDeck}
-            title="Bring a saved deck onto the map. Undo takes it back.">Load deck</button>
-        </>)}
-        <button type="button" className="rt-btn" onClick={exportPng}>Export PNG</button>
-        <button type="button" className="rt-btn" onClick={clearAll}>Clear deck</button>
-        <button type="button" className="rt-btn" onClick={undo}
-          disabled={historyRef.current.past.length === 0}
-          title="Undo the last change (Cmd/Ctrl+Z)">Undo</button>
-        <button type="button" className="rt-btn" onClick={redo}
-          disabled={historyRef.current.future.length === 0}
-          title="Redo (Shift+Cmd/Ctrl+Z)">Redo</button>
-        <button type="button" className="rt-btn" onClick={() => rotateMapBy(-1)}
-          title="Turn what you have painted 90 degrees anticlockwise. The grid stays put. Hold R and Shift and click the map to do the same.">Rotate {'\u21BA'} 90{'\u00B0'}</button>
-        <button type="button" className="rt-btn" onClick={() => rotateMapBy(1)}
-          title="Turn what you have painted 90 degrees clockwise. The grid stays put. Hold R and click the map to do the same.">Rotate {'\u21BB'} 90{'\u00B0'}</button>
+
+        {/* Panels, folded away until wanted. */}
+        <div className="rt-bm-group" role="group" aria-label="Panels">
+          <button type="button"
+            className={'rt-btn rt-bm-mode' + (genOpen ? ' on' : '')}
+            onClick={() => setGenOpen((v) => !v)}>
+            Ground{m.customTexture ? ' · generated' : ''}
+          </button>
+          <button type="button"
+            className={'rt-btn rt-bm-mode' + (deckOpen ? ' on' : '')}
+            onClick={() => setDeckOpen((v) => !v)}>
+            Deck
+          </button>
+          <IconButton icon="save" label="Save and load decks" on={libOpen} onClick={() => setLibOpen((v) => !v)} />
+          <IconButton icon="grid" label="Grid, scale and light" on={gridOpen} onClick={() => setGridOpen((v) => !v)} />
+        </div>
+
+        {/* The tools: one icon each, the name in the tooltip, and the active
+            one named in the row of options below. */}
+        <div className="rt-bm-group" role="group" aria-label="Tools">
+          {MODES.map((x) => (
+            <IconButton key={x.id} icon={x.icon} label={x.label} on={mode === x.id}
+              onClick={() => setMode(x.id)} />
+          ))}
+        </div>
+
+        <div className="rt-bm-group" role="group" aria-label="View">
+          <IconButton icon="pan" label="Pan: drag the map to move it (or hold Space)" on={panOn}
+            onClick={() => setPanOn((v) => !v)} />
+          <IconButton icon="zoomOut" label="Zoom out" onClick={() => zoomAt(zoomRef.current / 1.25)} />
+          <button type="button" className="rt-ico-btn rt-ico-text" title="Back to 100%. Hold Z or the right button and scroll to zoom."
+            onClick={() => zoomAt(1)}>{Math.round(zoom * 100)}%</button>
+          <IconButton icon="zoomIn" label="Zoom in" onClick={() => zoomAt(zoomRef.current * 1.25)} />
+          <IconButton icon="fit" label="Fit the grid to the screen" onClick={fitToStage} />
+        </div>
+
+        <div className="rt-bm-group" role="group" aria-label="Edit">
+          <IconButton icon="undo" label="Undo (Cmd/Ctrl+Z)" onClick={undo}
+            disabled={historyRef.current.past.length === 0} />
+          <IconButton icon="redo" label="Redo (Shift+Cmd/Ctrl+Z)" onClick={redo}
+            disabled={historyRef.current.future.length === 0} />
+          <IconButton icon="rotateLeft" label="Turn what is painted 90° anticlockwise (R+Shift+click)" onClick={() => rotateMapBy(-1)} />
+          <IconButton icon="rotateRight" label="Turn what is painted 90° clockwise (R+click)" onClick={() => rotateMapBy(1)} />
+        </div>
+
+        <div className="rt-bm-group" role="group" aria-label="Deck">
+          <IconButton icon="download" label="Export the deck as a PNG" onClick={exportPng} />
+          <IconButton icon="trash" label="Clear the deck" onClick={clearAll} />
+        </div>
+
+        <div className="rt-bm-group" role="group" aria-label="Window">
+          <IconButton icon="hide" label="Hide the options for a clean map (H). Right-click the map for a menu." onClick={() => setShowOptions(false)} />
+          {win && (<>
+            <IconButton icon="full" label={isFull ? 'Leave full screen (F)' : 'Full screen (F)'} on={isFull} onClick={toggleFullscreen} />
+            <IconButton icon="present" label="Full screen with the options hidden, for the projector (P)" onClick={present} />
+          </>)}
+        </div>
         {turnNote ? <span className="rt-bm-hint">{turnNote}</span> : null}
-        <button type="button" className="rt-btn" onClick={() => setShowOptions(false)}
-          title="Hide every toolbar for a clean map. H brings them back.">Hide options (H)</button>
-        {win && (<>
-          <button type="button" className="rt-btn" onClick={toggleFullscreen}
-            title="Full screen. Esc leaves it.">{isFull ? 'Exit full screen (F)' : 'Full screen (F)'}</button>
-          <button type="button" className="rt-btn" onClick={present}
-            title="Full screen with the options hidden, for the projector. Esc leaves it.">Present (P)</button>
-        </>)}
       </div>
+
+      {libOpen && (
+        <div className="rt-bm-gen">
+          <div className="rt-sechead">
+            <h4>Save and load decks</h4>
+            <button type="button" className="rt-btn ghost" onClick={() => setLibOpen(false)}>Close</button>
+          </div>
+          <div className="rt-bm-bar">
+            {onSaveDeck && (<>
+              <select value={deckTarget} onChange={(e) => { setDeckTarget(e.target.value); setDeckNote(''); }}>
+                {/* Written as the character itself: a backslash-u escape in JSX
+                    TEXT is not an escape, it is the six characters, and the GM
+                    reads the backslash. */}
+                <option value="">Save as a new deck…</option>
+                {decks.map((d) => (
+                  <option key={d.id} value={d.id}>Save over: {d.name || 'Untitled deck'}</option>
+                ))}
+              </select>
+              {!deckTarget && (
+                <input className="rt-field" value={deckName} maxLength={80}
+                  placeholder="Name this deck"
+                  onChange={(e) => setDeckName(e.target.value)} />
+              )}
+              <button type="button" className="rt-btn" onClick={() => {
+                const saved = onSaveDeck({ id: deckTarget || null, name: deckName, map: m });
+                if (saved) {
+                  setDeckNote(`Saved to “${saved.name}”.`);
+                  setDeckTarget(saved.id);
+                  setDeckName('');
+                }
+              }}>Save deck</button>
+            </>)}
+            {onLoadDeck && decks.length > 0 && (<>
+              <select value={loadId} onChange={(e) => setLoadId(e.target.value)}>
+                <option value="">Load a deck…</option>
+                {decks.map((d) => <option key={d.id} value={d.id}>{d.name || 'Untitled deck'}</option>)}
+              </select>
+              <button type="button" className="rt-btn" disabled={!loadId} onClick={loadChosenDeck}
+                title="Bring a saved deck onto the map. Undo takes it back.">Load deck</button>
+            </>)}
+            {!onSaveDeck && !onLoadDeck && (
+              <span className="rt-bm-hint">This window cannot save decks. Open the map from the GM dashboard.</span>
+            )}
+            {deckNote ? <span className="rt-bm-hint">{deckNote}</span> : null}
+          </div>
+        </div>
+      )}
+
+      {gridOpen && (
+        <div className="rt-bm-gen">
+          <div className="rt-sechead">
+            <h4>Grid, scale and light</h4>
+            <button type="button" className="rt-btn ghost" onClick={() => setGridOpen(false)}>Close</button>
+          </div>
+          <div className="rt-bm-bar">
+            {num('Cols', m.cols, (v) => patch({ cols: v }), MIN_GRID, MAX_GRID)}
+            {num('Rows', m.rows, (v) => patch({ rows: v }), MIN_GRID, MAX_GRID)}
+            {num('Px / square', m.pxPerSquare, (v) => patch({ pxPerSquare: v }), 10, 200, 2)}
+            {num('mm / square', m.mmPerSquare, (v) => patch({ mmPerSquare: v }), 5, 100)}
+            {num('Metres / square', m.metresPerSquare, (v) => patch({ metresPerSquare: v }), 0.5, 10, 0.5)}
+            <label className="rt-bm-num"><span>Light</span>
+              <select value={m.lighting} onChange={(e) => patch({ lighting: e.target.value })}
+                title="Shooting in poor light carries a penalty to hit (Rogue Trader pp.248-249)">
+                {LIGHTING_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </label>
+            <label className="rt-bm-num">
+              <span>Zoom %</span>
+              {/* Typed, not picked: a GM matching the deck to a projector wants
+                  83%, not the nearest of eight. */}
+              <input type="number" value={zoomPct}
+                min={Math.round(MIN_ZOOM * 100)} max={Math.round(MAX_ZOOM * 100)} step={5}
+                onWheel={(e) => e.currentTarget.blur()}
+                onChange={(e) => {
+                  setZoomPct(e.target.value);
+                  if (e.target.value.trim() !== '') setZoom(clampZoom(Number(e.target.value) / 100));
+                }}
+                onBlur={() => setZoomPct(String(Math.round(zoom * 100)))} />
+            </label>
+            <label className="rt-bm-num"><input type="checkbox" checked={showZones}
+              onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
+            <label className="rt-bm-num"><input type="checkbox" checked={showCalibration}
+              onChange={(e) => setShowCalibration(e.target.checked)} /><span>Calibrate</span></label>
+          </div>
+          <p className="rt-bm-hint">
+            Up to {MAX_GRID}×{MAX_GRID} squares. Squares keep the size the projector was
+            calibrated to however big the grid is; zoom out to see it all.
+          </p>
+        </div>
+      )}
 
       {/* Laying out the deck, beside generating its ground: the two halves of
           "make me somewhere to fight", in one place. */}
@@ -1908,6 +2448,13 @@ export default function BattleMap({
             </label>
             <button type="button" className="rt-btn ghost"
               onClick={() => setGenSeed(newSeed())}>New seed</button>
+            {Object.keys(m.floor).length > 0 && (
+              <label className="rt-bm-num" title="Keep everything that is painted and build rooms around it. Untick to replace the deck.">
+                <input type="checkbox" checked={buildAround}
+                  onChange={(e) => setBuildAround(e.target.checked)} />
+                <span>Build around what is painted</span>
+              </label>
+            )}
             <button type="button" className="rt-btn" onClick={rollDeck}>
               Generate deck
             </button>
@@ -1928,11 +2475,14 @@ export default function BattleMap({
                 onChange={(e) => setGrowRows(e.target.value)} />
             </label>
             <label className="rt-bm-num">
-              <input type="checkbox" checked={growMirror}
-                onChange={(e) => setGrowMirror(e.target.checked)} />
-              <span>Mirror at the seams</span>
+              <span>How</span>
+              <select value={growHow} onChange={(e) => setGrowHow(e.target.value)}>
+                <option value="grow">Grow from what is painted</option>
+                <option value="repeat">Repeat the deck</option>
+                <option value="mirror">Repeat, flipped at the seams</option>
+              </select>
             </label>
-            <button type="button" className="rt-btn" onClick={growDeck}>
+            <button type="button" className="rt-btn" onClick={expandDeck}>
               Expand deck
             </button>
           </div>
@@ -1946,10 +2496,15 @@ export default function BattleMap({
                 return `${p.cols}×${p.rows} is smaller than this deck. `
                   + 'Anything outside the new grid is dropped.';
               }
+              if (growHow === 'grow') {
+                return `Grows the grid to ${p.cols}×${p.rows} and builds new rooms in the added space, `
+                  + 'each joined to your deck with a door where they meet, and carrying its ground on. '
+                  + 'What is painted does not move. Hostiles and fog are untouched.';
+              }
               if (p.copies <= 1) return `${p.cols}×${p.rows} holds one copy of this deck.`;
               return `${p.across}×${p.down} copies of the current ${m.cols}×${m.rows} deck`
                 + `${p.partial ? ', the last one cut short' : ''}`
-                + `${growMirror ? ', flipped at each seam so the runs meet' : ', repeated as-is'}.`
+                + `${growHow === 'mirror' ? ', flipped at each seam so the runs meet' : ', repeated as-is'}.`
                 + ' Hostiles and fog are not copied.';
             })()}
           </p>
@@ -1958,22 +2513,34 @@ export default function BattleMap({
             {styleById(genStyle).note} Laid out across the current
             {' '}{m.cols}×{m.rows} grid, with a door wherever a run meets a
             compartment — so one fog click reveals one room, not the deck.
-            Replaces the floor and the bulkheads; the ground, the calibration
-            and the deck's name are kept.
+            {Object.keys(m.floor).length > 0 && buildAround
+              ? ' Builds around what is painted: nothing there moves.'
+              : ' Replaces the floor and the bulkheads; the ground, the calibration and the deck\'s name are kept.'}
           </p>
+          {deckMsg ? <p className="rt-bm-hint" role="status">{deckMsg}</p> : null}
         </div>
       )}
 
       {genOpen && (
         <div className="rt-bm-gen">
           <div className="rt-sechead">
-            <h4>Generate a ground</h4>
+            <h4>Ground</h4>
             <button type="button" className="rt-btn ghost"
               onClick={() => {
                 setGenOpen(false); setPreview(null); setGenErr(''); closeCrop();
               }}>Close</button>
           </div>
 
+          <div className="rt-bm-bar" role="tablist" aria-label="Ground">
+            <button type="button" role="tab" aria-selected={groundTab === 'make'}
+              className={'rt-btn rt-bm-mode' + (groundTab === 'make' ? ' on' : '')}
+              onClick={() => setGroundTab('make')}>Generate or upload a ground</button>
+            <button type="button" role="tab" aria-selected={groundTab === 'terrain'}
+              className={'rt-btn rt-bm-mode' + (groundTab === 'terrain' ? ' on' : '')}
+              onClick={() => setGroundTab('terrain')}>Procedural terrain</button>
+          </div>
+
+          {groundTab === 'make' && (<>
           <label className="rt-bm-field">
             <span className="rt-der-k">The ground itself</span>
             <textarea rows={3} maxLength={MAX_DESCRIBE} value={genDescribe}
@@ -2132,11 +2699,69 @@ export default function BattleMap({
               </span>
             </div>
           </>)}
+          </>)}
+
+          {groundTab === 'terrain' && (<>
+            <label className="rt-bm-field">
+              <span className="rt-der-k">The terrain</span>
+              <textarea rows={3} maxLength={400} value={terrainPrompt}
+                placeholder="A flooded marsh with dry islands of scrub, a river cutting through it, ruins and rubble, patches of thick smoke"
+                onChange={(e) => setTerrainPrompt(e.target.value)} />
+            </label>
+            <p className="rt-bm-hint">
+              {terrainRead.notes.length
+                ? terrainRead.notes.join(' ')
+                : 'Name grounds (marsh, ice, jungle…), foliage, cover (ruins, crates, rocks), hazards (fire, toxic gas), a river or a road. Words like dense, sparse, wide, small, ragged and neat shape it.'}
+            </p>
+            <span className="rt-der-k">Grounds to use</span>
+            <div className="rt-bm-palette">
+              {allGrounds.map((g) => {
+                const ticked = terrainPick || [...new Set([m.theme, ...customThemes.map((t) => t.id)])];
+                const on = ticked.includes(g.id);
+                return (
+                  <label key={g.id} className={'rt-bm-chip' + (on ? ' on' : '')} title={g.custom ? 'A ground you saved (generated or uploaded)' : 'Built in'}>
+                    <input type="checkbox" checked={on}
+                      onChange={() => setTerrainPick(on ? ticked.filter((id) => id !== g.id) : [...ticked, g.id])} />
+                    <i style={{ background: g.fallback }} />
+                    <span>{g.name}{g.custom ? ' \u2605' : ''}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <p className="rt-bm-hint">
+              Every ground you have saved is here, whether it was generated or uploaded. A ground the
+              description names is used even if it is not ticked.
+            </p>
+            <div className="rt-bm-bar">
+              <label className="rt-bm-num"><span>Patches</span>
+                <select value={terrainSize} onChange={(e) => setTerrainSize(e.target.value)}>
+                  {TERRAIN_SIZES.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </select>
+              </label>
+              <label className="rt-bm-num"><span>Where</span>
+                <select value={terrainScope} onChange={(e) => setTerrainScope(e.target.value)}>
+                  {TERRAIN_SCOPES.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </select>
+              </label>
+              <label className="rt-bm-num"><span>Seed</span>
+                <input className="rt-field" value={terrainSeed} maxLength={24} placeholder="blank to roll"
+                  onChange={(e) => setTerrainSeed(e.target.value)} />
+              </label>
+              <button type="button" className="rt-btn ghost" onClick={() => setTerrainSeed(newSeed())}>New seed</button>
+              <button type="button" className="rt-btn" onClick={generateTerrainNow}>Generate terrain</button>
+            </div>
+            {terrainNote ? <p className="rt-bm-hint" role="status">{terrainNote}</p> : null}
+            <p className="rt-bm-hint">
+              Cuts the deck into regions the way the deck generator cuts rooms, gives each one a ground,
+              roughens the edges, then sows foliage, cover and hazards as described. Undo takes it back.
+            </p>
+          </>)}
         </div>
       )}
       {genErr ? <p className="rt-warn">{genErr}</p> : null}
 
-      <div className="rt-bm-bar">
+      <div className="rt-bm-bar rt-bm-opts">
+        <strong className="rt-bm-toolname"><Icon name={tool.icon} size={16} /> {tool.label}</strong>
         {mode === 'stamp' && (<>
           <select value={tileId} onChange={(e) => setTileId(e.target.value)}>
             {TILE_CATEGORIES.map((cat) => (
@@ -2165,6 +2790,8 @@ export default function BattleMap({
         {/* Which terrain the brush lays down. The deck's own ground is first
             and named as such, because picking it is how paint comes off. */}
         {mode === 'ground' && (<>
+          <button type="button" className="rt-btn" onClick={() => { setGroundTab('terrain'); setGenOpen(true); }}
+            title="Lay whole regions of terrain at once, from a description, using any ground you have">Procedural terrain…</button>
           <span className="rt-bm-hint">Paints new squares as well as existing ones.</span>
           <label className="rt-bm-num">
             <span>Terrain</span>
@@ -2355,43 +2982,6 @@ export default function BattleMap({
         </div>
       )}
 
-      <div className="rt-bm-bar">
-        {num('Cols', m.cols, (v) => patch({ cols: v }), 5, 100)}
-        {num('Rows', m.rows, (v) => patch({ rows: v }), 5, 100)}
-        {num('Px / square', m.pxPerSquare, (v) => patch({ pxPerSquare: v }), 10, 200, 2)}
-        {num('mm / square', m.mmPerSquare, (v) => patch({ mmPerSquare: v }), 5, 100)}
-        {num('Metres / square', m.metresPerSquare, (v) => patch({ metresPerSquare: v }), 0.5, 10, 0.5)}
-        <label className="rt-bm-num"><span>Light</span>
-          <select value={m.lighting} onChange={(e) => patch({ lighting: e.target.value })}
-            title="Shooting in poor light carries a penalty to hit (Rogue Trader pp.248-249)">
-            {LIGHTING_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </label>
-        <button type="button" className="rt-btn" onClick={fitToStage}>Fit to screen</button>
-        <label className="rt-bm-num">
-          <span>Zoom %</span>
-          {/* Typed, not picked: a GM matching the deck to a projector wants
-              83%, not the nearest of eight. Holding Z or the right button
-              and turning the wheel over the map does the same thing for the
-              cases where a number is not what you have in mind. */}
-          <input type="number" value={zoomPct}
-            min={Math.round(MIN_ZOOM * 100)} max={Math.round(MAX_ZOOM * 100)} step={5}
-            onWheel={(e) => e.currentTarget.blur()}
-            onChange={(e) => {
-              setZoomPct(e.target.value);
-              if (e.target.value.trim() !== '') setZoom(clampZoom(Number(e.target.value) / 100));
-            }}
-            onBlur={() => setZoomPct(String(Math.round(zoom * 100)))} />
-        </label>
-        <button type="button" className="rt-btn"
-          onClick={() => { setZoom(1); setZoomPct('100'); }}>100%</button>
-        <span className="rt-bm-hint">Zoom: hold Z or the right button and scroll, or pinch.</span>
-        <label className="rt-bm-num"><input type="checkbox" checked={showZones}
-          onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
-        <label className="rt-bm-num"><input type="checkbox" checked={showCalibration}
-          onChange={(e) => setShowCalibration(e.target.checked)} /><span>Calibrate</span></label>
-      </div>
-
       {showCalibration && (
         <div className="rt-bm-measure">
           Lay a ruler on the table across the white bar and adjust <strong>px / square</strong> until
@@ -2423,7 +3013,7 @@ export default function BattleMap({
           onMouseMove={(e) => {
             const pos = posFromEvent(e);
             setHover(pos);
-            if (spaceRef.current || rHeldRef.current) return;   // panning, or turning the map
+            if (spaceRef.current || panOnRef.current || rHeldRef.current) return;   // panning, or turning the map
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure')) {
               applyAt(pos, true);
             }
@@ -2439,17 +3029,56 @@ export default function BattleMap({
             }
             if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
           }}
-          style={{
-            cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer',
-            transform: zoom === 1 ? undefined : `scale(${zoom})`,
-            transformOrigin: 'top left',
-            // Nearest-neighbour when magnified: a deck zoomed in should show
-            // its squares, not a blurred guess at them.
-            imageRendering: zoom > 1 ? 'pixelated' : undefined
-          }}
+          style={{ cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
         />
         </div>
       </div>
+
+      {menu && (
+        <div className="rt-bm-menu" ref={menuRef} role="menu" aria-label="Map menu"
+          style={{ left: menuAt.x, top: menuAt.y }}
+          onContextMenu={(e) => e.preventDefault()}>
+          <div className="rt-bm-menu-h">Tool</div>
+          <div className="rt-bm-menu-tools">
+            {MODES.map((x) => (
+              <button key={x.id} type="button" role="menuitemradio" aria-checked={mode === x.id}
+                className={'rt-bm-menu-tool' + (mode === x.id ? ' on' : '')}
+                onClick={doMenu(() => setMode(x.id))}>
+                <Icon name={x.icon} size={16} /><span>{x.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="rt-bm-menu-sep" />
+          {menuActions().map(menuItem)}
+          {menuGroups().map((g) => (
+            <div key={g.id} className="rt-bm-menu-group">
+              <button type="button" className="rt-bm-menu-item head" aria-expanded={menuOpen === g.id}
+                onClick={() => setMenuOpen(menuOpen === g.id ? null : g.id)}>
+                <span className="rt-bm-menu-tick">{menuOpen === g.id ? '\u25BE' : '\u25B8'}</span>
+                <span>{g.title}</span>
+                <em>{g.current}</em>
+              </button>
+              {menuOpen === g.id && <div className="rt-bm-menu-list">{g.items.map(menuItem)}</div>}
+            </div>
+          ))}
+          {menuItem({ key: 'fog', label: 'Fog of war', checked: m.fog, run: () => patch({ fog: !m.fog }) })}
+          <div className="rt-bm-menu-sep" />
+          <div className="rt-bm-menu-icons">
+            <IconButton icon="undo" label="Undo" onClick={doMenu(undo)} disabled={historyRef.current.past.length === 0} />
+            <IconButton icon="redo" label="Redo" onClick={doMenu(redo)} disabled={historyRef.current.future.length === 0} />
+            <IconButton icon="rotateLeft" label="Turn what is painted 90° anticlockwise" onClick={doMenu(() => rotateMapBy(-1))} />
+            <IconButton icon="rotateRight" label="Turn what is painted 90° clockwise" onClick={doMenu(() => rotateMapBy(1))} />
+            <IconButton icon="pan" label="Pan tool" on={panOn} onClick={doMenu(() => setPanOn((v) => !v))} />
+            <IconButton icon="zoomOut" label="Zoom out" onClick={doMenu(() => zoomAt(zoomRef.current / 1.25))} />
+            <IconButton icon="zoomIn" label="Zoom in" onClick={doMenu(() => zoomAt(zoomRef.current * 1.25))} />
+            <IconButton icon="fit" label="Fit the grid to the screen" onClick={doMenu(fitToStage)} />
+          </div>
+          <div className="rt-bm-menu-sep" />
+          {menuItem({ key: 'opts', label: showOptions ? 'Hide the options' : 'Show the options', hint: 'H', icon: showOptions ? 'hide' : 'show', run: () => setShowOptions((v) => !v) })}
+          {win && menuItem({ key: 'full', label: isFull ? 'Leave full screen' : 'Full screen', hint: 'F', icon: 'full', run: toggleFullscreen })}
+          {win && menuItem({ key: 'present', label: 'Present', hint: 'P', icon: 'present', run: present })}
+        </div>
+      )}
 
     </div>
   );

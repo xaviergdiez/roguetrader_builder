@@ -10,7 +10,7 @@ import {
 import MapWindow from './MapWindow.jsx';
 import {
   readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap,
-  readCustomTheme, readSavedMap
+  readCustomTheme, readSavedMap, packCombat, combatSansMap
 } from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId, sameNamed,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
@@ -1923,6 +1923,52 @@ const CSS = `
 .rt-bm-peek{position:absolute;top:8px;right:18px;z-index:5;opacity:.1;
   transition:opacity .15s;}
 .rt-bm-peek:hover,.rt-bm-peek:focus{opacity:1;}
+/* ---- the toolbar's icon buttons ---- */
+.rt-ico{display:block;flex:0 0 auto;}
+.rt-ico-btn{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+  width:34px;height:34px;padding:0;color:var(--gold-lit);border:1px solid var(--brass-dim);
+  background:linear-gradient(180deg,var(--panel-lit),var(--panel));
+  transition:color .14s,border-color .14s,filter .14s;}
+.rt-ico-btn:hover:not(:disabled){border-color:var(--brass-lit);color:var(--bone);filter:brightness(1.2);}
+.rt-ico-btn.on{background:var(--brass);color:#2a1d04;border-color:var(--brass);}
+.rt-ico-btn:disabled{opacity:.3;cursor:default;}
+.rt-ico-btn:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--gold);}
+.rt-ico-text{width:auto;min-width:50px;padding:0 6px;font-family:var(--mono);font-size:11px;letter-spacing:.04em;}
+.rt-bm-top{row-gap:6px;}
+.rt-bm-group{display:flex;flex-wrap:wrap;gap:3px;align-items:center;padding-right:8px;
+  border-right:1px solid var(--brass-dim);}
+.rt-bm-group:last-of-type{border-right:0;}
+.rt-bm-toolname{display:inline-flex;align-items:center;gap:6px;font-family:var(--display);
+  font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass-lit);}
+/* The grounds a procedural terrain may use. */
+.rt-bm-palette{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px;}
+.rt-bm-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px 3px 6px;
+  border:1px solid var(--brass-dim);font-size:12px;cursor:pointer;background:var(--well);}
+.rt-bm-chip.on{border-color:var(--brass-lit);background:var(--panel-lit);}
+.rt-bm-chip input{margin:0;}
+.rt-bm-chip i{width:12px;height:12px;border:1px solid rgba(255,255,255,.25);display:inline-block;}
+/* ---- the right-click menu ---- */
+.rt-bm-menu{position:fixed;z-index:60;min-width:250px;max-width:340px;max-height:calc(100vh - 8px);
+  overflow-y:auto;padding:6px;background:var(--panel);border:1px solid var(--brass);
+  box-shadow:0 8px 28px rgba(0,0,0,.6);font-size:12.5px;color:var(--text);}
+.rt-bm-menu-h{font-family:var(--display);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--brass-lit);padding:2px 6px 4px;}
+.rt-bm-menu-tools{display:grid;grid-template-columns:1fr 1fr;gap:2px;}
+.rt-bm-menu-tool,.rt-bm-menu-item{display:flex;align-items:center;gap:7px;width:100%;text-align:left;
+  padding:5px 7px;color:var(--text);background:transparent;border:1px solid transparent;
+  cursor:pointer;font:inherit;}
+.rt-bm-menu-tool:hover,.rt-bm-menu-item:hover:not(:disabled){background:var(--panel-lit);
+  border-color:var(--brass-dim);}
+.rt-bm-menu-tool.on,.rt-bm-menu-item.on{color:var(--gold-lit);}
+.rt-bm-menu-tool.on{background:var(--brass-deep);border-color:var(--brass);}
+.rt-bm-menu-item:disabled{opacity:.35;cursor:default;}
+.rt-bm-menu-item kbd{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--dim);}
+.rt-bm-menu-item em{margin-left:auto;font-style:normal;font-size:11px;color:var(--dim);max-width:130px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rt-bm-menu-tick{display:inline-block;width:15px;text-align:center;flex:0 0 auto;}
+.rt-bm-menu-sep{height:1px;margin:5px 2px;background:var(--brass-dim);}
+.rt-bm-menu-list{max-height:240px;overflow-y:auto;margin:0 0 2px 14px;border-left:1px solid var(--brass-dim);}
+.rt-bm-menu-icons{display:flex;flex-wrap:wrap;gap:3px;padding:2px 0;}
 /* Space held over the map: it pans instead of painting. */
 .rt-bm-stage.pan-ready canvas{cursor:grab !important;}
 .rt-bm-stage.panning canvas{cursor:grabbing !important;}
@@ -1935,14 +1981,17 @@ const CSS = `
    to the bottom of the screen, which is the only thing that knows what is
    above it in the dialog or in its own window. */
 .rt-bm-stage{overflow:auto;height:58vh;border:1px solid var(--brass);
-  background:#05070a;padding:4px;}
+  background:#05070a;padding:0;}
 /* The map's own window wears .rt-root to pick up the custom properties every
    rule here reads, but not the atmosphere that comes with it: the vignette
    would darken the corners of a deck that is being projected onto a table,
    and the layered background would show through the grid. */
 .rt-mapwin{min-height:0;background:#05070a;}
 .rt-mapwin::after{content:none;}
-.rt-bm-stage canvas{display:block;max-width:none;}
+/* The canvas is a window onto the deck, not the deck: it sticks to the
+   top-left of whatever is scrolled into view and is redrawn for it. The
+   wrapper beside it holds the scrollable size. */
+.rt-bm-stage canvas{display:block;max-width:none;position:sticky;top:0;left:0;}
 .rt-bm-measure{font-family:var(--mono);font-size:11px;padding:6px 8px;margin-bottom:8px;
   border:1px solid var(--brass);background:rgba(212,175,55,.08);}
 .rt-bm-measure.blocked{border-color:#e74c3c;background:rgba(231,76,60,.12);}
@@ -2934,14 +2983,18 @@ export default function RogueTraderBuilder({ me, cloud }) {
      Has to sit BELOW `combat`: activeMap reads it while rendering, and read
      above its own declaration it is a dead zone, which took the whole app
      down rather than just the map. */
-  const decksForMap = readMapLibrary(homebrew && homebrew.battlemaps);
+  // Memoised on the stored list: a big saved deck is stored packed, and
+  // unpacking it on every render of this component would be most of what it
+  // did.
+  const decksForMap = useMemo(
+    () => readMapLibrary(homebrew && homebrew.battlemaps), [homebrew && homebrew.battlemaps]);
   const [deckId, setDeckId] = useState(null);
   const [mapView, setMapView] = useState('design');
   const activeDeck = decksForMap.find((d) => d.id === deckId) || null;
   const designing = mapView === 'design' && activeDeck;
-  const activeMap = designing
-    ? activeDeck.map
-    : readBattleMap((combat && combat.ground && combat.ground.map) || null);
+  const liveMapRaw = (combat && combat.ground && combat.ground.map) || null;
+  const liveMap = useMemo(() => readBattleMap(liveMapRaw), [liveMapRaw]);
+  const activeMap = designing ? activeDeck.map : liveMap;
   // What the map's undo history belongs to: one deck's own, or the live map's.
   const activeMapKey = designing ? activeDeck.id : 'live';
   const setActiveMap = (next) => {
@@ -3032,7 +3085,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
           name, gender, background, sel, choices, rolls, woundRoll, fateRoll, damage, woundBonus, avatar, extras,
           fateAdj, profitAdj, corruption, insanity, spentAdj, psyRating, xp, stepIx,
-          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat, bridgeCode
+          finalTotals, finalWounds, finalFate, pointAlloc, blueprint, shipRole, fleet, combat: packCombat(combat), bridgeCode
         }));
       } catch { /* quota, most likely a large portrait — the build continues in memory */ }
     }, 400);
@@ -3847,7 +3900,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               /* And a way to keep the work. This window is often the only one
                  open during a session, and until now everything built in it
                  lived on the live map with no road into the library. */
-              decks={readMapLibrary(homebrew && homebrew.battlemaps)}
+              decks={decksForMap}
               onSaveDeck={saveLiveDeck}
               onLoadDeck={loadDeckOntoMap}
             />
@@ -6656,7 +6709,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const push = () => run(async () => {
     const r = await writeBridge({
       code,
-      doc: { blueprint, fleet, combat },
+      doc: { blueprint, fleet, combat: packCombat(combat) },
       vitals: combat.playerVitals || newVitals(blueprint),
       log: 'The GM updated the bridge.'
     });
@@ -7999,6 +8052,16 @@ function shipProfile(ship, blueprint, custom, context = {}) {
   };
 }
 
+// A number per distinct map object, so two states can be compared for "is the
+// map the same one" without reading it.
+const MAP_STAMPS = new WeakMap();
+let mapStampSeq = 0;
+function mapStamp(map) {
+  if (!map || typeof map !== 'object') return 0;
+  if (!MAP_STAMPS.has(map)) MAP_STAMPS.set(map, ++mapStampSeq);
+  return MAP_STAMPS.get(map);
+}
+
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
   grounds, onSaveGround, onNeedGroundTexture, groundErr,
@@ -8102,14 +8165,15 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
      where — the models do that, and the ground-combat board holds their
      Wounds and conditions as it already did. */
   const groundState = (combat && combat.ground) || {};
-  const battleMap = readBattleMap(groundState.map);
+  const battleMap = useMemo(() => readBattleMap(groundState.map), [groundState.map]);
   const setBattleMap = (next) => setCombat({
     ...combat,
     ground: { ...groundState, npcs: groundState.npcs || [], map: next }
   });
   // The window itself is owned by the component above, so neither switching
   // tabs nor closing this dashboard shuts the map the table is playing on.
-  const decks = readMapLibrary(homebrew && homebrew.battlemaps);
+  const decks = useMemo(
+    () => readMapLibrary(homebrew && homebrew.battlemaps), [homebrew && homebrew.battlemaps]);
   const saveDecks = (list) => setHomebrew({ ...(homebrew || {}), battlemaps: list });
   const putDeck = (d) => saveDecks(decks.map((x) => (x.id === d.id ? d : x)));
   const deck = decks.find((d) => d.id === deckId) || null;
@@ -8210,7 +8274,10 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   useEffect(() => {
     if (!bridgeCode) return undefined;
 
-    const snapshot = JSON.stringify({ fleet, combat });
+    // The map is compared by identity, not by content: stringifying a big
+    // one on every paint stroke would cost more than the stroke did.
+    const snapshot = JSON.stringify({ fleet, combat: combatSansMap(combat) })
+      + '|' + mapStamp(combat && combat.ground && combat.ground.map);
     // Opening the panel is not a change. Remember what was there and send
     // nothing until it differs.
     if (lastSent.current === null) { lastSent.current = snapshot; return undefined; }
@@ -8219,7 +8286,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     const t = setTimeout(() => {
       writeBridge({
         code: bridgeCode,
-        doc: { fleet, combat },
+        doc: { fleet, combat: packCombat(combat) },
         vitals: combat.playerVitals || newVitals(blueprint),
         log: logRef.current
       }).then((r) => {

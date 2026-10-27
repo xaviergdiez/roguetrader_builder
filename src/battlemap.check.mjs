@@ -1701,3 +1701,98 @@ console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   assert.equal(grown.obscuring['7,1'], 'light', 'the second copy carries its foliage');
 }
 console.log('battlemap.check.mjs: rotation passed');
+
+/* ---- big decks: packed storage and clean layers ---- */
+{
+  const { readMap, packMap, packLayer, packCombat, combatSansMap, paintCells, keepClean, MAX_GRID, packMapLibrary } =
+    await import('./battlemap.js');
+  assert.equal(MAX_GRID, 500, 'a deck may be 500 squares across');
+
+  const floor = {};
+  const ground = {};
+  for (let x = 0; x < 120; x++) for (let y = 0; y < 90; y++) { floor[`${x},${y}`] = true; if (x > 60) ground[`${x},${y}`] = 'ice'; }
+  floor['3,3'] = undefined; delete floor['3,3'];            // a hole in a run
+  const m = readMap({
+    cols: 150, rows: 100, floor, ground,
+    doors: { '5,5': { kind: 'hatch', state: 'open' } },
+    cover: { '7,7': 'crates' }, explored: { '1,1': true, '2,1': true }
+  });
+
+  // packed, it is a fraction of the size and comes back exactly
+  const packed = packMap(m);
+  assert.equal(packed.floor.rle, 1, 'a dense layer is packed');
+  assert.ok(Array.isArray(packed.floor.runs));
+  assert.deepEqual(packed.cover, m.cover, 'a handful of squares stays as it is');
+  assert.deepEqual(packed.doors, m.doors);
+  const plainBytes = JSON.stringify(m).length;
+  const packedBytes = JSON.stringify(packed).length;
+  assert.ok(packedBytes < plainBytes / 20, `packed ${packedBytes} bytes, plain ${plainBytes}`);
+  const back = readMap(JSON.parse(JSON.stringify(packed)));
+  assert.deepEqual(back.floor, m.floor, 'floor round-trips');
+  assert.deepEqual(back.ground, m.ground, 'ground round-trips');
+  assert.deepEqual(back.doors, m.doors);
+  assert.deepEqual(back.cover, m.cover);
+  assert.deepEqual(back.explored, m.explored);
+  assert.equal(back.cols, 150);
+
+  // a deck saved before packing existed still opens
+  assert.deepEqual(readMap({ cols: 10, rows: 10, floor: { '1,1': true } }).floor, { '1,1': true });
+  // a hostile packed layer is bounded, not trusted
+  const evil = readMap({ cols: 10, rows: 10, floor: { rle: 1, vals: [true], runs: [0, 0, 99999999, 0, -5, 0, 4, 0, 'x', 1, 2, 0] } });
+  assert.ok(Object.keys(evil.floor).length <= MAX_GRID, 'a runaway run is clamped to the largest grid');
+  assert.deepEqual(readMap({ cols: 10, rows: 10, floor: { rle: 1, vals: [], runs: [0, 0, 3, 0] } }).floor, {}, 'a run with no value is dropped');
+  assert.deepEqual(packLayer({}), { rle: 1, vals: [], runs: [] });
+
+  // valued layers keep their values
+  const vals = packLayer({ '0,0': 'a', '1,0': 'a', '2,0': 'b', '0,1': 'a' });
+  assert.deepEqual(vals.vals, ['a', 'b']);
+  assert.deepEqual(vals.runs, [0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0], 'runs are differences, not positions');
+
+  // packing is remembered per map, and a library packs entry by entry
+  assert.equal(packMap(m), packed, 'the same map is packed once');
+  const lib = packMapLibrary([{ id: 'a', name: 'A', map: m }, { id: 'b', name: 'No map yet' }]);
+  assert.equal(lib[0].map.floor.rle, 1);
+  assert.deepEqual(lib[1], { id: 'b', name: 'No map yet' }, 'an entry with no map is left as it was');
+
+  // the combat state: packed for the wire, compared without the map
+  const combat = { phase: 'x', ground: { npcs: [{ id: 1 }], map: m } };
+  assert.equal(packCombat(combat).ground.map.floor.rle, 1);
+  assert.equal(packCombat(combat).ground.npcs[0].id, 1);
+  assert.equal(combatSansMap(combat).ground.map, undefined);
+  assert.deepEqual(combatSansMap({ phase: 'x' }), { phase: 'x' });
+  assert.equal(packCombat(null), null);
+
+  // clean layers are handed straight back, so reading a map costs what changed
+  assert.equal(readMap(m).floor, m.floor, 'a layer already read is not read again');
+  const next = readMap({ ...m, floor: paintCells(m.floor, [{ x: 140, y: 95 }], true) });
+  assert.equal(next.ground, m.ground, 'untouched layers keep their identity');
+  assert.ok(next.floor['140,95'] && !m.floor['140,95'], 'and the painted one is new');
+  // a layer the caller built by hand is still checked
+  const dirty = readMap({ cols: 10, rows: 10, floor: { '1,1': true, 'junk': true, '2,2': false } });
+  assert.deepEqual(dirty.floor, { '1,1': true });
+  assert.equal(keepClean({}, { a: 1 }).a, 1);
+}
+console.log('battlemap.check.mjs: big decks passed');
+{
+  // random layers survive packing exactly, whatever shape they are
+  const { readMap, packMap } = await import('./battlemap.js');
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  for (let trial = 0; trial < 20; trial++) {
+    const floor = {}, ground = {}, cover = {};
+    const density = rnd();
+    for (let x = 0; x < 80; x++) for (let y = 0; y < 60; y++) {
+      if (rnd() < density) { floor[`${x},${y}`] = true; if (rnd() < 0.4) ground[`${x},${y}`] = rnd() < 0.5 ? 'ice' : 'desert'; }
+      if (rnd() < 0.05) cover[`${x},${y}`] = rnd() < 0.5 ? 'crates' : 'low';
+    }
+    const m = readMap({ cols: 80, rows: 60, floor, ground, cover });
+    const back = readMap(JSON.parse(JSON.stringify(packMap(m))));
+    assert.deepEqual(back.floor, m.floor, `trial ${trial}: floor`);
+    assert.deepEqual(back.ground, m.ground, `trial ${trial}: ground`);
+    assert.deepEqual(back.cover, m.cover, `trial ${trial}: cover`);
+  }
+  // squares on the very last row and column of the largest grid
+  const edge = readMap({ cols: 500, rows: 500, floor: { '499,499': true, '0,499': true, '499,0': true, '0,0': true } });
+  assert.deepEqual(readMap(JSON.parse(JSON.stringify(packMap({ ...edge, floor: Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`${400 + (i % 100)},499`, true])) })))).floor['499,499'], true);
+}
+console.log('battlemap.check.mjs: pack round trips passed');

@@ -1943,6 +1943,18 @@ const CSS = `
    distortion this panel invented. */
 .rt-bm-preview{height:284px;border:1px solid var(--brass);margin-bottom:8px;
   background-repeat:repeat;background-size:142px 142px;}
+/* The upload crop window. The picture is dragged UNDER a fixed square, so
+   the frame is what stays still and overflow is clipped to it — what you see
+   inside the border is exactly the square that gets cut. */
+.rt-bm-cropbar{align-items:flex-start;gap:12px;}
+.rt-bm-crop{position:relative;overflow:hidden;flex:0 0 auto;
+  border:1px solid var(--brass);background:#05070a;
+  cursor:grab;touch-action:none;user-select:none;}
+.rt-bm-crop:active{cursor:grabbing;}
+.rt-bm-crop img{position:absolute;left:0;top:0;max-width:none;
+  pointer-events:none;-webkit-user-drag:none;}
+.rt-bm-cropside{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.rt-bm-cropside input[type=range]{width:160px;}
 /* A section heading that carries its own action, so the field below it can
    run the full width of the panel and line up with every other one. */
 .rt-sechead{display:flex;align-items:center;justify-content:space-between;

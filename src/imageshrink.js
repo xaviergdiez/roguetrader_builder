@@ -26,18 +26,32 @@ export async function shrinkToDataUrl(blob, max = 768, quality = 0.82) {
    512 is not a guess: a floor TILES, so one copy already spans a dozen
    squares at a normal zoom, and the library it is stored in has a real byte
    ceiling. */
-export async function prepareTexture(blob, { max = 512, quality = 0.75, square = true } = {}) {
+export async function prepareTexture(blob, { max = 512, quality = 0.75, square = true, rect = null } = {}) {
   const bitmap = await createImageBitmap(blob);
   const sw = bitmap.width;
   const sh = bitmap.height;
 
-  // The middle is the part someone framed; the edges are where the letterbox
-  // and the stray caption live.
+  /* `rect` is the square the GM dragged to, in source pixels (see
+     texturecrop.js). Without one the middle is taken, which is what this did
+     before the crop window existed and is still the right default — the
+     middle is the part someone framed, and the edges are where the letterbox
+     and the stray caption live.
+
+     Held inside the image here as well as there. This is the last point
+     before the canvas, and drawImage given a source rect that hangs over the
+     edge pads it with transparent, which then tiles across the whole deck. */
   const side = Math.min(sw, sh);
-  const sx = square ? Math.round((sw - side) / 2) : 0;
-  const sy = square ? Math.round((sh - side) / 2) : 0;
-  const cw = square ? side : sw;
-  const ch = square ? side : sh;
+  const r = rect && square ? {
+    size: Math.max(1, Math.min(side, Math.round(rect.size) || side)),
+    sx: Math.round(rect.sx) || 0,
+    sy: Math.round(rect.sy) || 0
+  } : null;
+  const sx = r ? Math.max(0, Math.min(sw - r.size, r.sx))
+    : square ? Math.round((sw - side) / 2) : 0;
+  const sy = r ? Math.max(0, Math.min(sh - r.size, r.sy))
+    : square ? Math.round((sh - side) / 2) : 0;
+  const cw = r ? r.size : square ? side : sw;
+  const ch = r ? r.size : square ? side : sh;
 
   const scale = Math.min(1, max / Math.max(cw, ch));
   const w = Math.max(1, Math.round(cw * scale));

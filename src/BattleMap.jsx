@@ -14,6 +14,7 @@ import {
 } from './battlemap.js';
 import { GEAR } from './gear.js';
 import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
+import { centreCrop, cropRect, dragBy, zoomTo, scaleBounds } from './texturecrop.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
 /* The boarding map, projected under physical miniatures.
@@ -26,6 +27,11 @@ import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
    Everything numeric lives in battlemap.js and is checked there. This file
    is the canvas and the controls. */
+
+/* The crop window's side, in CSS pixels. A display size, not the stored one:
+   the tile is written at 512 whatever this is. Big enough to judge what is
+   in the square, small enough to sit in the panel beside its controls. */
+const CROP_BOX = 240;
 
 const MODES = [
   { id: 'stamp', label: 'Stamp tile' },
@@ -319,6 +325,10 @@ export default function BattleMap({
   const [uploadNote, setUploadNote] = useState('');
   const [cropSquare, setCropSquare] = useState(true);
   const fileRef = useRef(null);
+  // The picture being positioned under the crop window, or null when there
+  // is none: { file, url, imgW, imgH, box, scale, x, y }.
+  const [crop, setCrop] = useState(null);
+  const dragRef = useRef(null);
   const [hover, setHover] = useState(null);
 
   const [weaponKey, setWeaponKey] = useState('lasgun');
@@ -1111,19 +1121,51 @@ export default function BattleMap({
      Cropped and recompressed to match the shipped floors, and SAID so: the
      two files people reach for are a photo and a screenshot, and both are
      the wrong shape for something that tiles. */
-  const uploadGround = async (file) => {
+  const uploadGround = (file) => {
     if (!file) return;
-    setGenErr(''); setUploadNote(''); setGenBusy(true);
+    setGenErr(''); setUploadNote('');
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const advice = textureAdvice({ width: img.naturalWidth, height: img.naturalHeight });
+      if (!advice.ok) { URL.revokeObjectURL(url); setGenErr(advice.message); return; }
+      setUploadNote(advice.message);
+      // Opens on the middle, which is where the old centre-crop took it from.
+      // Pressing straight through gives the tile this gave before it could
+      // be dragged at all.
+      setCrop({ file, url, ...centreCrop(img.naturalWidth, img.naturalHeight, CROP_BOX) });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); setGenErr('Could not read that image.'); };
+    img.src = url;
+  };
+
+  /* The object URL is the browser holding the whole file in memory for us.
+     Dropped here rather than on unmount alone, because a GM trying four
+     photographs for one floor would otherwise be holding all four. */
+  const closeCrop = () => setCrop((c) => {
+    if (c) URL.revokeObjectURL(c.url);
+    return null;
+  });
+
+  const recentre = (c) => ({ ...c, ...centreCrop(c.imgW, c.imgH, c.box) });
+
+  /* Cuts the chosen square and hands it to the same preview a generated
+     floor lands in, so both are judged tiled and saved by the same button. */
+  const commitCrop = async () => {
+    if (!crop) return;
+    setGenErr(''); setGenBusy(true);
     try {
-      const out = await prepareTexture(file, { square: cropSquare });
-      const advice = textureAdvice({ width: out.sourceWidth, height: out.sourceHeight });
-      if (!advice.ok) throw new Error(advice.message);
+      const out = await prepareTexture(crop.file, {
+        square: cropSquare,
+        // Unticked means take the file as it is, so there is no square to
+        // cut and the rect would be meaningless.
+        rect: cropSquare ? cropRect(crop) : null
+      });
       setPreview({ texture: out.dataUrl, numbers: await sampleNumbers(out.dataUrl) });
-      const cropped = cropSquare && out.sourceWidth !== out.sourceHeight;
       setUploadNote(
-        `${advice.message}${cropped ? ' Cropped to the middle.' : ''}`
-        + ` Stored at ${out.width}\u00d7${out.height}, ${Math.round(out.bytes / 1024)}KB.`
+        `Stored at ${out.width}\u00d7${out.height}, ${Math.round(out.bytes / 1024)}KB.`
       );
+      closeCrop();
     } catch (e) {
       setGenErr(e.message || 'Could not read that image.');
     } finally {
@@ -1250,7 +1292,9 @@ export default function BattleMap({
           <div className="rt-sechead">
             <h4>Generate a ground</h4>
             <button type="button" className="rt-btn ghost"
-              onClick={() => { setGenOpen(false); setPreview(null); setGenErr(''); }}>Close</button>
+              onClick={() => {
+                setGenOpen(false); setPreview(null); setGenErr(''); closeCrop();
+              }}>Close</button>
           </div>
 
           <label className="rt-bm-field">
@@ -1309,11 +1353,80 @@ export default function BattleMap({
               <span>Crop to square</span>
             </label>
             <span className="rt-bm-hint">
-              A floor tiles, so it wants a square: a photo or a screenshot will
-              be cropped to its middle unless you say otherwise. Stored at
-              512×512 to match the shipped grounds.
+              A floor tiles, so it wants a square. Pick an image and drag it
+              under the window to choose which square. Stored at 512×512 to
+              match the shipped grounds.
             </span>
           </div>
+
+          {/* THE CROP WINDOW. The picture moves, the window does not: the
+              square on screen is exactly the square that gets cut, so there
+              is nothing to read off a number or imagine. */}
+          {crop && (
+            <div className="rt-bm-bar rt-bm-cropbar">
+              <div
+                className="rt-bm-crop"
+                style={{ width: CROP_BOX, height: CROP_BOX }}
+                onPointerDown={(e) => {
+                  dragRef.current = { x: e.clientX, y: e.clientY };
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                  const d = dragRef.current;
+                  if (!d) return;
+                  const dx = e.clientX - d.x, dy = e.clientY - d.y;
+                  dragRef.current = { x: e.clientX, y: e.clientY };
+                  setCrop((c) => (c ? { ...c, ...dragBy(c, dx, dy) } : c));
+                }}
+                onPointerUp={() => { dragRef.current = null; }}
+                onPointerCancel={() => { dragRef.current = null; }}
+                // The wheel zooms, as it does over the map itself.
+                onWheel={(e) => {
+                  setCrop((c) => (c
+                    ? { ...c, ...zoomTo(c, c.scale * (e.deltaY < 0 ? 1.12 : 1 / 1.12)) }
+                    : c));
+                }}
+              >
+                <img src={crop.url} alt="" draggable={false}
+                  style={{
+                    width: crop.imgW * crop.scale,
+                    height: crop.imgH * crop.scale,
+                    transform: `translate(${crop.x}px, ${crop.y}px)`
+                  }} />
+              </div>
+
+              <div className="rt-bm-cropside">
+                <label className="rt-bm-num">
+                  <span>Zoom</span>
+                  <input type="range" step="any"
+                    min={scaleBounds(crop.imgW, crop.imgH, crop.box).min}
+                    max={scaleBounds(crop.imgW, crop.imgH, crop.box).max}
+                    value={crop.scale}
+                    onChange={(e) => setCrop((c) => (c
+                      ? { ...c, ...zoomTo(c, Number(e.target.value)) } : c))} />
+                </label>
+                <span className="rt-bm-hint">
+                  {crop.imgW}×{crop.imgH}. Taking {cropRect(crop).size}px
+                  from ({cropRect(crop).sx}, {cropRect(crop).sy}).
+                </span>
+                <div className="rt-bm-bar">
+                  <button type="button" className="rt-btn" onClick={commitCrop}
+                    disabled={genBusy}>
+                    {genBusy ? 'Working…' : 'Use this crop'}
+                  </button>
+                  <button type="button" className="rt-btn ghost"
+                    onClick={() => setCrop((c) => (c ? recentre(c) : c))}
+                    disabled={genBusy}>
+                    Centre
+                  </button>
+                  <button type="button" className="rt-btn ghost" onClick={closeCrop}
+                    disabled={genBusy}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {uploadNote ? <p className="rt-bm-hint">{uploadNote}</p> : null}
           {genErr ? <p className="rt-warn">{genErr}</p> : null}

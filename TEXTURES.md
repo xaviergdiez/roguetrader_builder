@@ -47,6 +47,18 @@ floor and a pale one on a dark floor, less knock-back where the deck is
 already bright. Switch theme afterwards if you want a built-in's numbers
 instead.
 
+**By uploading one.** **Ground → Upload a floor…** takes an image of your own
+through the same preview and the same save. It is cropped to the middle and
+stored at 512px so it sits beside the built-in nine, and it tells you what it
+did rather than changing your file silently.
+
+The shape is the thing worth knowing: a map texture **tiles**, which is the
+whole difference between it and a picture. The two files people reach for are
+a photo (4:3) and a screenshot (16:9), and both repeat as a letterboxed band
+unless they are cropped square. Anything with a horizon in it tiles into a
+wall. *Crop to square* is on by default for that reason; turn it off only if
+the image is already a tile.
+
 **From the command line**, for a texture that is to ship with the app as one
 of the built-in themes:
 

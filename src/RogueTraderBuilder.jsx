@@ -2,12 +2,17 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import BattleMap from './BattleMap.jsx';
 import { shrinkToDataUrl } from './imageshrink.js';
+import {
+  readLocal as readLocalGrounds, writeLocal as writeLocalGrounds,
+  cloudList as groundsList, cloudGet as groundGet, cloudPut as groundPut,
+  takeLegacy as takeLegacyGrounds
+} from './grounds.js';
 import MapWindow from './MapWindow.jsx';
 import {
   readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap,
-  readThemeLibrary, readCustomTheme
+  readCustomTheme, readSavedMap
 } from './battlemap.js';
-import { readRoster, writeRoster, upsert, remove as removeChar, newId,
+import { readRoster, writeRoster, upsert, remove as removeChar, newId, sameNamed,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
 import { parseGear, gearInfo, CRAFT, GEAR, availabilityOf } from './gear.js';
 import { woundState, applyDamage, adjustMax } from './wounds.js';
@@ -1952,6 +1957,22 @@ const CSS = `
    distortion this panel invented. */
 .rt-bm-preview{height:284px;border:1px solid var(--brass);margin-bottom:8px;
   background-repeat:repeat;background-size:142px 142px;}
+/* The upload crop window. The picture is dragged UNDER a fixed square, so
+   the frame is what stays still and overflow is clipped to it — what you see
+   inside the border is exactly the square that gets cut. */
+.rt-bm-cropbar{align-items:flex-start;gap:12px;}
+.rt-bm-crop{position:relative;overflow:hidden;flex:0 0 auto;
+  border:1px solid var(--brass);background:#05070a;
+  cursor:grab;touch-action:none;user-select:none;}
+.rt-bm-crop:active{cursor:grabbing;}
+.rt-bm-crop img{position:absolute;left:0;top:0;max-width:none;
+  pointer-events:none;-webkit-user-drag:none;}
+.rt-bm-cropside{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.rt-bm-cropside input[type=range]{width:160px;}
+/* The seed has to be readable at a glance: it is the one thing on this panel
+   worth writing down, and a box that cuts "TDU998" to "TDU" defeats it. */
+.rt-bm-gen .rt-bm-num input.rt-field{width:112px;font-family:ui-monospace,monospace;
+  letter-spacing:0.06em;}
 /* A section heading that carries its own action, so the field below it can
    run the full width of the panel and line up with every other one. */
 .rt-sechead{display:flex;align-items:center;justify-content:space-between;
@@ -2758,6 +2779,110 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // that closing the dashboard mid-encounter does not shut the map with it.
   const [mapWindow, setMapWindow] = useState(false);
   const [mapErr, setMapErr] = useState('');
+
+  /* ---- generated grounds: their own store, not the homebrew library ----
+     A ground carries its floor as a data URL. Signed in, the index comes
+     back without floors and a floor is fetched when a deck actually needs
+     one; signed out there is no network to spare, so the browser holds them
+     whole. Owned here rather than in the GM panel because the map's own
+     window needs to save into it too — that window is where a GM works
+     during a session, and until now its save button was simply dead. */
+  const [grounds, setGrounds] = useState([]);
+  const [groundErr, setGroundErr] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const list = cloud ? await groundsList() : readLocalGrounds();
+        if (live) setGrounds(list);
+      } catch (e) {
+        if (live) { setGrounds(readLocalGrounds()); setGroundErr(e.message); }
+      }
+    })();
+    return () => { live = false; };
+  }, [cloud]);
+
+  // Grounds lived in the homebrew library for one release. Move them, never
+  // drop them: losing them at the store layer is the failure this split came
+  // out of. The library is written back only once they are safely stored.
+  useEffect(() => {
+    if (!homebrewLoaded) return;
+    const { legacy, cleaned } = takeLegacyGrounds(homebrew);
+    if (!legacy.length) return;
+    (async () => {
+      const moved = [];
+      for (const g of legacy) {
+        try {
+          if (cloud) await groundPut(g);
+          moved.push(g);
+        } catch (e) { setGroundErr(e.message); }
+      }
+      if (!moved.length) return;
+      if (!cloud) writeLocalGrounds([...readLocalGrounds(), ...moved]);
+      setGrounds((prev) => [...prev, ...moved.map(({ texture, ...meta }) => (cloud ? meta : { texture, ...meta }))]);
+      setHomebrew(cleaned);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homebrewLoaded]);
+
+  /* Saves one. Signed in the floor goes to its own key and only the index
+     entry is kept in memory, so a session's worth of grounds does not sit in
+     the tab as megabytes of base64. */
+  const saveGroundToLibrary = async (ground) => {
+    const ready = readCustomTheme(ground);
+    if (!ready) return null;
+    try {
+      if (cloud) {
+        const meta = await groundPut(ready);
+        // Held with its floor so the deck it was just applied to can draw it
+        // without a round trip back for what we already have.
+        setGrounds((prev) => [...prev.filter((g) => g.id !== meta.id),
+          { ...meta, texture: ready.texture }]);
+      } else {
+        const next = [...readLocalGrounds().filter((g) => g.id !== ready.id), ready];
+        if (!writeLocalGrounds(next)) {
+          throw new Error('Could not save — browser storage is full.');
+        }
+        setGrounds(next);
+      }
+      setGroundErr('');
+      return ready;
+    } catch (e) {
+      setGroundErr(e.message);
+      return null;
+    }
+  };
+
+  /* A ground's floor, fetched the first time a deck asks to be drawn on it.
+     The index has no floors in it, which is the whole point of the split. */
+  const loadGroundTexture = async (id) => {
+    const have = grounds.find((g) => g.id === id);
+    if (!have || have.texture || !cloud) return;
+    try {
+      const full = await groundGet(id);
+      if (full && full.texture) {
+        setGrounds((prev) => prev.map((g) => (g.id === id ? { ...g, texture: full.texture } : g)));
+      }
+    } catch (e) { setGroundErr(e.message); }
+  };
+
+  /* Keeps what was built in the map's own window. The target comes from the
+     caller rather than being matched on name: an id writes over that deck, no
+     id makes a new one, and nothing is inferred. */
+  const saveLiveDeck = ({ id, name, map }) => {
+    const list = readMapLibrary(homebrew && homebrew.battlemaps);
+    if (id) {
+      const target = list.find((d) => d.id === id);
+      if (!target) return null;
+      const next = list.map((d) => (d.id === id ? { ...d, map } : d));
+      setHomebrew({ ...(homebrew || {}), battlemaps: next });
+      return { ...target, map };
+    }
+    const made = readSavedMap({ name: String(name || '').trim() || 'Saved deck', map });
+    setHomebrew({ ...(homebrew || {}), battlemaps: [...list, made] });
+    return made;
+  };
   const [brewOpen, setBrewOpen] = useState(false);
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeCode, setBridgeCode] = useState('');
@@ -2787,6 +2912,43 @@ export default function RogueTraderBuilder({ me, cloud }) {
   }, [bridgeCode]);
   const [fleet, setFleet] = useState([]);          // the GM's NPC ships
   const [combat, setCombat] = useState(EMPTY_COMBAT);
+
+  /* THE MAP BOTH PLACES ARE LOOKING AT.
+
+     The window used to render the live map while the tab could be editing a
+     saved deck — two different maps, so a column added in one never showed in
+     the other. The deck selection and the view live up here now, and the tab
+     and the window read the same thing through the same writer.
+
+     Has to sit BELOW `combat`: activeMap reads it while rendering, and read
+     above its own declaration it is a dead zone, which took the whole app
+     down rather than just the map. */
+  const decksForMap = readMapLibrary(homebrew && homebrew.battlemaps);
+  const [deckId, setDeckId] = useState(null);
+  const [mapView, setMapView] = useState('design');
+  const activeDeck = decksForMap.find((d) => d.id === deckId) || null;
+  const designing = mapView === 'design' && activeDeck;
+  const activeMap = designing
+    ? activeDeck.map
+    : readBattleMap((combat && combat.ground && combat.ground.map) || null);
+  const setActiveMap = (next) => {
+    if (designing) {
+      setHomebrew({
+        ...(homebrew || {}),
+        battlemaps: decksForMap.map((d) => (d.id === activeDeck.id ? { ...d, map: next } : d))
+      });
+      return;
+    }
+    setCombat({
+      ...combat,
+      ground: {
+        ...((combat && combat.ground) || {}),
+        npcs: (combat && combat.ground && combat.ground.npcs) || [],
+        map: next
+      }
+    });
+  };
+
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
   const [stepIx, setStepIx] = useState(0);     // 0..5 origin, 6 characteristics, 7 dossier
@@ -2796,6 +2958,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [extras, setExtras] = useState(EMPTY_EXTRAS);
   const [roster, setRoster] = useState([]);
   const [charId, setCharId] = useState(null);  // null = unsaved sheet
+  // A saved character of the same name, found while saving a sheet that has
+  // no id of its own. Held until the GM says which they meant.
+  const [clash, setClash] = useState(null);
   const [rosterOpen, setRosterOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);   // the phone header panel
@@ -3138,8 +3303,23 @@ export default function RogueTraderBuilder({ me, cloud }) {
     return entry;
   };
 
-  const saveCharacter = async () => {
-    const id = charId || newId();
+  /* `mode` is how an already-saved name was resolved: undefined asks,
+     'overwrite' takes the existing character's id, 'new' insists on a fresh
+     one. The open sheet carries its own id and is simply written back, which
+     is the ordinary case and never asks. */
+  const saveCharacter = async (arg) => {
+    // Wired straight to a click handler in the roster dialog, so the first
+    // argument is usually a MouseEvent. Only the two words mean anything;
+    // an event read as a mode would skip the question entirely.
+    const mode = (arg === 'overwrite' || arg === 'new') ? arg : undefined;
+    let id = charId;
+    if (!id) {
+      const existing = sameNamed(roster, name, charId);
+      if (existing && !mode) { setClash(existing); return; }
+      if (existing && mode === 'overwrite') id = existing.id;
+    }
+    if (!id) id = newId();
+    setClash(null);
     setRosterBusy(true);
     try {
       const meta = await persist({
@@ -3523,11 +3703,21 @@ export default function RogueTraderBuilder({ me, cloud }) {
         </div>
       </nav>
 
+      {clash && (
+        <SaveClashDialog
+          existing={clash}
+          name={name}
+          onOverwrite={() => saveCharacter('overwrite')}
+          onNew={() => saveCharacter('new')}
+          onCancel={() => setClash(null)}
+        />
+      )}
+
       {rosterOpen && (
         <RosterDialog
           roster={roster} currentId={charId} err={rosterErr} me={me}
           cloud={cloud} note={rosterNote} busy={rosterBusy}
-          onSave={saveCharacter} onOpen={openCharacter}
+          onSave={() => saveCharacter()} onOpen={openCharacter}
           onDelete={deleteCharacter} onNew={newCharacter}
           onClose={() => setRosterOpen(false)}
         />
@@ -3605,6 +3795,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
           homebrew={homebrew} setHomebrew={setHomebrew}
           mapWindow={mapWindow} setMapWindow={setMapWindow}
           mapErr={mapErr} setMapErr={setMapErr}
+          grounds={grounds} onSaveGround={saveGroundToLibrary}
+          onNeedGroundTexture={loadGroundTexture} groundErr={groundErr}
+          deckId={deckId} setDeckId={setDeckId} mapView={mapView} setMapView={setMapView}
+          activeMap={activeMap} setActiveMap={setActiveMap}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -3625,19 +3819,22 @@ export default function RogueTraderBuilder({ me, cloud }) {
         >
           {(win) => (
             <BattleMap
-              map={readBattleMap((combat && combat.ground && combat.ground.map) || null)}
-              onChange={(next) => setCombat({
-                ...combat,
-                ground: {
-                  ...((combat && combat.ground) || {}),
-                  npcs: (combat && combat.ground && combat.ground.npcs) || [],
-                  map: next
-                }
-              })}
+              map={activeMap}
+              onChange={setActiveMap}
               win={win}
               /* The projector needs the saved grounds too, or a deck built on
                  one would quietly fall back to a built-in theme out there. */
-              customThemes={readThemeLibrary(homebrew && homebrew.mapgrounds)}
+              /* THE SAVE BUTTON IN HERE WAS DEAD. The window had the picker
+                 but no way to add to it, so a ground generated during a
+                 session — which is when they are generated — went nowhere. */
+              customThemes={grounds}
+              onSaveTheme={saveGroundToLibrary}
+              onNeedTexture={loadGroundTexture}
+              /* And a way to keep the work. This window is often the only one
+                 open during a session, and until now everything built in it
+                 lived on the live map with no road into the library. */
+              decks={readMapLibrary(homebrew && homebrew.battlemaps)}
+              onSaveDeck={saveLiveDeck}
             />
           )}
         </MapWindow>
@@ -3884,6 +4081,40 @@ async function signOut() {
     // no /api under plain `vite dev` — reloading re-stubs the dev user
   }
   window.location.reload();
+}
+
+/* Asked when a sheet with no id of its own is saved under a name already in
+   the roster. Three ways out, and none of them is the default: overwriting
+   the wrong character and silently making a duplicate are both losses, so
+   the GM says which they meant. */
+function SaveClashDialog({ existing, name, onOverwrite, onNew, onCancel }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && !el.open) el.showModal();
+  }, []);
+  return (
+    <dialog ref={ref} className="rt-framer" aria-label="Already saved"
+      onCancel={(e) => { e.preventDefault(); onCancel(); }}>
+      <div className="rt-framer-h">
+        <span className="rt-framer-t">Already in your roster</span>
+        <button className="rt-close" onClick={onCancel} aria-label="Close">&times;</button>
+      </div>
+      <p className="rt-vox-hint">
+        <strong>{existing.name || 'An unnamed adept'}</strong>
+        {existing.career ? ` (${existing.career})` : ''} is already saved, and this
+        sheet is not the one you opened. Saving it as new would leave you two
+        of them.
+      </p>
+      <div className="rt-btnrow">
+        <button className="rt-btn" onClick={onOverwrite}>
+          Overwrite {name ? `“${name}”` : 'it'}
+        </button>
+        <button className="rt-btn ghost" onClick={onNew}>Save as a new character</button>
+        <button className="rt-opt" onClick={onCancel}>Cancel</button>
+      </div>
+    </dialog>
+  );
 }
 
 function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose,
@@ -7754,7 +7985,9 @@ function shipProfile(ship, blueprint, custom, context = {}) {
 }
 
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
-  homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr, onClose }) {
+  homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
+  grounds, onSaveGround, onNeedGroundTexture, groundErr,
+  deckId, setDeckId, mapView, setMapView, activeMap, setActiveMap, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -7862,20 +8095,9 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   // The window itself is owned by the component above, so neither switching
   // tabs nor closing this dashboard shuts the map the table is playing on.
   const decks = readMapLibrary(homebrew && homebrew.battlemaps);
-  /* Generated grounds, kept beside the decks. They are themes the GM made,
-     so they belong in their library rather than in the build. */
-  const grounds = readThemeLibrary(homebrew && homebrew.mapgrounds);
-  const saveGround = (t) => {
-    const ready = readCustomTheme(t);
-    if (!ready) return null;
-    setHomebrew({ ...(homebrew || {}), mapgrounds: [...grounds, ready] });
-    return ready;
-  };
   const saveDecks = (list) => setHomebrew({ ...(homebrew || {}), battlemaps: list });
   const putDeck = (d) => saveDecks(decks.map((x) => (x.id === d.id ? d : x)));
-  const [deckId, setDeckId] = useState(null);
   const deck = decks.find((d) => d.id === deckId) || null;
-  const [mapView, setMapView] = useState('design');
 
   const addHostile = (npc) => {
     if (!editing || editing.hostiles.length >= MAX_HOSTILES) return;
@@ -8911,6 +9133,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           </button>
         </div>
         {mapErr ? <p className="rt-warn">{mapErr}</p> : null}
+        {groundErr ? <p className="rt-warn">{groundErr}</p> : null}
 
         {/* A deck is built between sessions and played later, so the library
             and the live map are two different things: designing is done with
@@ -8969,14 +9192,15 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
             here while you run the encounter. Closing that window brings it back.
           </p>
         ) : (
+          // The same map and the same writer the window uses, so a column
+          // added in one place is there in the other.
           <BattleMap
-            map={mapView === 'live' ? battleMap : deck.map}
-            onChange={mapView === 'live'
-              ? setBattleMap
-              : (next) => putDeck({ ...deck, map: next })}
+            map={activeMap}
+            onChange={setActiveMap}
             encounters={encounters}
             customThemes={grounds}
-            onSaveTheme={saveGround}
+            onSaveTheme={onSaveGround}
+            onNeedTexture={onNeedGroundTexture}
           />
         )}
       </>)}

@@ -16,7 +16,13 @@
 import { requireUser, getUser, saveUser } from "../lib/auth.js";
 
 const MAX_ENTRIES = 200;
-const MAX_BYTES = 100_000;
+// Raised from 100KB when the library stopped being "a few hundred bytes an
+// entry": a generated ground carries its floor as a data URL and a painted
+// deck is a key per square. Kept under 1MB because that is the request-body
+// ceiling on an Upstash free tier, and a library that cannot be written is
+// worse than one that is capped. If a GM ever needs more grounds than this
+// holds, grounds want a store of their own rather than a bigger number here.
+const MAX_BYTES = 900_000;
 
 const list = (v) => (Array.isArray(v) ? v : []);
 
@@ -28,11 +34,15 @@ function clean(homebrew) {
   // `encounters` is a GM's saved encounter library (see src/encounters.js).
   // It lives here rather than on a route of its own: same kind of thing,
   // same size, and the plan's function budget is nearly spent.
+  // `battlemaps` are saved decks and `mapgrounds` are generated floors.
+  // Omitting them here dropped them on every write, whatever the client sent.
   return {
     hulls: entries(h.hulls),
     components: entries(h.components),
     encounters: entries(h.encounters),
-    endeavours: entries(h.endeavours)
+    endeavours: entries(h.endeavours),
+    battlemaps: entries(h.battlemaps),
+    mapgrounds: entries(h.mapgrounds)
   };
 }
 
@@ -51,7 +61,8 @@ export default async function handler(req, res) {
     const homebrew = clean((req.body ?? {}).homebrew);
 
     const count = homebrew.hulls.length + homebrew.components.length
-      + homebrew.encounters.length + homebrew.endeavours.length;
+      + homebrew.encounters.length + homebrew.endeavours.length
+      + homebrew.battlemaps.length + homebrew.mapgrounds.length;
     if (count > MAX_ENTRIES) {
       return res.status(413).json({
         error: `That is ${count} entries, over the ${MAX_ENTRIES} limit.`

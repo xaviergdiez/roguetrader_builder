@@ -11,8 +11,10 @@ import {
   CONTACT_STATES, nextContactState, readContact, auspexSweep, fogStateAt,
   readSavedMap, readMapLibrary, newBattleMap, publishMap,
   regionAt, regionsAroundDoor, revealArea, concealArea, openReach, visibleExplored,
-  fitGrid, MAX_CUSTOM_TEXTURE,
+  fitGrid, MAX_CUSTOM_TEXTURE, brushCells, MAX_GRID, MIN_GRID,
+  clampZoom, MIN_ZOOM, MAX_ZOOM,
   themeNumbersFor, BRIGHT_FLOOR, readCustomTheme, readThemeLibrary, resolveTheme,
+  textureAdvice, SQUARE_TOLERANCE, expandMap, expandPlan, groundsUsed,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -93,9 +95,10 @@ import { GEAR } from './gear.js';
   assert.equal(readMap({ tokens: { n1: { x: 1, y: 1 } } }).tokens, undefined);
 
   // Out-of-range dimensions are clamped, not taken on trust: a 10,000-column
-  // map would try to draw 200,000 grid lines.
-  assert.equal(readMap({ cols: 99999 }).cols, 100);
-  assert.equal(readMap({ cols: 1 }).cols, 5);
+  // map would try to draw 200,000 grid lines. The bound itself is checked
+  // against MAX_GRID below, so it is named rather than written twice.
+  assert.equal(readMap({ cols: 99999 }).cols, MAX_GRID);
+  assert.equal(readMap({ cols: 1 }).cols, MIN_GRID);
   assert.equal(readMap({ cols: 'nonsense' }).cols, EMPTY_MAP.cols);
 
   // Half-metre squares survive; zero and negative do not, because every
@@ -271,6 +274,38 @@ import { GEAR } from './gear.js';
   // A door state the renderer cannot draw is dropped on read.
   assert.deepEqual(readMap({ doors: { '1,1': 'open', '2,2': 'ajar', 'x,y': 'open' } }).doors,
     { '1,1': { kind: 'bulkhead', state: 'open' } });
+}
+
+/* ---- what to tell someone uploading a floor ---- */
+
+{
+  // A map texture TILES, which is the whole difference between it and a
+  // picture — and the two files people reach for, a photo and a screenshot,
+  // are both wrong in the same way.
+  const sq = textureAdvice({ width: 1024, height: 1024 });
+  assert.equal(sq.square, true);
+  assert.ok(sq.message.includes('1024\u00d71024'));
+  assert.ok(sq.message.includes('tile'));
+
+  // Within a few per cent still counts: the shipped floors are not all
+  // exactly square either (the hive deck is 1024x945).
+  assert.equal(textureAdvice({ width: 1024, height: 945 }).square, true);
+  assert.equal(textureAdvice({ width: 1024, height: 700 }).square, false);
+
+  // Said as a ratio, because 16:9 is a thing a person recognises.
+  const wide = textureAdvice({ width: 1920, height: 1080 });
+  assert.equal(wide.square, false);
+  assert.ok(wide.message.includes('1.78:1'), wide.message);
+  assert.ok(wide.message.includes('band'), 'it has to say what goes wrong');
+  const tall = textureAdvice({ width: 1080, height: 1920 });
+  assert.ok(tall.message.includes('1:1.78'), tall.message);
+
+  // A file that is not an image says so rather than dividing by zero.
+  for (const bad of [null, {}, { width: 0, height: 100 }, { width: 'x', height: 'y' }]) {
+    const r = textureAdvice(bad);
+    assert.equal(r.ok, false);
+    assert.ok(r.message.length > 10);
+  }
 }
 
 /* ---- a saved environment derives its own numbers ---- */
@@ -977,6 +1012,80 @@ import { GEAR } from './gear.js';
   assert.deepEqual(auspexSweep(m, { x: 0, y: 0 }, 0), m.contacts);
 }
 
+/* ---- zoom ---- */
+
+{
+  assert.equal(clampZoom(1), 1);
+  assert.equal(clampZoom(2.5), 2.5);
+  assert.equal(clampZoom(99), MAX_ZOOM);
+  assert.equal(clampZoom(0), MIN_ZOOM);
+  assert.equal(clampZoom(-3), MIN_ZOOM);
+  // A typed box hands over whatever was typed, including nothing.
+  assert.equal(clampZoom(''), 1);
+  assert.equal(clampZoom('abc'), 1);
+  assert.equal(clampZoom(null), 1);
+  assert.equal(clampZoom(undefined), 1);
+  assert.equal(clampZoom('1.5'), 1.5, 'an input gives a string');
+  assert.ok(MIN_ZOOM > 0, 'a zero zoom would divide the click maths by nothing');
+}
+
+/* ---- the brush ---- */
+
+{
+  const map = readMap({ cols: 20, rows: 20 });
+  const key = (c) => `${c.x},${c.y}`;
+
+  // Size 1 is a single square, which is what every tool did before the brush
+  // existed. It has to stay exactly that, or every old habit changes.
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, 1, map), [{ x: 5, y: 5 }]);
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, undefined, map), [{ x: 5, y: 5 }]);
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, 0, map), [{ x: 5, y: 5 }]);
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, -4, map), [{ x: 5, y: 5 }]);
+
+  // An odd brush is centred on the cursor.
+  const three = brushCells({ x: 5, y: 5 }, 3, map).map(key).sort();
+  assert.equal(three.length, 9);
+  assert.ok(three.includes('4,4') && three.includes('6,6') && three.includes('5,5'));
+
+  // An even one has no true centre, so the cursor is its top-left corner and
+  // you paint away from where you clicked. Pinned because the alternative —
+  // a block that shifts with the drag direction — is the thing this avoids.
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, 2, map).map(key).sort(),
+    ['5,5', '5,6', '6,5', '6,6']);
+
+  // Clipped at the edges rather than running off the deck.
+  assert.equal(brushCells({ x: 0, y: 0 }, 3, map).length, 4);
+  assert.equal(brushCells({ x: 19, y: 19 }, 3, map).length, 4);
+  assert.ok(brushCells({ x: 5, y: 5 }, 999, map).every(
+    (c) => c.x >= 0 && c.y >= 0 && c.x < 20 && c.y < 20));
+  assert.deepEqual(brushCells(null, 3, map), []);
+
+  // And it composes with the painter, which is the whole point of it.
+  const floor = paintCells({}, brushCells({ x: 5, y: 5 }, 3, map));
+  assert.equal(Object.keys(floor).length, 9);
+  assert.deepEqual(paintCells(floor, brushCells({ x: 5, y: 5 }, 3, map), false), {});
+}
+
+/* ---- the grid can be big, but not unbounded ---- */
+
+{
+  // The ceiling is the browser's, not a preference: a canvas has a hard
+  // pixel limit and the deck is one canvas of cols x px. Past MAX_GRID the
+  // square would have to shrink below the base of the model standing on it.
+  assert.equal(readMap({ cols: MAX_GRID, rows: MAX_GRID }).cols, MAX_GRID);
+  assert.equal(readMap({ cols: MAX_GRID + 1 }).cols, MAX_GRID);
+  assert.equal(readMap({ cols: 99999 }).cols, MAX_GRID);
+  assert.equal(readMap({ cols: 1 }).cols, MIN_GRID);
+  assert.equal(fitGrid(999999, 32), MAX_GRID);
+  assert.ok(MAX_GRID >= 200, 'a hall should not need two decks');
+  // fitGrid and readMap agree, or Fit to screen would produce a grid readMap
+  // then quietly trimmed.
+  for (const px of [10, 24, 40, 70]) {
+    const n = fitGrid(100000, px);
+    assert.equal(readMap({ cols: n }).cols, n, 'fitGrid produced a size readMap trims');
+  }
+}
+
 /* ---- filling the screen means more squares, not bigger ones ---- */
 
 {
@@ -989,9 +1098,9 @@ import { GEAR } from './gear.js';
   assert.equal(fitGrid(1000, 20), 50);
   // Clamped the same way cols and rows are, so a tiny or vast viewport
   // still yields a grid readMap will accept unchanged.
-  assert.equal(fitGrid(10, 32), 5);
-  assert.equal(fitGrid(0, 32), 5);
-  assert.equal(fitGrid(999999, 32), 100);
+  assert.equal(fitGrid(10, 32), MIN_GRID);
+  assert.equal(fitGrid(0, 32), MIN_GRID);
+  assert.equal(fitGrid(999999, 32), MAX_GRID);
   assert.equal(fitGrid(960, 0), fitGrid(960, EMPTY_MAP.pxPerSquare), 'a zero square falls back');
   assert.equal(readMap({ cols: fitGrid(1920, 32) }).cols, 60, 'and readMap takes it as-is');
 }
@@ -1242,6 +1351,266 @@ import { GEAR } from './gear.js';
   const tight = deploymentRows(readMap({ rows: 6 }), 99);
   assert.ok(tight.hostile.y1 < tight.crew.y0, 'deployment zones must not overlap');
   assert.ok(deploymentRows(readMap({ rows: 5 }), 0).hostile.y1 >= 0);
+}
+
+/* ------------------------- expanding a deck -------------------------
+
+   Growing a deck used to add bare grid. It now repeats what is already
+   built, mirrored at the seams so corridors meet their own mouths. */
+
+{
+  /* A small deck with one of everything on it, so what travels and what does
+     not can both be seen. FIVE squares, not four: readMap clamps to MIN_GRID,
+     so a 4x4 is silently a 5x5 and every offset below would be off by one. */
+  const base = readMap({
+    cols: 5, rows: 5,
+    floor: { '0,0': true, '1,0': true, '3,0': true, '0,1': true, '2,2': true },
+    doors: { '1,0': { kind: 'hatch', state: 'open' } },
+    cover: { '0,1': 'crates' },
+    hazards: { '2,2': 'fire' },
+    markers: { '3,0': { type: MARKER_TYPES[0].id, label: 'Hold 3' } },
+    explored: { '0,0': true },
+    contacts: { '2,2': { name: 'Genestealer', encounterId: 'e1', hostileId: 'h1', state: 'ping' } },
+    viewpoint: { x: 0, y: 0 }
+  });
+
+  /* ---- the tile is the GRID, not the floor's bounding box ---- */
+  {
+    // Doubled both ways is four copies, so a cell at (x,y) is also at
+    // (x+5, y), (x, y+5) and (x+5, y+5) once the mirror is turned off.
+    const flat = expandMap(base, 10, 10, { mirror: false });
+    assert.equal(flat.cols, 10);
+    assert.equal(flat.rows, 10);
+    for (const k of Object.keys(base.floor)) {
+      const p = parseKey(k);
+      for (const [bx, by] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        assert.ok(flat.floor[cellKey(p.x + bx * 5, p.y + by * 5)],
+          `unmirrored copy ${bx},${by} is missing ${k}`);
+      }
+    }
+    // And nothing appeared where the source had void. (2,0) and (4,0) are
+    // empty in the source, so they are empty in every copy.
+    for (const x of [2, 4, 7, 9]) assert.ok(!flat.floor[cellKey(x, 0)], `${x},0 invented floor`);
+    // The margin the GM designed around the deck is kept: row 3 and 4 are
+    // void in the source and void in the copies, which is the whole reason
+    // the tile is the grid rather than the floor's bounding box.
+    for (let x = 0; x < 10; x++) {
+      assert.ok(!flat.floor[cellKey(x, 3)] && !flat.floor[cellKey(x, 8)],
+        'an empty source row must stay empty');
+    }
+  }
+
+  /* ---- mirroring, which is the whole reason this is worth doing ---- */
+  {
+    // Asserted as a symmetry over the whole width rather than cell by cell:
+    // a doubled-and-mirrored deck IS its own reflection, and that is the
+    // property that makes a corridor meet its own mouth at the seam.
+    const m = expandMap(base, 10, 5, { mirror: true });
+    for (let x = 0; x < 10; x++) {
+      for (let y = 0; y < 5; y++) {
+        assert.equal(Boolean(m.floor[cellKey(x, y)]), Boolean(m.floor[cellKey(9 - x, y)]),
+          `not mirrored about the seam at ${x},${y}`);
+      }
+    }
+    for (const k of Object.keys(base.floor)) {
+      const p = parseKey(k);
+      assert.ok(m.floor[cellKey(p.x, p.y)], `block 0 lost ${k}`);
+      assert.ok(m.floor[cellKey(9 - p.x, p.y)], `mirrored block is missing ${k}`);
+    }
+
+    // Vertically too.
+    const v = expandMap(base, 5, 10, { mirror: true });
+    for (let x = 0; x < 5; x++) {
+      for (let y = 0; y < 10; y++) {
+        assert.equal(Boolean(v.floor[cellKey(x, y)]), Boolean(v.floor[cellKey(x, 9 - y)]),
+          `not mirrored vertically at ${x},${y}`);
+      }
+    }
+
+    // Unmirrored it is a plain repeat, NOT a reflection — otherwise the flag
+    // does nothing and the two modes are the same thing.
+    const flat = expandMap(base, 10, 5, { mirror: false });
+    assert.ok(Object.keys(flat.floor).some((k) => {
+      const p = parseKey(k);
+      return Boolean(flat.floor[cellKey(9 - p.x, p.y)]) !== true;
+    }), 'mirror:false must not come out mirrored');
+  }
+
+  /* ---- the layers that ride along ---- */
+  {
+    const m = expandMap(base, 10, 10, { mirror: false });
+    assert.equal(Object.keys(m.cover).length, 4, 'cover is copied into every block');
+    assert.equal(m.cover[cellKey(5, 1)], 'crates');
+    assert.equal(m.hazards[cellKey(7, 7)], 'fire', 'so are hazards');
+    assert.equal(m.doors[cellKey(6, 0)].kind, 'hatch', 'and doors, kind and state');
+    assert.equal(m.doors[cellKey(6, 0)].state, 'open');
+    assert.equal(m.markers[cellKey(8, 5)].label, 'Hold 3', 'and markers');
+    // Copied, not shared: editing one door must not change its three copies.
+    assert.notEqual(m.doors[cellKey(1, 0)], m.doors[cellKey(6, 0)]);
+  }
+
+  /* ---- and the layers that MUST NOT ---- */
+  {
+    const m = expandMap(base, 10, 10, { mirror: false });
+    // A hostile is one creature from one encounter. Three more the GM never
+    // placed would ping on an auspex sweep and be looked for with a gun.
+    assert.equal(Object.keys(m.contacts).length, 1, 'contacts do not multiply');
+    assert.ok(m.contacts[cellKey(2, 2)]);
+    // Fog is a record of where the party has BEEN. Copying it reveals rooms
+    // nobody has walked into.
+    assert.equal(Object.keys(m.explored).length, 1, 'explored does not multiply');
+    assert.ok(m.explored[cellKey(0, 0)]);
+  }
+
+  /* ---- the rest of the deck is left alone ---- */
+  {
+    const themed = readMap({ ...base, theme: 'env-custom-1', pxPerSquare: 55, mmPerSquare: 30, fog: true });
+    const m = expandMap(themed, 10, 10);
+    assert.equal(m.theme, 'env-custom-1', 'the ground is not reset by growing the deck');
+    assert.equal(m.pxPerSquare, 55, 'nor the projector calibration');
+    assert.equal(m.mmPerSquare, 30);
+    assert.equal(m.fog, true);
+  }
+
+  /* ---- shrinking is a crop, out of the same arithmetic ---- */
+  {
+    // From a deck bigger than MIN_GRID, or there is no room to shrink into.
+    const big = readMap({
+      cols: 12, rows: 12,
+      floor: { '0,0': true, '1,1': true, '11,11': true, '6,2': true },
+      cover: { '11,11': 'crates' },
+      contacts: { '11,11': { name: 'Hybrid', encounterId: 'e', hostileId: 'h', state: 'ping' } },
+      explored: { '11,11': true },
+      viewpoint: { x: 11, y: 11 }
+    });
+    const small = expandMap(big, 6, 6, { mirror: true });
+    assert.equal(small.cols, 6);
+    assert.deepEqual(Object.keys(small.floor).sort(), ['0,0', '1,1'],
+      'a smaller target keeps the top-left corner and drops the rest');
+    assert.equal(Object.keys(small.cover).length, 0, 'cover off the new grid goes with it');
+    assert.equal(Object.keys(small.contacts).length, 0, 'and the contact');
+    assert.equal(Object.keys(small.explored).length, 0, 'and the fog');
+    /* A viewpoint cropped away must become null rather than point off-grid:
+       visibleExplored walks from it, and from nowhere it finds nothing and
+       blacks out a deck that is perfectly well explored. */
+    assert.equal(small.viewpoint, null);
+
+    // One still on the new grid is kept.
+    const kept = expandMap(readMap({ ...big, viewpoint: { x: 1, y: 1 } }), 6, 6);
+    assert.deepEqual(kept.viewpoint, { x: 1, y: 1 });
+  }
+
+  /* ---- everything it returns is still a map ---- */
+  {
+    for (const [c, r] of [[8, 8], [50, 7], [5, 5], [200, 200], [7, 31]]) {
+      const m = expandMap(base, c, r);
+      const reread = readMap(m);
+      assert.equal(Object.keys(reread.floor).length, Object.keys(m.floor).length,
+        `readMap dropped squares from a ${c}x${r} expansion`);
+      assert.equal(Object.keys(reread.doors).length, Object.keys(m.doors).length);
+      for (const k of Object.keys(m.floor)) {
+        const p = parseKey(k);
+        assert.ok(p.x < m.cols && p.y < m.rows, `${k} is off a ${c}x${r} grid`);
+      }
+    }
+  }
+
+  /* ---- bounds and rubbish ---- */
+  {
+    assert.equal(expandMap(base, 1e9, 1e9).cols, MAX_GRID, 'clamped to the canvas ceiling');
+    assert.equal(expandMap(base, 0, 0).rows, MIN_GRID);
+    assert.equal(expandMap(base, NaN, NaN).cols, base.cols, 'rubbish keeps the current size');
+    assert.equal(expandMap(base, '12', '12').cols, 12, 'a number box hands over strings');
+    // An empty deck expands to an empty deck rather than throwing.
+    const blank = expandMap(readMap({ cols: 10, rows: 10 }), 20, 20);
+    assert.equal(Object.keys(blank.floor).length, 0);
+    assert.equal(blank.cols, 20);
+  }
+
+  /* ---- what the button says before it is pressed ---- */
+  {
+    const p = expandPlan(readMap({ cols: 30, rows: 20 }), 60, 40);
+    assert.deepEqual(
+      { across: p.across, down: p.down, copies: p.copies, partial: p.partial, shrinking: p.shrinking },
+      { across: 2, down: 2, copies: 4, partial: false, shrinking: false }
+    );
+    // A partial copy is the normal case and the one that cuts a room in half,
+    // so it is called out rather than left to be discovered.
+    const q = expandPlan(readMap({ cols: 30, rows: 20 }), 50, 20);
+    assert.equal(q.across, 2);
+    assert.equal(q.partial, true);
+    assert.equal(expandPlan(readMap({ cols: 30, rows: 20 }), 10, 20).shrinking, true);
+    assert.equal(expandPlan(readMap({ cols: 30, rows: 20 }), 30, 20).copies, 1);
+  }
+}
+
+/* ------------------------- more than one terrain -------------------------
+
+   A deck is rarely one ground: a boarding action runs from the ice outside
+   to the deck plate inside. A cell named in `ground` is drawn with that
+   ground instead of the deck's own, and nothing else changes. */
+
+{
+  const m = readMap({
+    cols: 10, rows: 10,
+    theme: 'space_hulk',
+    floor: { '0,0': true, '1,0': true, '2,0': true, '5,5': true },
+    ground: { '1,0': 'ice', '2,0': 'env-saved-3', '9,9': 'jungle', '': 'x', '4,4': '   ' }
+  });
+
+  /* ---- read as paint, kept as written ---- */
+  {
+    assert.equal(m.ground['1,0'], 'ice');
+    // A saved ground's id is unknown here. Coercing it to a built-in is the
+    // bug that moved every deck built on a generated floor back to default.
+    assert.equal(m.ground['2,0'], 'env-saved-3', 'a custom ground id survives the reader');
+    assert.ok(!('' in m.ground), 'an unparseable key is dropped');
+    assert.ok(!('4,4' in m.ground), 'so is a blank ground id');
+    // Off-deck paint is harmless and kept: erase a square, put it back, and
+    // the terrain that was on it is still there.
+    assert.equal(m.ground['9,9'], 'jungle');
+  }
+
+  /* ---- THE POINT: it is paint, so the deck is unchanged ---- */
+  {
+    // The floor stays binary, so everything derived from it is untouched by
+    // what a square looks like. If painting terrain could move a wall or
+    // split a region, this would be a second kind of floor, not paint.
+    const plain = readMap({ ...m, ground: {} });
+    assert.equal(wallMask(m.floor, 0, 0), wallMask(plain.floor, 0, 0), 'walls do not notice');
+    assert.deepEqual(regionAt(m, { x: 0, y: 0 }).length, regionAt(plain, { x: 0, y: 0 }).length,
+      'regions do not notice');
+    assert.deepEqual(revealArea(m, { x: 0, y: 0 }), revealArea(plain, { x: 0, y: 0 }),
+      'and neither does the fog');
+  }
+
+  /* ---- what has to be loaded before it can be drawn ---- */
+  {
+    const used = groundsUsed(m);
+    assert.equal(used[0], 'space_hulk', "the deck's own ground comes first");
+    assert.ok(used.includes('ice') && used.includes('env-saved-3'));
+    // (9,9) is painted but has no deck on it, so there is nothing to draw
+    // with it and no reason to fetch it.
+    assert.ok(!used.includes('jungle'), 'paint with no floor under it is not loaded');
+    assert.equal(new Set(used).size, used.length, 'each ground once, however many cells use it');
+
+    // A plain deck needs exactly one.
+    assert.deepEqual(groundsUsed(readMap({ theme: 'ice' })), ['ice']);
+    assert.deepEqual(groundsUsed(null), [DEFAULT_THEME], 'and nothing still names one');
+    assert.deepEqual(groundsUsed(EMPTY_MAP), [EMPTY_MAP.theme]);
+  }
+
+  /* ---- it repeats with the deck it is painted on ---- */
+  {
+    const big = expandMap(m, 20, 20, { mirror: false });
+    assert.equal(big.ground[cellKey(11, 0)], 'ice',
+      'an expanded ice shelf must not come back as deck plate');
+    assert.equal(big.ground[cellKey(12, 10)], 'env-saved-3');
+    const mir = expandMap(m, 20, 10, { mirror: true });
+    assert.equal(mir.ground[cellKey(19 - 1, 0)], 'ice', 'and it mirrors with it');
+    // Still a map afterwards.
+    assert.equal(readMap(big).ground[cellKey(11, 0)], 'ice');
+  }
 }
 
 console.log('battlemap.js OK (%d themes, %dx%d default grid)',

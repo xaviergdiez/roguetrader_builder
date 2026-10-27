@@ -93,6 +93,49 @@ export const MAP_THEMES = [
 
 export const DEFAULT_THEME = 'space_hulk';
 
+/* What to tell a GM about a floor they are about to upload.
+
+   A map texture TILES. That is the whole difference between it and a
+   picture, and it is what makes the two things people reach for — a photo
+   and a screenshot — usually wrong: a 16:9 shot repeats as a band of
+   letterboxed strips, and anything with a horizon in it tiles into a wall.
+
+   Square is the shape to aim for, within a few per cent. Pure, so the
+   advice can be checked without a canvas. */
+
+/* How far from square a floor can be before it is worth saying something.
+   Set from the shipped floors rather than picked: the hive deck is 1024x945
+   and three others are 1024x930, because a watermark was cropped off the
+   bottom. A tolerance that flagged the app's own textures as the wrong shape
+   would be advice nobody should take. 4:3 and 16:9 are still well outside. */
+export const SQUARE_TOLERANCE = 0.12;
+
+export function textureAdvice(size) {
+  const w = Math.round(Number(size && size.width) || 0);
+  const h = Math.round(Number(size && size.height) || 0);
+  if (w <= 0 || h <= 0) {
+    return { ok: false, square: false, ratio: 0, message: 'That file is not an image this can read.' };
+  }
+  const ratio = w / h;
+  const square = Math.abs(ratio - 1) <= SQUARE_TOLERANCE;
+  if (square) {
+    return {
+      ok: true, square: true, ratio,
+      message: `${w}\u00d7${h}, square enough to tile cleanly.`
+    };
+  }
+  // Said as a ratio rather than a decimal, because 16:9 is a thing a person
+  // recognises and 1.78 is not.
+  const asRatio = ratio > 1
+    ? `${(ratio).toFixed(2).replace(/\.?0+$/, '')}:1`
+    : `1:${(1 / ratio).toFixed(2).replace(/\.?0+$/, '')}`;
+  return {
+    ok: true, square: false, ratio,
+    message: `${w}\u00d7${h} is ${asRatio}. A floor tiles best square \u2014 `
+      + 'cropped to the middle it will repeat cleanly; left as it is it repeats as a band.'
+  };
+}
+
 /* ---------------- a saved environment, and its five numbers ----------------
    A GM who generates a ground should not then be asked for a grid colour, a
    wash and a grid strength. They are derived from the image itself, using the
@@ -234,6 +277,16 @@ export const EMPTY_MAP = {
   mmPerSquare: 25,
   pxPerSquare: 40,      // screen pixels per square, adjusted until it matches
   floor: {},            // { 'x,y': true } — the single source of truth for deck
+  /* PER-CELL GROUND. One deck is rarely one terrain: a boarding action runs
+     from the ice outside to the deck plate inside, and an agri-world fight
+     crosses ploughed soil, an irrigation ditch and the rockcrete apron.
+
+     A cell named here is drawn with that ground instead of the deck's own.
+     It is PAINT, nothing more: the floor stays binary, so the walls derived
+     from it, the regions flood-filled over it and the fog that follows them
+     are all untouched by what a square looks like. That is the whole reason
+     this is a separate layer and not a second kind of floor. */
+  ground: {},           // { 'x,y': themeId }
   doors: {},            // { 'x,y': { kind, state } }
   cover: {},            // { 'x,y': coverTypeId } — things standing on the deck
   hazards: {},          // { 'x,y': hazardTypeId } — dangerous to stand in
@@ -263,6 +316,36 @@ export const EMPTY_MAP = {
 // ~1.5MB of base64, which is a 768px JPEG with room to spare. Past this a
 // generated ground is costing more to load than the deck it decorates.
 export const MAX_CUSTOM_TEXTURE = 1_500_000;
+
+/* The largest grid a deck may be.
+
+   NOT a design preference — a browser canvas has a hard pixel ceiling
+   (16384 a side in Chrome, lower on some machines) and the deck is drawn as
+   one canvas of cols x px. At 200 squares and a 40px square that is already
+   8000px a side, which is where MAX_CANVAS_PX sits. Past this the square
+   would have to shrink below the size of the miniature standing on it, which
+   decalibrates the projector — the one thing the calibration exists to stop.
+   Zoom is the answer to a big deck, not a smaller square. */
+/* Zoom is a VIEW control: it scales what is already drawn so the GM can read
+   a corner or take in a whole deck. It is deliberately not stored on the map
+   — px/square is the projector's calibration and must not move — and it is
+   bounded because a canvas scaled past a few hundred per cent is a wall of
+   blur, and one scaled under a tenth is unclickable. */
+export const MIN_ZOOM = 0.1;
+export const MAX_ZOOM = 8;
+export const clampZoom = (z) => {
+  // An empty box means "nothing typed yet", not zero. Number('') is 0 and
+  // Number(null) is 0, and reading either as a zoom clamps the map to its
+  // smallest size while the GM is halfway through typing a number.
+  if (z === null || z === undefined) return 1;
+  if (typeof z === 'string' && z.trim() === '') return 1;
+  const n = Number(z);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, n));
+};
+
+export const MAX_GRID = 200;
+export const MIN_GRID = 5;
 
 export const cellKey = (x, y) => `${Math.round(x)},${Math.round(y)}`;
 export const parseKey = (k) => {
@@ -414,6 +497,15 @@ export function readMap(m) {
   for (const [k, v] of Object.entries(src.obscuring || {})) {
     if (parseKey(k) && obscuringById(v)) obscuring[k] = v;
   }
+  /* Ground ids are KEPT AS WRITTEN, exactly as the deck's own theme is: a
+     saved ground's id is unknown to this module, and matching against the
+     built-in list here is the bug that silently moved every deck built on a
+     generated floor back to the default. resolveTheme decides, at the point
+     of drawing, where the library is actually in hand. */
+  const ground = {};
+  for (const [k, v] of Object.entries(src.ground || {})) {
+    if (parseKey(k) && typeof v === 'string' && v.trim()) ground[k] = v.trim().slice(0, 64);
+  }
   const explored = {};
   for (const k of Object.keys(src.explored || {})) {
     if (src.explored[k] && parseKey(k)) explored[k] = true;
@@ -437,8 +529,8 @@ export function readMap(m) {
        drawing, where the saved library is actually in hand. */
     theme: (typeof src.theme === 'string' && src.theme.trim())
       ? src.theme.trim().slice(0, 64) : DEFAULT_THEME,
-    cols: int(src.cols, EMPTY_MAP.cols, 5, 100),
-    rows: int(src.rows, EMPTY_MAP.rows, 5, 100),
+    cols: int(src.cols, EMPTY_MAP.cols, MIN_GRID, MAX_GRID),
+    rows: int(src.rows, EMPTY_MAP.rows, MIN_GRID, MAX_GRID),
     // Half-metre squares are legitimate (a cramped gun deck), so this one is
     // not rounded to an integer like the rest.
     metresPerSquare: (() => {
@@ -465,8 +557,24 @@ export function readMap(m) {
       const x = Math.round(Number(v.x)), y = Math.round(Number(v.y));
       return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
     })(),
-    floor, doors, cover, hazards, obscuring, markers, explored, contacts
+    floor, doors, cover, hazards, obscuring, markers, explored, contacts, ground
   };
+}
+
+/* Every ground a deck actually draws with, the deck's own first. What the
+   renderer has to have loaded before it can paint, and nothing more — a deck
+   that uses two grounds should not fetch the other seven. */
+export function groundsUsed(map) {
+  const m = map && typeof map === 'object' ? map : EMPTY_MAP;
+  const out = [];
+  const add = (id) => { if (id && !out.includes(id)) out.push(id); };
+  add(typeof m.theme === 'string' ? m.theme : DEFAULT_THEME);
+  for (const k of Object.keys(m.ground || {})) {
+    // Only where there is deck to paint: a ground left behind on an erased
+    // square is not drawn, so it should not be fetched either.
+    if (!m.floor || m.floor[k]) add(m.ground[k]);
+  }
+  return out;
 }
 
 /* --------------------------- projector calibration ---------------------------
@@ -572,7 +680,7 @@ export function fogStateAt(map, x, y) {
 export const fitGrid = (availablePx, pxPerSquare) => {
   const px = Number(pxPerSquare) || EMPTY_MAP.pxPerSquare;
   const n = Math.floor((Number(availablePx) || 0) / px);
-  return Math.max(5, Math.min(100, n));
+  return Math.max(MIN_GRID, Math.min(MAX_GRID, n));
 };
 
 /* --------------------------- revealing an area ---------------------------
@@ -765,6 +873,31 @@ export function stampCells(tile, pos, rotation = 0, map = EMPTY_MAP) {
   return out;
 }
 
+/* The cells a brush covers, centred on the cursor. Size 1 is a single
+   square, which is what every tool did before; a bigger brush is how you
+   clear a hall without a hundred clicks.
+
+   An odd size is centred on the cursor. An even one has no true centre, so
+   the cursor is the block's top-left corner — a 2-brush at (5,5) covers
+   (5,5)..(6,6), and you paint away from where you clicked. The alternative
+   is a block whose centre shifts with the direction of the drag, which is
+   worse than a fixed bias you can learn in one stroke. */
+export function brushCells(pos, size, map) {
+  const m = map || EMPTY_MAP;
+  if (!pos) return [];
+  const n = Math.max(1, Math.min(25, Math.round(Number(size) || 1)));
+  const back = Math.floor((n - 1) / 2);
+  const out = [];
+  for (let dx = 0; dx < n; dx++) {
+    for (let dy = 0; dy < n; dy++) {
+      const x = Math.round(pos.x) - back + dx;
+      const y = Math.round(pos.y) - back + dy;
+      if (x >= 0 && y >= 0 && x < m.cols && y < m.rows) out.push({ x, y });
+    }
+  }
+  return out;
+}
+
 /* Paint cells on or off. THE FLOOR IS THE ONLY RECORD OF THE DECK: a stamped
    tile writes its cells here and is then forgotten. Keeping a separate list
    of placed tiles alongside it would mean two sources of truth for the same
@@ -777,6 +910,97 @@ export function paintCells(floor, cells, on = true) {
     if (on) next[k] = true; else delete next[k];
   }
   return next;
+}
+
+/* ---------------------------- expanding a deck ----------------------------
+
+   Growing a deck used to mean typing a bigger number into Cols, which added
+   bare grid: a 20x20 boarding action became a 20x20 boarding action with a
+   lot of void east of it, and the GM painted the rest by hand.
+
+   This repeats what is already built instead. The CURRENT GRID is the tile —
+   not the floor's bounding box — so the repeat keeps whatever margin was
+   designed around the deck, and the number of copies is just the new size
+   over the old.
+
+   MIRRORED AT THE SEAMS by default, which is the whole reason this is worth
+   doing: butt two copies of a deck together and every corridor that ran to
+   the east edge dies against the west wall of its neighbour. Flip the odd
+   blocks and those corridors meet their own mouths, so the repeat reads as
+   one larger complex rather than as a deck photocopied four times.
+
+   WHAT DOES NOT REPEAT, and why:
+   - contacts: a hostile is one creature from one encounter. Copying it makes
+     three more that the GM never placed and the auspex would ping.
+   - explored: fog is a record of where the party has BEEN. Copying it reveals
+     rooms nobody has walked into.
+   Both are kept where they are and cropped to the new grid.
+
+   Shrinking falls out of the same arithmetic — with a target smaller than the
+   source, the modulo never wraps and the result is a plain crop. */
+export function expandMap(map, cols, rows, { mirror = true } = {}) {
+  const src = readMap(map);
+  const w = int(cols, src.cols, MIN_GRID, MAX_GRID);
+  const h = int(rows, src.rows, MIN_GRID, MAX_GRID);
+  const sw = src.cols, sh = src.rows;
+
+  const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {}, ground = {};
+  for (let x = 0; x < w; x++) {
+    // Which copy this column falls in, and whether that copy is flipped.
+    const lx = (mirror && Math.floor(x / sw) % 2) ? sw - 1 - (x % sw) : x % sw;
+    for (let y = 0; y < h; y++) {
+      const ly = (mirror && Math.floor(y / sh) % 2) ? sh - 1 - (y % sh) : y % sh;
+      const from = cellKey(lx, ly);
+      const to = cellKey(x, y);
+      // Each layer is copied on its own rather than gated on the floor: a
+      // marker may legitimately sit off the deck, and gating would drop it.
+      if (src.floor[from]) floor[to] = true;
+      if (src.cover[from]) cover[to] = src.cover[from];
+      if (src.hazards[from]) hazards[to] = src.hazards[from];
+      if (src.doors[from]) doors[to] = { ...src.doors[from] };
+      if (src.markers[from]) markers[to] = { ...src.markers[from] };
+      // The terrain repeats with the deck it is painted on, or an expanded
+      // ice shelf would come back as deck plate.
+      if (src.ground[from]) ground[to] = src.ground[from];
+    }
+  }
+
+  const inside = (k) => {
+    const p = parseKey(k);
+    return Boolean(p) && p.x >= 0 && p.y >= 0 && p.x < w && p.y < h;
+  };
+  const explored = {};
+  for (const k of Object.keys(src.explored)) if (inside(k)) explored[k] = true;
+  const contacts = {};
+  for (const [k, v] of Object.entries(src.contacts)) if (inside(k)) contacts[k] = v;
+  const viewpoint = src.viewpoint && inside(cellKey(src.viewpoint.x, src.viewpoint.y))
+    ? src.viewpoint : null;
+
+  return {
+    ...src,
+    cols: w, rows: h,
+    floor, cover, hazards, doors, markers, ground,
+    explored, contacts, viewpoint
+  };
+}
+
+/* What expanding to this size would do, for the button to say so before it is
+   pressed. A GM about to turn one deck into nine should be told that. */
+export function expandPlan(map, cols, rows) {
+  const src = readMap(map);
+  const w = int(cols, src.cols, MIN_GRID, MAX_GRID);
+  const h = int(rows, src.rows, MIN_GRID, MAX_GRID);
+  const across = Math.ceil(w / src.cols);
+  const down = Math.ceil(h / src.rows);
+  const copies = across * down;
+  return {
+    cols: w, rows: h, across, down, copies,
+    // A partial copy is the normal case — 50 wide off a 30-wide deck is one
+    // whole copy and two thirds of another — and it is worth saying, because
+    // it is the one that cuts a room in half.
+    partial: w % src.cols !== 0 || h % src.rows !== 0,
+    shrinking: w < src.cols || h < src.rows
+  };
 }
 
 /* --------------------------- walls, derived --------------------------- */

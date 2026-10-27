@@ -5,8 +5,10 @@ import {
   wallMask, cornerPillar, WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
-  overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid,
-  resolveTheme, themeNumbersFor,
+  overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
+  clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice,
+  expandMap, expandPlan, MIN_GRID, MAX_GRID,
+  resolveTheme, themeNumbersFor, groundsUsed,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText,
@@ -14,7 +16,9 @@ import {
 } from './battlemap.js';
 import { NOISE, noiseById, noisePing } from './awareness.js';
 import { GEAR } from './gear.js';
-import { shrinkToDataUrl } from './imageshrink.js';
+import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
+import { centreCrop, cropRect, dragBy, zoomTo, scaleBounds } from './texturecrop.js';
+import { generateDeck, newSeed, DECK_STYLES, styleById } from './mapgen.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
 /* The boarding map, projected under physical miniatures.
@@ -28,9 +32,15 @@ import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
    Everything numeric lives in battlemap.js and is checked there. This file
    is the canvas and the controls. */
 
+/* The crop window's side, in CSS pixels. A display size, not the stored one:
+   the tile is written at 512 whatever this is. Big enough to judge what is
+   in the square, small enough to sit in the panel beside its controls. */
+const CROP_BOX = 240;
+
 const MODES = [
   { id: 'stamp', label: 'Stamp tile' },
   { id: 'paint', label: 'Paint deck' },
+  { id: 'ground', label: 'Paint ground' },
   { id: 'erase', label: 'Erase' },
   { id: 'door', label: 'Door' },
   { id: 'cover', label: 'Cover' },
@@ -275,7 +285,8 @@ const BAND_COLOUR = {
 };
 
 export default function BattleMap({
-  map, onChange, win = null, encounters = [], customThemes = [], onSaveTheme = null
+  map, onChange, win = null, encounters = [], customThemes = [], onSaveTheme = null,
+  decks = [], onSaveDeck = null, onNeedTexture = null
 }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = resolveTheme(m.theme, customThemes);
@@ -284,6 +295,22 @@ export default function BattleMap({
   const [tileId, setTileId] = useState('corridor_1x5');
   const [rotation, setRotation] = useState(0);
   const [markerType, setMarkerType] = useState('objective');
+  const [brush, setBrush] = useState(1);
+  /* A VIEW control, deliberately not stored on the map. px/square is the
+     projector's calibration and must not move; zoom scales what is already
+     drawn so the GM can read a corner or take in the whole deck. On the
+     projector it belongs at 100%, which is why it resets rather than
+     following the deck around. */
+  const [zoom, setZoom] = useState(1);
+  // The box holds what is being TYPED, which may be empty or half a number;
+  // `zoom` only ever holds a usable one.
+  const [zoomPct, setZoomPct] = useState('100');
+  // Saving the deck from here. The target is PICKED, never guessed: writing
+  // over the wrong deck and quietly making a duplicate are both losses, and
+  // this window is where a GM works without the library in front of them.
+  const [deckTarget, setDeckTarget] = useState('');
+  const [deckName, setDeckName] = useState('');
+  const [deckNote, setDeckNote] = useState('');
   const [doorKind, setDoorKind] = useState('bulkhead');
   const [coverType, setCoverType] = useState('crates');
   const [hazardType, setHazardType] = useState('fire');
@@ -302,6 +329,39 @@ export default function BattleMap({
   // What came back, held here rather than written to the deck: nothing is
   // kept until the GM says they are happy with it.
   const [preview, setPreview] = useState(null);
+  // What was done to an uploaded file, so the GM is told rather than having
+  // their image quietly cropped and recompressed.
+  const [uploadNote, setUploadNote] = useState('');
+  const [cropSquare, setCropSquare] = useState(true);
+  const fileRef = useRef(null);
+  // The picture being positioned under the crop window, or null when there
+  // is none: { file, url, imgW, imgH, box, scale, x, y }.
+  const [crop, setCrop] = useState(null);
+  const dragRef = useRef(null);
+  // Deck generation. The seed is held here rather than on the map because it
+  // describes how the floor was made, not what it is — and the floor is the
+  // only record of the deck.
+  const [deckOpen, setDeckOpen] = useState(false);
+  const [genStyle, setGenStyle] = useState(DECK_STYLES[0].id);
+  const [genSeed, setGenSeed] = useState('');
+  // Held as text, not numbers: a half-typed "1" on the way to "120" must not
+  // be read as a grid of one and clamp the box out from under the typing.
+  const [growCols, setGrowCols] = useState('');
+  const [growRows, setGrowRows] = useState('');
+  const [growMirror, setGrowMirror] = useState(true);
+  // The terrain the ground brush lays down. Defaults to the deck's own,
+  // which is the "lift it off again" option.
+  const [paintGround, setPaintGround] = useState(m.theme);
+
+  /* Opening the panel offers double the current deck, which is the thing
+     almost everyone wants and saves typing two numbers to get it. */
+  useEffect(() => {
+    if (!deckOpen) return;
+    setGrowCols(String(Math.min(MAX_GRID, m.cols * 2)));
+    setGrowRows(String(Math.min(MAX_GRID, m.rows * 2)));
+    // Only when the panel opens, not on every change to the deck underneath.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deckOpen]);
   const [hover, setHover] = useState(null);
 
   const [weaponKey, setWeaponKey] = useState('lasgun');
@@ -328,7 +388,8 @@ export default function BattleMap({
   // captured map would write back a deck that is several edits old.
   const mapRef = useRef(m);
   mapRef.current = m;
-  const textureRef = useRef(null);
+  // src -> decoded image, for every ground the deck draws with.
+  const texturesRef = useRef(new Map());
   const [textureTick, setTextureTick] = useState(0);
 
   // The two-click tools read their first click back on the second one. State
@@ -355,22 +416,71 @@ export default function BattleMap({
     return entry ? weaponOverlay(entry.stats) : null;
   }, [weaponKey]);
 
-  /* ---- the floor texture, loaded once per theme ---- */
+  /* Every ground this deck draws with — its own, plus any painted onto
+     individual squares. Joined to a string so the effects below re-run when
+     the SET changes rather than on every redraw of the same set. */
+  const groundIds = useMemo(() => groundsUsed(m), [m]);
+  const groundKey = groundIds.join('|');
+
+  /* Where a ground's floor comes from. The deck's generated floor overrides
+     its own theme's file; a ground painted onto a square always uses its
+     own, or painting ice onto a deck with a generated floor would paint the
+     generated floor again. */
+  const groundSrc = (id) => {
+    if (id === m.theme && m.customTexture) return m.customTexture;
+    const t = resolveTheme(id, customThemes);
+    return (t && t.texture) || null;
+  };
+
+  /* A saved ground is listed without its floor — the index would be
+     megabytes otherwise — so the ones actually being drawn are asked for the
+     first time a deck lands on them. Every painted ground, not just the
+     deck's own: a square of saved fen in the corner needs its floor too. */
+  useEffect(() => {
+    if (!onNeedTexture) return;
+    for (const id of groundIds) {
+      const t = resolveTheme(id, customThemes);
+      if (t && t.custom && !t.texture) onNeedTexture(id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groundKey, customThemes, onNeedTexture]);
+
+  /* ---- the floor textures, one per ground in use ----
+
+     Keyed by SOURCE rather than by ground id, so two grounds pointing at the
+     same file share one decode, and a ground whose floor arrives later
+     replaces nothing it should not. */
   useEffect(() => {
     let cancelled = false;
-    const img = new Image();
-    // A generated ground overrides the theme's own file. The theme still
-    // supplies the grid colour, the wash and the rest — only the floor
-    // changes.
-    const src = m.customTexture || theme.texture;
-    img.onload = () => { if (!cancelled) { textureRef.current = img; setTextureTick((t) => t + 1); } };
-    // A missing texture is not an error: the deck is painted in the theme's
-    // flat fallback colour instead, which still reads on a projector. It
-    // just loses the grain.
-    img.onerror = () => { if (!cancelled) { textureRef.current = null; setTextureTick((t) => t + 1); } };
-    img.src = src;
-    return () => { cancelled = true; textureRef.current = null; };
-  }, [theme, m.customTexture]);
+    const wanted = new Set();
+    for (const id of groundIds) {
+      const src = groundSrc(id);
+      if (src) wanted.add(src);
+    }
+    // Anything no longer painted anywhere is dropped, or a GM trying grounds
+    // keeps every one they rejected decoded in memory.
+    for (const key of [...texturesRef.current.keys()]) {
+      if (!wanted.has(key)) texturesRef.current.delete(key);
+    }
+    for (const src of wanted) {
+      if (texturesRef.current.has(src)) continue;
+      const img = new Image();
+      img.onload = () => {
+        if (cancelled) return;
+        texturesRef.current.set(src, img);
+        setTextureTick((t) => t + 1);
+      };
+      /* A missing texture is not an error: those squares are painted in that
+         ground's flat fallback colour instead, which still reads on a
+         projector. It just loses the grain. */
+      img.onerror = () => { if (!cancelled) setTextureTick((t) => t + 1); };
+      img.src = src;
+    }
+    // Redraw now as well, for the sources already decoded.
+    setTextureTick((t) => t + 1);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groundKey, customThemes, m.theme, m.customTexture]);
 
   const measurement = useMemo(() => {
     if (!measureFrom || !measureTo) return null;
@@ -400,20 +510,53 @@ export default function BattleMap({
     if (!pos) return;
     const k = cellKey(pos.x, pos.y);
 
-    if (mode === 'paint') { patch({ floor: paintCells(m.floor, [pos], true) }); return; }
-    if (mode === 'erase') {
-      const doors = { ...m.doors }; delete doors[k];
-      const markers = { ...m.markers }; delete markers[k];
-      const cover = { ...m.cover }; delete cover[k];
-      const hazards = { ...m.hazards }; delete hazards[k];
-      const obscuring = { ...m.obscuring }; delete obscuring[k];
-      patch({ floor: paintCells(m.floor, [pos], false), doors, markers, cover, hazards, obscuring });
+    if (mode === 'paint') {
+      patch({ floor: paintCells(m.floor, brushCells(pos, brush, m), true) });
       return;
     }
-    // Foliage and smoke are laid down by dragging, like the deck itself.
-    if (mode === 'obscure') {
+    /* Painting terrain, not deck. Only what a square LOOKS like changes, so
+       this writes nothing but `ground` — the floor it paints over is left
+       exactly as it is, and with it every wall, region and fog state
+       derived from it. */
+    if (mode === 'ground') {
+      const ground = { ...m.ground };
+      for (const c of brushCells(pos, brush, m)) {
+        const ck = cellKey(c.x, c.y);
+        // The deck's own ground is the absence of paint rather than a value,
+        // so choosing it is how paint is lifted off again.
+        if (paintGround === m.theme) delete ground[ck]; else ground[ck] = paintGround;
+      }
+      patch({ ground });
+      return;
+    }
+    if (mode === 'erase') {
+      // Everything standing on a square goes with the square. Erasing the
+      // floor and leaving its bulkhead behind would put a door in the void.
+      const cells = brushCells(pos, brush, m);
+      const doors = { ...m.doors };
+      const markers = { ...m.markers };
+      const cover = { ...m.cover };
+      const hazards = { ...m.hazards };
+      const ground = { ...m.ground };
       const obscuring = { ...m.obscuring };
-      if (obscuring[k] === obscureType && !dragging) delete obscuring[k]; else obscuring[k] = obscureType;
+      for (const c of cells) {
+        const ck = cellKey(c.x, c.y);
+        delete doors[ck]; delete markers[ck]; delete cover[ck]; delete hazards[ck];
+        delete ground[ck]; delete obscuring[ck];
+      }
+      patch({ floor: paintCells(m.floor, cells, false), doors, markers, cover, hazards, ground, obscuring });
+      return;
+    }
+    // Foliage and smoke are laid down by dragging, like the deck itself, and
+    // take the same brush as everything else.
+    if (mode === 'obscure') {
+      const cells = brushCells(pos, brush, m);
+      const obscuring = { ...m.obscuring };
+      const lifting = !dragging && obscuring[k] === obscureType;
+      for (const c of cells) {
+        const ck = cellKey(c.x, c.y);
+        if (lifting) delete obscuring[ck]; else obscuring[ck] = obscureType;
+      }
       patch({ obscuring });
       return;
     }
@@ -654,23 +797,40 @@ export default function BattleMap({
     // 1. The deck, textured, clipped to the painted cells so unbuilt grid
     //    stays void rather than becoming a rectangle of corridor.
     if (floorKeys.length) {
-      ctx.save();
-      ctx.beginPath();
+      /* Grouped by the ground painted on each square, so a deck that runs
+         from ice to deck plate is drawn in one pass per terrain rather than
+         one per square. Unpainted squares fall to the deck's own ground. */
+      const byGround = new Map();
       for (const k of floorKeys) {
-        const p = parseKey(k);
-        if (p) ctx.rect(p.x * px, p.y * px, px, px);
+        const id = m.ground[k] || m.theme;
+        const list = byGround.get(id);
+        if (list) list.push(k); else byGround.set(id, [k]);
       }
-      ctx.clip();
-      const img = textureRef.current;
-      ctx.fillStyle = img ? (ctx.createPattern(img, 'repeat') || theme.fallback) : theme.fallback;
-      ctx.fillRect(0, 0, w, h);
-      // The wash knocks a busy photographic deck back so tokens, the grid
-      // and the templates read over it. A pale drawn deck has none of that
-      // noise and a dark grid of its own, so washing it would only turn a
-      // deliberately clean floor grey.
-      ctx.fillStyle = `rgba(0,0,0,${theme.wash})`;
-      ctx.fillRect(0, 0, w, h);
-      ctx.restore();
+
+      for (const [id, keys] of byGround) {
+        // Each ground brings its OWN fallback and wash: the wash is tuned to
+        // how bright that particular floor is, so sharing the deck's would
+        // wash a pale ice shelf like dark deck plate.
+        const t = resolveTheme(id, customThemes) || theme;
+        const src = groundSrc(id);
+        const img = src ? texturesRef.current.get(src) : null;
+        ctx.save();
+        ctx.beginPath();
+        for (const k of keys) {
+          const p = parseKey(k);
+          if (p) ctx.rect(p.x * px, p.y * px, px, px);
+        }
+        ctx.clip();
+        ctx.fillStyle = img ? (ctx.createPattern(img, 'repeat') || t.fallback) : t.fallback;
+        ctx.fillRect(0, 0, w, h);
+        // The wash knocks a busy photographic deck back so tokens, the grid
+        // and the templates read over it. A pale drawn deck has none of that
+        // noise and a dark grid of its own, so washing it would only turn a
+        // deliberately clean floor grey.
+        ctx.fillStyle = `rgba(0,0,0,${t.wash})`;
+        ctx.fillRect(0, 0, w, h);
+        ctx.restore();
+      }
     }
 
     // 2. Deployment zones, under everything else.
@@ -994,10 +1154,15 @@ export default function BattleMap({
         ctx.fillRect(c.x * px, c.y * px, px, px);
         ctx.strokeRect(c.x * px, c.y * px, px, px);
       }
-    } else if (hover && (mode === 'paint' || mode === 'erase')) {
-      fill([hover], mode === 'erase' ? 'rgba(231,76,60,0.4)' : 'rgba(46,204,113,0.4)');
+    } else if (hover && (mode === 'paint' || mode === 'erase' || mode === 'ground')) {
+      fill(brushCells(hover, brush, m),
+        mode === 'erase' ? 'rgba(231,76,60,0.4)'
+          // Terrain lays down rather than builds, so it gets its own colour:
+          // a green brush would read as "this adds deck".
+          : mode === 'ground' ? 'rgba(0,229,255,0.35)'
+            : 'rgba(46,204,113,0.4)');
     } else if (hover && mode === 'obscure') {
-      fill([hover], 'rgba(95,159,85,0.45)');
+      fill(brushCells(hover, brush, m), 'rgba(95,159,85,0.45)');
     } else if (hover && mode === 'noise' && !projecting) {
       // How far this sound carries, as the GM lines it up.
       const n = noiseById(noiseKind);
@@ -1029,7 +1194,7 @@ export default function BattleMap({
       ctx.textAlign = 'left';
       ctx.fillText(bar.label, bx + 4, by - px * 0.3);
     }
-  }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin, aim, weapon, coneAngle, projecting,
+  }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, showLos, textureTick,
       noiseKind]);
 
@@ -1102,7 +1267,10 @@ export default function BattleMap({
   // resizing a panel should not quietly redraw the deck being built.
   useEffect(() => {
     if (!win) return undefined;
-    fitToStage();
+    // Only a blank deck. Now that the window and the tab share one map,
+    // fitting on open would resize a deck the GM had already built — and
+    // shrinking hides painted squares, even though the floor keeps them.
+    if (!Object.keys(mapRef.current.floor).length) fitToStage();
     const onResize = () => fitToStage();
     win.addEventListener('resize', onResize);
     return () => win.removeEventListener('resize', onResize);
@@ -1132,6 +1300,50 @@ export default function BattleMap({
     setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
   };
 
+  /* Grows the deck by repeating what is already built, rather than adding
+     bare grid for the GM to paint. Nothing is asked first: it is additive
+     where it grows, and `Expand deck` back to the old numbers puts it back —
+     except where it SHRINKS, which drops squares, so that is confirmed. */
+  const growDeck = () => {
+    const plan = expandPlan(m, growCols, growRows);
+    if (plan.shrinking
+      && !window.confirm(
+        `${plan.cols}×${plan.rows} is smaller than this deck. Squares outside it are dropped.`)) {
+      return;
+    }
+    if (onChange) onChange(expandMap(m, growCols, growRows, { mirror: growMirror }));
+  };
+
+  /* Lays out a deck: compartments, the runs between them, and a door at
+     every junction. The seed is what makes it a deck rather than a roll —
+     written down, it comes back, so an edit that goes wrong is recoverable
+     and a layout worth keeping can be handed to someone else.
+
+     REPLACES THE FLOOR, so it asks first when there is one. What it does not
+     touch is the ground, the calibration or the deck's name: those are the
+     GM's, and a generator that reset them would be taking more than it was
+     asked for. */
+  const rollDeck = () => {
+    if (Object.keys(m.floor).length
+      && !window.confirm('Replace the deck with a generated one? The ground and calibration are kept.')) {
+      return;
+    }
+    const seed = genSeed.trim() || newSeed();
+    const out = generateDeck({ cols: m.cols, rows: m.rows, style: genStyle, seed });
+    setGenSeed(out.seed);
+    patch({
+      floor: out.floor,
+      doors: out.doors,
+      // Everything that was placed ON the old deck refers to squares that no
+      // longer exist. Left behind, a crate sits in the void and a contact
+      // pings from inside a wall.
+      cover: {}, hazards: {}, markers: {}, contacts: {},
+      explored: {}, viewpoint: null
+    });
+    originRef.current = null; measureRef.current = null;
+    setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
+  };
+
   /* Generates a floor with the same Gemini pipeline the portraits use. The
      GM describes the ground; the server wraps that in the clauses that make
      it a floor rather than a picture (top-down, seamless, flat light, no grid
@@ -1155,12 +1367,73 @@ export default function BattleMap({
         try { why = (await res.json()).error || why; } catch { /* not json */ }
         throw new Error(why);
       }
-      // Shrunk here, as a portrait is: it is kept on a saved record, and the
-      // bytes Gemini returns are far more than a tiling floor needs.
-      const texture = await shrinkToDataUrl(await res.blob(), 768, 0.8);
+      /* Shrunk hard, because it is kept in the GM's library as a data URL
+         and that library has a real byte ceiling. 512 is plenty for a floor
+         that TILES — at a 40px square one copy already spans twelve squares
+         — and it is the difference between a handful of saved grounds
+         fitting and the first one filling the budget on its own. */
+      const texture = await shrinkToDataUrl(await res.blob(), 512, 0.75);
       setPreview({ texture, numbers: await sampleNumbers(texture) });
     } catch (e) {
       setGenErr(e.message || 'Generation failed');
+    } finally {
+      setGenBusy(false);
+    }
+  };
+
+  /* A floor of the GM's own. It lands in the same preview a generated one
+     does, so it is judged tiled and saved by the same road.
+
+     Cropped and recompressed to match the shipped floors, and SAID so: the
+     two files people reach for are a photo and a screenshot, and both are
+     the wrong shape for something that tiles. */
+  const uploadGround = (file) => {
+    if (!file) return;
+    setGenErr(''); setUploadNote('');
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const advice = textureAdvice({ width: img.naturalWidth, height: img.naturalHeight });
+      if (!advice.ok) { URL.revokeObjectURL(url); setGenErr(advice.message); return; }
+      setUploadNote(advice.message);
+      // Opens on the middle, which is where the old centre-crop took it from.
+      // Pressing straight through gives the tile this gave before it could
+      // be dragged at all.
+      setCrop({ file, url, ...centreCrop(img.naturalWidth, img.naturalHeight, CROP_BOX) });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); setGenErr('Could not read that image.'); };
+    img.src = url;
+  };
+
+  /* The object URL is the browser holding the whole file in memory for us.
+     Dropped here rather than on unmount alone, because a GM trying four
+     photographs for one floor would otherwise be holding all four. */
+  const closeCrop = () => setCrop((c) => {
+    if (c) URL.revokeObjectURL(c.url);
+    return null;
+  });
+
+  const recentre = (c) => ({ ...c, ...centreCrop(c.imgW, c.imgH, c.box) });
+
+  /* Cuts the chosen square and hands it to the same preview a generated
+     floor lands in, so both are judged tiled and saved by the same button. */
+  const commitCrop = async () => {
+    if (!crop) return;
+    setGenErr(''); setGenBusy(true);
+    try {
+      const out = await prepareTexture(crop.file, {
+        square: cropSquare,
+        // Unticked means take the file as it is, so there is no square to
+        // cut and the rect would be meaningless.
+        rect: cropSquare ? cropRect(crop) : null
+      });
+      setPreview({ texture: out.dataUrl, numbers: await sampleNumbers(out.dataUrl) });
+      setUploadNote(
+        `Stored at ${out.width}\u00d7${out.height}, ${Math.round(out.bytes / 1024)}KB.`
+      );
+      closeCrop();
+    } catch (e) {
+      setGenErr(e.message || 'Could not read that image.');
     } finally {
       setGenBusy(false);
     }
@@ -1190,16 +1463,30 @@ export default function BattleMap({
   /* Keeps it. The preview becomes a named environment in the GM's own
      library, the map switches to it, and it is in the picker from then on
      beside the nine built in. */
-  const saveGround = () => {
-    if (!preview || !onSaveTheme) return;
-    const saved = onSaveTheme({
+  const saveGround = async () => {
+    if (!preview) return;
+    if (!onSaveTheme) {
+      // It used to be a disabled button with nothing to say. A GM pressing
+      // it learned only that pressing it did nothing.
+      setGenErr('This window cannot save grounds — open the map from the GM dashboard.');
+      return;
+    }
+    setGenBusy(true);
+    const saved = await onSaveTheme({
       name: genName.trim() || 'Saved ground',
       texture: preview.texture,
       prompt: [genDescribe, genCover].filter(Boolean).join(' / '),
       subtitle: genCover ? `with ${genCover}` : '',
       ...preview.numbers
     });
-    if (saved && saved.id) patch({ theme: saved.id, customTexture: null });
+    setGenBusy(false);
+    if (!saved || !saved.id) {
+      // The store said no — out of room, or offline. The message is already
+      // on screen; keep the preview so the work is not thrown away with it.
+      if (!genErr) setGenErr('Could not save that ground.');
+      return;
+    }
+    patch({ theme: saved.id, customTexture: null });
     setPreview(null);
     setGenName('');
     setGenOpen(false);
@@ -1240,11 +1527,41 @@ export default function BattleMap({
           onClick={() => setGenOpen((v) => !v)}>
           Ground{m.customTexture ? ' \u00b7 generated' : ''}
         </button>
+        <button type="button"
+          className={'rt-btn rt-bm-mode' + (deckOpen ? ' on' : '')}
+          onClick={() => setDeckOpen((v) => !v)}>
+          Deck
+        </button>
         {MODES.map((x) => (
           <button key={x.id} type="button"
             className={'rt-btn rt-bm-mode' + (mode === x.id ? ' on' : '')}
             onClick={() => setMode(x.id)}>{x.label}</button>
         ))}
+        {onSaveDeck && (<>
+          <select value={deckTarget} onChange={(e) => { setDeckTarget(e.target.value); setDeckNote(''); }}>
+            {/* Written as the character itself: a backslash-u escape in JSX
+                TEXT is not an escape, it is the six characters, and the GM
+                reads the backslash. */}
+            <option value="">Save as a new deck…</option>
+            {decks.map((d) => (
+              <option key={d.id} value={d.id}>Save over: {d.name || 'Untitled deck'}</option>
+            ))}
+          </select>
+          {!deckTarget && (
+            <input className="rt-field" value={deckName} maxLength={80}
+              placeholder="Name this deck"
+              onChange={(e) => setDeckName(e.target.value)} />
+          )}
+          <button type="button" className="rt-btn" onClick={() => {
+            const saved = onSaveDeck({ id: deckTarget || null, name: deckName, map: m });
+            if (saved) {
+              setDeckNote(`Saved to \u201c${saved.name}\u201d.`);
+              setDeckTarget(saved.id);
+              setDeckName('');
+            }
+          }}>Save deck</button>
+          {deckNote ? <span className="rt-bm-hint">{deckNote}</span> : null}
+        </>)}
         <button type="button" className="rt-btn" onClick={exportPng}>Export PNG</button>
         <button type="button" className="rt-btn" onClick={clearAll}>Clear deck</button>
         <button type="button" className="rt-btn" onClick={() => setShowOptions(false)}
@@ -1257,12 +1574,99 @@ export default function BattleMap({
         </>)}
       </div>
 
+      {/* Laying out the deck, beside generating its ground: the two halves of
+          "make me somewhere to fight", in one place. */}
+      {deckOpen && (
+        <div className="rt-bm-gen">
+          <div className="rt-sechead">
+            <h4>Generate a deck</h4>
+            <button type="button" className="rt-btn ghost"
+              onClick={() => setDeckOpen(false)}>Close</button>
+          </div>
+
+          <div className="rt-bm-bar">
+            <label className="rt-bm-num">
+              <span>Layout</span>
+              <select value={genStyle} onChange={(e) => setGenStyle(e.target.value)}>
+                {DECK_STYLES.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="rt-bm-num">
+              <span>Seed</span>
+              {/* Typed and kept, because this is what makes a generated deck
+                  reproducible. Blank rolls a fresh one and shows it. */}
+              <input className="rt-field" value={genSeed} maxLength={24}
+                placeholder="blank to roll"
+                onChange={(e) => setGenSeed(e.target.value)} />
+            </label>
+            <button type="button" className="rt-btn ghost"
+              onClick={() => setGenSeed(newSeed())}>New seed</button>
+            <button type="button" className="rt-btn" onClick={rollDeck}>
+              Generate deck
+            </button>
+          </div>
+
+          {/* Growing a built deck, rather than laying out a new one. Here
+              because "make it bigger" and "make me one" are the same
+              question asked at different points. */}
+          <div className="rt-bm-bar">
+            <label className="rt-bm-num">
+              <span>Expand to cols</span>
+              <input type="number" min={MIN_GRID} max={MAX_GRID} value={growCols}
+                onChange={(e) => setGrowCols(e.target.value)} />
+            </label>
+            <label className="rt-bm-num">
+              <span>rows</span>
+              <input type="number" min={MIN_GRID} max={MAX_GRID} value={growRows}
+                onChange={(e) => setGrowRows(e.target.value)} />
+            </label>
+            <label className="rt-bm-num">
+              <input type="checkbox" checked={growMirror}
+                onChange={(e) => setGrowMirror(e.target.checked)} />
+              <span>Mirror at the seams</span>
+            </label>
+            <button type="button" className="rt-btn" onClick={growDeck}>
+              Expand deck
+            </button>
+          </div>
+
+          <p className="rt-bm-hint">
+            {(() => {
+              // Said before the button is pressed, because turning one deck
+              // into nine is worth being told about first.
+              const p = expandPlan(m, growCols, growRows);
+              if (p.shrinking) {
+                return `${p.cols}×${p.rows} is smaller than this deck. `
+                  + 'Anything outside the new grid is dropped.';
+              }
+              if (p.copies <= 1) return `${p.cols}×${p.rows} holds one copy of this deck.`;
+              return `${p.across}×${p.down} copies of the current ${m.cols}×${m.rows} deck`
+                + `${p.partial ? ', the last one cut short' : ''}`
+                + `${growMirror ? ', flipped at each seam so the runs meet' : ', repeated as-is'}.`
+                + ' Hostiles and fog are not copied.';
+            })()}
+          </p>
+
+          <p className="rt-bm-hint">
+            {styleById(genStyle).note} Laid out across the current
+            {' '}{m.cols}×{m.rows} grid, with a door wherever a run meets a
+            compartment — so one fog click reveals one room, not the deck.
+            Replaces the floor and the bulkheads; the ground, the calibration
+            and the deck's name are kept.
+          </p>
+        </div>
+      )}
+
       {genOpen && (
         <div className="rt-bm-gen">
           <div className="rt-sechead">
             <h4>Generate a ground</h4>
             <button type="button" className="rt-btn ghost"
-              onClick={() => { setGenOpen(false); setPreview(null); setGenErr(''); }}>Close</button>
+              onClick={() => {
+                setGenOpen(false); setPreview(null); setGenErr(''); closeCrop();
+              }}>Close</button>
           </div>
 
           <label className="rt-bm-field">
@@ -1302,6 +1706,101 @@ export default function BattleMap({
             </button>
           </div>
 
+          {/* A floor of the GM's own, down the same road as a generated one:
+              it lands in the preview below and is saved by the same button. */}
+          <div className="rt-bm-bar">
+            <input ref={fileRef} type="file" accept="image/*" hidden
+              onChange={(e) => {
+                uploadGround(e.target.files && e.target.files[0]);
+                // Cleared, or picking the same file twice fires nothing.
+                e.target.value = '';
+              }} />
+            <button type="button" className="rt-btn ghost" disabled={genBusy}
+              onClick={() => fileRef.current && fileRef.current.click()}>
+              Upload a floor…
+            </button>
+            <label className="rt-bm-num">
+              <input type="checkbox" checked={cropSquare} disabled={genBusy}
+                onChange={(e) => setCropSquare(e.target.checked)} />
+              <span>Crop to square</span>
+            </label>
+            <span className="rt-bm-hint">
+              A floor tiles, so it wants a square. Pick an image and drag it
+              under the window to choose which square. Stored at 512×512 to
+              match the shipped grounds.
+            </span>
+          </div>
+
+          {/* THE CROP WINDOW. The picture moves, the window does not: the
+              square on screen is exactly the square that gets cut, so there
+              is nothing to read off a number or imagine. */}
+          {crop && (
+            <div className="rt-bm-bar rt-bm-cropbar">
+              <div
+                className="rt-bm-crop"
+                style={{ width: CROP_BOX, height: CROP_BOX }}
+                onPointerDown={(e) => {
+                  dragRef.current = { x: e.clientX, y: e.clientY };
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                }}
+                onPointerMove={(e) => {
+                  const d = dragRef.current;
+                  if (!d) return;
+                  const dx = e.clientX - d.x, dy = e.clientY - d.y;
+                  dragRef.current = { x: e.clientX, y: e.clientY };
+                  setCrop((c) => (c ? { ...c, ...dragBy(c, dx, dy) } : c));
+                }}
+                onPointerUp={() => { dragRef.current = null; }}
+                onPointerCancel={() => { dragRef.current = null; }}
+                // The wheel zooms, as it does over the map itself.
+                onWheel={(e) => {
+                  setCrop((c) => (c
+                    ? { ...c, ...zoomTo(c, c.scale * (e.deltaY < 0 ? 1.12 : 1 / 1.12)) }
+                    : c));
+                }}
+              >
+                <img src={crop.url} alt="" draggable={false}
+                  style={{
+                    width: crop.imgW * crop.scale,
+                    height: crop.imgH * crop.scale,
+                    transform: `translate(${crop.x}px, ${crop.y}px)`
+                  }} />
+              </div>
+
+              <div className="rt-bm-cropside">
+                <label className="rt-bm-num">
+                  <span>Zoom</span>
+                  <input type="range" step="any"
+                    min={scaleBounds(crop.imgW, crop.imgH, crop.box).min}
+                    max={scaleBounds(crop.imgW, crop.imgH, crop.box).max}
+                    value={crop.scale}
+                    onChange={(e) => setCrop((c) => (c
+                      ? { ...c, ...zoomTo(c, Number(e.target.value)) } : c))} />
+                </label>
+                <span className="rt-bm-hint">
+                  {crop.imgW}×{crop.imgH}. Taking {cropRect(crop).size}px
+                  from ({cropRect(crop).sx}, {cropRect(crop).sy}).
+                </span>
+                <div className="rt-bm-bar">
+                  <button type="button" className="rt-btn" onClick={commitCrop}
+                    disabled={genBusy}>
+                    {genBusy ? 'Working…' : 'Use this crop'}
+                  </button>
+                  <button type="button" className="rt-btn ghost"
+                    onClick={() => setCrop((c) => (c ? recentre(c) : c))}
+                    disabled={genBusy}>
+                    Centre
+                  </button>
+                  <button type="button" className="rt-btn ghost" onClick={closeCrop}
+                    disabled={genBusy}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {uploadNote ? <p className="rt-bm-hint">{uploadNote}</p> : null}
           {genErr ? <p className="rt-warn">{genErr}</p> : null}
 
           {preview && (<>
@@ -1315,7 +1814,7 @@ export default function BattleMap({
                 <input value={genName} maxLength={60} placeholder="Refinery floor"
                   onChange={(e) => setGenName(e.target.value)} />
               </label>
-              <button type="button" className="rt-btn" onClick={saveGround} disabled={!onSaveTheme}>
+              <button type="button" className="rt-btn" onClick={saveGround} disabled={genBusy}>
                 Save to my grounds
               </button>
               <button type="button" className="rt-btn ghost"
@@ -1345,6 +1844,50 @@ export default function BattleMap({
           </select>
           <button type="button" className="rt-btn"
             onClick={() => setRotation((r) => (r + 90) % 360)}>Rotate {rotation}° (R)</button>
+        </>)}
+
+        {(mode === 'paint' || mode === 'erase' || mode === 'ground') && (
+          <label className="rt-bm-num">
+            <span>Brush</span>
+            <select value={String(brush)} onChange={(e) => setBrush(Number(e.target.value))}>
+              {[1, 2, 3, 5, 7, 10].map((n) => (
+                <option key={n} value={String(n)}>{n}×{n}</option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* Which terrain the brush lays down. The deck's own ground is first
+            and named as such, because picking it is how paint comes off. */}
+        {mode === 'ground' && (<>
+          <label className="rt-bm-num">
+            <span>Terrain</span>
+            <select value={paintGround} onChange={(e) => setPaintGround(e.target.value)}>
+              <option value={m.theme}>
+                {`This deck's ground (${theme.name}) \u2014 lifts paint off`}
+              </option>
+              <optgroup label="Built in">
+                {MAP_THEMES.filter((t) => t.id !== m.theme).map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </optgroup>
+              {customThemes.length > 0 && (
+                <optgroup label="Saved grounds">
+                  {customThemes.filter((t) => t.id !== m.theme).map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+          <span className="rt-bm-hint">
+            {(() => {
+              const n = Object.keys(m.ground).filter((k) => m.floor[k]).length;
+              return n
+                ? `${n} square${n === 1 ? '' : 's'} painted, ${groundIds.length} grounds on this deck.`
+                : 'Paint terrain over the deck. Walls, rooms and fog are unaffected \u2014 this is only what a square looks like.';
+            })()}
+          </span>
         </>)}
 
         {mode === 'marker' && (
@@ -1519,6 +2062,23 @@ export default function BattleMap({
           </select>
         </label>
         <button type="button" className="rt-btn" onClick={fitToStage}>Fit to screen</button>
+        <label className="rt-bm-num">
+          <span>Zoom %</span>
+          {/* Typed, not picked: a GM matching the deck to a projector wants
+              83%, not the nearest of eight. The wheel over the map does the
+              same thing for the cases where a number is not what you have
+              in mind. */}
+          <input type="number" value={zoomPct}
+            min={Math.round(MIN_ZOOM * 100)} max={Math.round(MAX_ZOOM * 100)} step={5}
+            onWheel={(e) => e.currentTarget.blur()}
+            onChange={(e) => {
+              setZoomPct(e.target.value);
+              if (e.target.value.trim() !== '') setZoom(clampZoom(Number(e.target.value) / 100));
+            }}
+            onBlur={() => setZoomPct(String(Math.round(zoom * 100)))} />
+        </label>
+        <button type="button" className="rt-btn"
+          onClick={() => { setZoom(1); setZoomPct('100'); }}>100%</button>
         <label className="rt-bm-num"><input type="checkbox" checked={showZones}
           onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
         <label className="rt-bm-num"><input type="checkbox" checked={showCalibration}
@@ -1546,20 +2106,55 @@ export default function BattleMap({
 
       </>)}
 
-      <div className="rt-bm-stage" ref={stageRef}>
+      <div className="rt-bm-stage" ref={stageRef}
+        /* Zooming about the pointer rather than the top-left: without the
+           scroll correction the deck slides out from under the cursor and
+           every step has to be chased with the scrollbars. */
+        onWheel={(e) => {
+          if (!e.currentTarget.contains(e.target)) return;
+          e.preventDefault();
+          const el = e.currentTarget;
+          const box = el.getBoundingClientRect();
+          const atX = e.clientX - box.left + el.scrollLeft;
+          const atY = e.clientY - box.top + el.scrollTop;
+          const next = clampZoom(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+          if (next === zoom) return;
+          const k = next / zoom;
+          setZoom(next);
+          setZoomPct(String(Math.round(next * 100)));
+          // After the browser has laid the bigger canvas out.
+          requestAnimationFrame(() => {
+            el.scrollLeft = atX * k - (e.clientX - box.left);
+            el.scrollTop = atY * k - (e.clientY - box.top);
+          });
+        }}>
+        {/* The wrapper takes the scaled size because a CSS transform does not
+            affect layout — without it the stage would not know there was
+            anything to scroll to. */}
+        <div style={{ width: m.cols * px * zoom, height: m.rows * px * zoom }}>
         <canvas
           ref={canvasRef}
           onMouseMove={(e) => {
             const pos = posFromEvent(e);
             setHover(pos);
-            if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'obscure')) applyAt(pos, true);
+            if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure')) {
+              applyAt(pos, true);
+            }
           }}
           onMouseLeave={() => setHover(null)}
           onMouseDown={(e) => {
             if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
           }}
-          style={{ cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
+          style={{
+            cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer',
+            transform: zoom === 1 ? undefined : `scale(${zoom})`,
+            transformOrigin: 'top left',
+            // Nearest-neighbour when magnified: a deck zoomed in should show
+            // its squares, not a blurred guess at them.
+            imageRendering: zoom > 1 ? 'pixelated' : undefined
+          }}
         />
+        </div>
       </div>
 
     </div>

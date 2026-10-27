@@ -305,6 +305,8 @@ export default function BattleMap({
   // The box holds what is being TYPED, which may be empty or half a number;
   // `zoom` only ever holds a usable one.
   const [zoomPct, setZoomPct] = useState('100');
+  const zoomRef = useRef(1);
+  zoomRef.current = zoom;
   // Saving the deck from here. The target is PICKED, never guessed: writing
   // over the wrong deck and quietly making a duplicate are both losses, and
   // this window is where a GM works without the library in front of them.
@@ -1277,6 +1279,82 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [win, m.pxPerSquare]);
 
+  /* Zooming the deck, kept clear of scrolling it.
+
+     The plain wheel scrolls: a deck bigger than the window is read by
+     scrolling it, and a wheel that also zoomed meant every scroll changed the
+     scale under the cursor. Zoom now needs a deliberate gesture: hold the
+     right mouse button and turn the wheel, or hold Z and turn the wheel. A
+     trackpad pinch also works, because browsers report it as a wheel event
+     with ctrl held.
+
+     A native listener rather than React's onWheel: React registers wheel
+     listeners as passive, and a passive listener cannot stop the page
+     scrolling, so the deck zoomed and slid at the same time. */
+  const zHeldRef = useRef(false);
+  const rightZoomedRef = useRef(false);
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const w = win || window;
+    const typing = (t) => ['INPUT', 'SELECT', 'TEXTAREA'].includes((t && t.tagName) || '');
+
+    const onKeyDown = (e) => {
+      if (e.key.toLowerCase() === 'z' && !e.metaKey && !e.ctrlKey && !e.altKey && !typing(e.target)) {
+        zHeldRef.current = true;
+      }
+    };
+    const onKeyUp = (e) => { if (e.key.toLowerCase() === 'z') zHeldRef.current = false; };
+    // A key held while the window loses focus never reports its release.
+    const onBlur = () => { zHeldRef.current = false; rightZoomedRef.current = false; };
+
+    const onWheel = (e) => {
+      const rightHeld = (e.buttons & 2) === 2;
+      if (!(rightHeld || zHeldRef.current || e.ctrlKey)) return;   // a plain wheel scrolls
+      e.preventDefault();
+      if (rightHeld) rightZoomedRef.current = true;
+      const box = el.getBoundingClientRect();
+      const atX = e.clientX - box.left + el.scrollLeft;
+      const atY = e.clientY - box.top + el.scrollTop;
+      const cur = zoomRef.current;
+      // A pinch arrives as many small deltas; a wheel notch as one large one.
+      const step = e.ctrlKey ? Math.exp(-e.deltaY * 0.01) : (e.deltaY < 0 ? 1.12 : 1 / 1.12);
+      const next = clampZoom(cur * step);
+      if (next === cur) return;
+      const k = next / cur;
+      zoomRef.current = next;
+      setZoom(next);
+      setZoomPct(String(Math.round(next * 100)));
+      // About the pointer, after the browser has laid the bigger canvas out.
+      // Without the correction the deck slides out from under the cursor.
+      w.requestAnimationFrame(() => {
+        el.scrollLeft = atX * k - (e.clientX - box.left);
+        el.scrollTop = atY * k - (e.clientY - box.top);
+      });
+    };
+    // Releasing the right button after zooming would open the context menu
+    // over the map. Swallow it once, and only when a zoom just happened.
+    const onContextMenu = (e) => {
+      if (rightZoomedRef.current) { e.preventDefault(); rightZoomedRef.current = false; }
+    };
+    const onMouseDown = (e) => { if (e.button === 2) rightZoomedRef.current = false; };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('contextmenu', onContextMenu);
+    el.addEventListener('mousedown', onMouseDown);
+    w.addEventListener('keydown', onKeyDown);
+    w.addEventListener('keyup', onKeyUp);
+    w.addEventListener('blur', onBlur);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('contextmenu', onContextMenu);
+      el.removeEventListener('mousedown', onMouseDown);
+      w.removeEventListener('keydown', onKeyDown);
+      w.removeEventListener('keyup', onKeyUp);
+      w.removeEventListener('blur', onBlur);
+    };
+  }, [win]);
+
   // Hiding the toolbars frees the height they held; in the map's own window
   // the grid grows into it, as it does on a resize. Waits a frame for the
   // layout to settle before measuring.
@@ -1752,7 +1830,7 @@ export default function BattleMap({
                 }}
                 onPointerUp={() => { dragRef.current = null; }}
                 onPointerCancel={() => { dragRef.current = null; }}
-                // The wheel zooms, as it does over the map itself.
+                // The wheel zooms this small crop preview; the deck itself needs Z or the right button.
                 onWheel={(e) => {
                   setCrop((c) => (c
                     ? { ...c, ...zoomTo(c, c.scale * (e.deltaY < 0 ? 1.12 : 1 / 1.12)) }
@@ -2065,9 +2143,9 @@ export default function BattleMap({
         <label className="rt-bm-num">
           <span>Zoom %</span>
           {/* Typed, not picked: a GM matching the deck to a projector wants
-              83%, not the nearest of eight. The wheel over the map does the
-              same thing for the cases where a number is not what you have
-              in mind. */}
+              83%, not the nearest of eight. Holding Z or the right button
+              and turning the wheel over the map does the same thing for the
+              cases where a number is not what you have in mind. */}
           <input type="number" value={zoomPct}
             min={Math.round(MIN_ZOOM * 100)} max={Math.round(MAX_ZOOM * 100)} step={5}
             onWheel={(e) => e.currentTarget.blur()}
@@ -2079,6 +2157,7 @@ export default function BattleMap({
         </label>
         <button type="button" className="rt-btn"
           onClick={() => { setZoom(1); setZoomPct('100'); }}>100%</button>
+        <span className="rt-bm-hint">Zoom: hold Z or the right button and scroll, or pinch.</span>
         <label className="rt-bm-num"><input type="checkbox" checked={showZones}
           onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
         <label className="rt-bm-num"><input type="checkbox" checked={showCalibration}
@@ -2106,28 +2185,7 @@ export default function BattleMap({
 
       </>)}
 
-      <div className="rt-bm-stage" ref={stageRef}
-        /* Zooming about the pointer rather than the top-left: without the
-           scroll correction the deck slides out from under the cursor and
-           every step has to be chased with the scrollbars. */
-        onWheel={(e) => {
-          if (!e.currentTarget.contains(e.target)) return;
-          e.preventDefault();
-          const el = e.currentTarget;
-          const box = el.getBoundingClientRect();
-          const atX = e.clientX - box.left + el.scrollLeft;
-          const atY = e.clientY - box.top + el.scrollTop;
-          const next = clampZoom(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
-          if (next === zoom) return;
-          const k = next / zoom;
-          setZoom(next);
-          setZoomPct(String(Math.round(next * 100)));
-          // After the browser has laid the bigger canvas out.
-          requestAnimationFrame(() => {
-            el.scrollLeft = atX * k - (e.clientX - box.left);
-            el.scrollTop = atY * k - (e.clientY - box.top);
-          });
-        }}>
+      <div className="rt-bm-stage" ref={stageRef}>
         {/* The wrapper takes the scaled size because a CSS transform does not
             affect layout — without it the stage would not know there was
             anything to scroll to. */}

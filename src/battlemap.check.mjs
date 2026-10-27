@@ -12,7 +12,9 @@ import {
   readSavedMap, readMapLibrary, newBattleMap, publishMap,
   regionAt, regionsAroundDoor, revealArea, concealArea, openReach, visibleExplored,
   fitGrid, MAX_CUSTOM_TEXTURE, brushCells, MAX_GRID, MIN_GRID,
+  clampZoom, MIN_ZOOM, MAX_ZOOM,
   themeNumbersFor, BRIGHT_FLOOR, readCustomTheme, readThemeLibrary, resolveTheme,
+  textureAdvice, SQUARE_TOLERANCE,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -272,6 +274,38 @@ import { GEAR } from './gear.js';
   // A door state the renderer cannot draw is dropped on read.
   assert.deepEqual(readMap({ doors: { '1,1': 'open', '2,2': 'ajar', 'x,y': 'open' } }).doors,
     { '1,1': { kind: 'bulkhead', state: 'open' } });
+}
+
+/* ---- what to tell someone uploading a floor ---- */
+
+{
+  // A map texture TILES, which is the whole difference between it and a
+  // picture — and the two files people reach for, a photo and a screenshot,
+  // are both wrong in the same way.
+  const sq = textureAdvice({ width: 1024, height: 1024 });
+  assert.equal(sq.square, true);
+  assert.ok(sq.message.includes('1024\u00d71024'));
+  assert.ok(sq.message.includes('tile'));
+
+  // Within a few per cent still counts: the shipped floors are not all
+  // exactly square either (the hive deck is 1024x945).
+  assert.equal(textureAdvice({ width: 1024, height: 945 }).square, true);
+  assert.equal(textureAdvice({ width: 1024, height: 700 }).square, false);
+
+  // Said as a ratio, because 16:9 is a thing a person recognises.
+  const wide = textureAdvice({ width: 1920, height: 1080 });
+  assert.equal(wide.square, false);
+  assert.ok(wide.message.includes('1.78:1'), wide.message);
+  assert.ok(wide.message.includes('band'), 'it has to say what goes wrong');
+  const tall = textureAdvice({ width: 1080, height: 1920 });
+  assert.ok(tall.message.includes('1:1.78'), tall.message);
+
+  // A file that is not an image says so rather than dividing by zero.
+  for (const bad of [null, {}, { width: 0, height: 100 }, { width: 'x', height: 'y' }]) {
+    const r = textureAdvice(bad);
+    assert.equal(r.ok, false);
+    assert.ok(r.message.length > 10);
+  }
 }
 
 /* ---- a saved environment derives its own numbers ---- */
@@ -976,6 +1010,23 @@ import { GEAR } from './gear.js';
 
   assert.deepEqual(auspexSweep(m, null), m.contacts, 'no origin changes nothing');
   assert.deepEqual(auspexSweep(m, { x: 0, y: 0 }, 0), m.contacts);
+}
+
+/* ---- zoom ---- */
+
+{
+  assert.equal(clampZoom(1), 1);
+  assert.equal(clampZoom(2.5), 2.5);
+  assert.equal(clampZoom(99), MAX_ZOOM);
+  assert.equal(clampZoom(0), MIN_ZOOM);
+  assert.equal(clampZoom(-3), MIN_ZOOM);
+  // A typed box hands over whatever was typed, including nothing.
+  assert.equal(clampZoom(''), 1);
+  assert.equal(clampZoom('abc'), 1);
+  assert.equal(clampZoom(null), 1);
+  assert.equal(clampZoom(undefined), 1);
+  assert.equal(clampZoom('1.5'), 1.5, 'an input gives a string');
+  assert.ok(MIN_ZOOM > 0, 'a zero zoom would divide the click maths by nothing');
 }
 
 /* ---- the brush ---- */

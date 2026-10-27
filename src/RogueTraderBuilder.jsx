@@ -2830,6 +2830,38 @@ export default function RogueTraderBuilder({ me, cloud }) {
     } catch (e) { setGroundErr(e.message); }
   };
 
+  /* THE MAP BOTH PLACES ARE LOOKING AT.
+
+     The window used to render the live map while the tab could be editing a
+     saved deck — two different maps, so a column added in one never showed in
+     the other. The deck selection and the view live up here now, and the tab
+     and the window read the same thing through the same writer. */
+  const decksForMap = readMapLibrary(homebrew && homebrew.battlemaps);
+  const [deckId, setDeckId] = useState(null);
+  const [mapView, setMapView] = useState('design');
+  const activeDeck = decksForMap.find((d) => d.id === deckId) || null;
+  const designing = mapView === 'design' && activeDeck;
+  const activeMap = designing
+    ? activeDeck.map
+    : readBattleMap((combat && combat.ground && combat.ground.map) || null);
+  const setActiveMap = (next) => {
+    if (designing) {
+      setHomebrew({
+        ...(homebrew || {}),
+        battlemaps: decksForMap.map((d) => (d.id === activeDeck.id ? { ...d, map: next } : d))
+      });
+      return;
+    }
+    setCombat({
+      ...combat,
+      ground: {
+        ...((combat && combat.ground) || {}),
+        npcs: (combat && combat.ground && combat.ground.npcs) || [],
+        map: next
+      }
+    });
+  };
+
   /* Keeps what was built in the map's own window. The target comes from the
      caller rather than being matched on name: an id writes over that deck, no
      id makes a new one, and nothing is inferred. */
@@ -3712,6 +3744,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
           mapErr={mapErr} setMapErr={setMapErr}
           grounds={grounds} onSaveGround={saveGroundToLibrary}
           onNeedGroundTexture={loadGroundTexture} groundErr={groundErr}
+          deckId={deckId} setDeckId={setDeckId} mapView={mapView} setMapView={setMapView}
+          activeMap={activeMap} setActiveMap={setActiveMap}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -3732,15 +3766,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
         >
           {(win) => (
             <BattleMap
-              map={readBattleMap((combat && combat.ground && combat.ground.map) || null)}
-              onChange={(next) => setCombat({
-                ...combat,
-                ground: {
-                  ...((combat && combat.ground) || {}),
-                  npcs: (combat && combat.ground && combat.ground.npcs) || [],
-                  map: next
-                }
-              })}
+              map={activeMap}
+              onChange={setActiveMap}
               win={win}
               /* The projector needs the saved grounds too, or a deck built on
                  one would quietly fall back to a built-in theme out there. */
@@ -7713,7 +7740,8 @@ function shipProfile(ship, blueprint, custom, context = {}) {
 
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
-  grounds, onSaveGround, onNeedGroundTexture, groundErr, onClose }) {
+  grounds, onSaveGround, onNeedGroundTexture, groundErr,
+  deckId, setDeckId, mapView, setMapView, activeMap, setActiveMap, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -7823,9 +7851,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const decks = readMapLibrary(homebrew && homebrew.battlemaps);
   const saveDecks = (list) => setHomebrew({ ...(homebrew || {}), battlemaps: list });
   const putDeck = (d) => saveDecks(decks.map((x) => (x.id === d.id ? d : x)));
-  const [deckId, setDeckId] = useState(null);
   const deck = decks.find((d) => d.id === deckId) || null;
-  const [mapView, setMapView] = useState('design');
 
   const addHostile = (npc) => {
     if (!editing || editing.hostiles.length >= MAX_HOSTILES) return;
@@ -8915,11 +8941,11 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
             here while you run the encounter. Closing that window brings it back.
           </p>
         ) : (
+          // The same map and the same writer the window uses, so a column
+          // added in one place is there in the other.
           <BattleMap
-            map={mapView === 'live' ? battleMap : deck.map}
-            onChange={mapView === 'live'
-              ? setBattleMap
-              : (next) => putDeck({ ...deck, map: next })}
+            map={activeMap}
+            onChange={setActiveMap}
             encounters={encounters}
             customThemes={grounds}
             onSaveTheme={onSaveGround}

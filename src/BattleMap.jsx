@@ -6,13 +6,14 @@ import {
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
+  clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice,
   resolveTheme, themeNumbersFor,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   weaponOverlay, calibrationBar, deploymentRows
 } from './battlemap.js';
 import { GEAR } from './gear.js';
-import { shrinkToDataUrl } from './imageshrink.js';
+import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
 /* The boarding map, projected under physical miniatures.
@@ -288,6 +289,9 @@ export default function BattleMap({
      projector it belongs at 100%, which is why it resets rather than
      following the deck around. */
   const [zoom, setZoom] = useState(1);
+  // The box holds what is being TYPED, which may be empty or half a number;
+  // `zoom` only ever holds a usable one.
+  const [zoomPct, setZoomPct] = useState('100');
   // Saving the deck from here. The target is PICKED, never guessed: writing
   // over the wrong deck and quietly making a duplicate are both losses, and
   // this window is where a GM works without the library in front of them.
@@ -310,6 +314,11 @@ export default function BattleMap({
   // What came back, held here rather than written to the deck: nothing is
   // kept until the GM says they are happy with it.
   const [preview, setPreview] = useState(null);
+  // What was done to an uploaded file, so the GM is told rather than having
+  // their image quietly cropped and recompressed.
+  const [uploadNote, setUploadNote] = useState('');
+  const [cropSquare, setCropSquare] = useState(true);
+  const fileRef = useRef(null);
   const [hover, setHover] = useState(null);
 
   const [weaponKey, setWeaponKey] = useState('lasgun');
@@ -1036,7 +1045,10 @@ export default function BattleMap({
   // resizing a panel should not quietly redraw the deck being built.
   useEffect(() => {
     if (!win) return undefined;
-    fitToStage();
+    // Only a blank deck. Now that the window and the tab share one map,
+    // fitting on open would resize a deck the GM had already built — and
+    // shrinking hides painted squares, even though the floor keeps them.
+    if (!Object.keys(mapRef.current.floor).length) fitToStage();
     const onResize = () => fitToStage();
     win.addEventListener('resize', onResize);
     return () => win.removeEventListener('resize', onResize);
@@ -1088,6 +1100,32 @@ export default function BattleMap({
       setPreview({ texture, numbers: await sampleNumbers(texture) });
     } catch (e) {
       setGenErr(e.message || 'Generation failed');
+    } finally {
+      setGenBusy(false);
+    }
+  };
+
+  /* A floor of the GM's own. It lands in the same preview a generated one
+     does, so it is judged tiled and saved by the same road.
+
+     Cropped and recompressed to match the shipped floors, and SAID so: the
+     two files people reach for are a photo and a screenshot, and both are
+     the wrong shape for something that tiles. */
+  const uploadGround = async (file) => {
+    if (!file) return;
+    setGenErr(''); setUploadNote(''); setGenBusy(true);
+    try {
+      const out = await prepareTexture(file, { square: cropSquare });
+      const advice = textureAdvice({ width: out.sourceWidth, height: out.sourceHeight });
+      if (!advice.ok) throw new Error(advice.message);
+      setPreview({ texture: out.dataUrl, numbers: await sampleNumbers(out.dataUrl) });
+      const cropped = cropSquare && out.sourceWidth !== out.sourceHeight;
+      setUploadNote(
+        `${advice.message}${cropped ? ' Cropped to the middle.' : ''}`
+        + ` Stored at ${out.width}\u00d7${out.height}, ${Math.round(out.bytes / 1024)}KB.`
+      );
+    } catch (e) {
+      setGenErr(e.message || 'Could not read that image.');
     } finally {
       setGenBusy(false);
     }
@@ -1453,13 +1491,22 @@ export default function BattleMap({
         {num('Metres / square', m.metresPerSquare, (v) => patch({ metresPerSquare: v }), 0.5, 10, 0.5)}
         <button type="button" className="rt-btn" onClick={fitToStage}>Fit to screen</button>
         <label className="rt-bm-num">
-          <span>Zoom</span>
-          <select value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
-            {[0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].map((z) => (
-              <option key={z} value={String(z)}>{Math.round(z * 100)}%</option>
-            ))}
-          </select>
+          <span>Zoom %</span>
+          {/* Typed, not picked: a GM matching the deck to a projector wants
+              83%, not the nearest of eight. The wheel over the map does the
+              same thing for the cases where a number is not what you have
+              in mind. */}
+          <input type="number" value={zoomPct}
+            min={Math.round(MIN_ZOOM * 100)} max={Math.round(MAX_ZOOM * 100)} step={5}
+            onWheel={(e) => e.currentTarget.blur()}
+            onChange={(e) => {
+              setZoomPct(e.target.value);
+              if (e.target.value.trim() !== '') setZoom(clampZoom(Number(e.target.value) / 100));
+            }}
+            onBlur={() => setZoomPct(String(Math.round(zoom * 100)))} />
         </label>
+        <button type="button" className="rt-btn"
+          onClick={() => { setZoom(1); setZoomPct('100'); }}>100%</button>
         <label className="rt-bm-num"><input type="checkbox" checked={showZones}
           onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
         <label className="rt-bm-num"><input type="checkbox" checked={showCalibration}
@@ -1486,7 +1533,28 @@ export default function BattleMap({
         </div>
       )}
 
-      <div className="rt-bm-stage" ref={stageRef}>
+      <div className="rt-bm-stage" ref={stageRef}
+        /* Zooming about the pointer rather than the top-left: without the
+           scroll correction the deck slides out from under the cursor and
+           every step has to be chased with the scrollbars. */
+        onWheel={(e) => {
+          if (!e.currentTarget.contains(e.target)) return;
+          e.preventDefault();
+          const el = e.currentTarget;
+          const box = el.getBoundingClientRect();
+          const atX = e.clientX - box.left + el.scrollLeft;
+          const atY = e.clientY - box.top + el.scrollTop;
+          const next = clampZoom(zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12));
+          if (next === zoom) return;
+          const k = next / zoom;
+          setZoom(next);
+          setZoomPct(String(Math.round(next * 100)));
+          // After the browser has laid the bigger canvas out.
+          requestAnimationFrame(() => {
+            el.scrollLeft = atX * k - (e.clientX - box.left);
+            el.scrollTop = atY * k - (e.clientY - box.top);
+          });
+        }}>
         {/* The wrapper takes the scaled size because a CSS transform does not
             affect layout — without it the stage would not know there was
             anything to scroll to. */}

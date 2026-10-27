@@ -93,6 +93,49 @@ export const MAP_THEMES = [
 
 export const DEFAULT_THEME = 'space_hulk';
 
+/* What to tell a GM about a floor they are about to upload.
+
+   A map texture TILES. That is the whole difference between it and a
+   picture, and it is what makes the two things people reach for — a photo
+   and a screenshot — usually wrong: a 16:9 shot repeats as a band of
+   letterboxed strips, and anything with a horizon in it tiles into a wall.
+
+   Square is the shape to aim for, within a few per cent. Pure, so the
+   advice can be checked without a canvas. */
+
+/* How far from square a floor can be before it is worth saying something.
+   Set from the shipped floors rather than picked: the hive deck is 1024x945
+   and three others are 1024x930, because a watermark was cropped off the
+   bottom. A tolerance that flagged the app's own textures as the wrong shape
+   would be advice nobody should take. 4:3 and 16:9 are still well outside. */
+export const SQUARE_TOLERANCE = 0.12;
+
+export function textureAdvice(size) {
+  const w = Math.round(Number(size && size.width) || 0);
+  const h = Math.round(Number(size && size.height) || 0);
+  if (w <= 0 || h <= 0) {
+    return { ok: false, square: false, ratio: 0, message: 'That file is not an image this can read.' };
+  }
+  const ratio = w / h;
+  const square = Math.abs(ratio - 1) <= SQUARE_TOLERANCE;
+  if (square) {
+    return {
+      ok: true, square: true, ratio,
+      message: `${w}\u00d7${h}, square enough to tile cleanly.`
+    };
+  }
+  // Said as a ratio rather than a decimal, because 16:9 is a thing a person
+  // recognises and 1.78 is not.
+  const asRatio = ratio > 1
+    ? `${(ratio).toFixed(2).replace(/\.?0+$/, '')}:1`
+    : `1:${(1 / ratio).toFixed(2).replace(/\.?0+$/, '')}`;
+  return {
+    ok: true, square: false, ratio,
+    message: `${w}\u00d7${h} is ${asRatio}. A floor tiles best square \u2014 `
+      + 'cropped to the middle it will repeat cleanly; left as it is it repeats as a band.'
+  };
+}
+
 /* ---------------- a saved environment, and its five numbers ----------------
    A GM who generates a ground should not then be asked for a grid colour, a
    wash and a grid strength. They are derived from the image itself, using the
@@ -271,6 +314,24 @@ export const MAX_CUSTOM_TEXTURE = 1_500_000;
    would have to shrink below the size of the miniature standing on it, which
    decalibrates the projector — the one thing the calibration exists to stop.
    Zoom is the answer to a big deck, not a smaller square. */
+/* Zoom is a VIEW control: it scales what is already drawn so the GM can read
+   a corner or take in a whole deck. It is deliberately not stored on the map
+   — px/square is the projector's calibration and must not move — and it is
+   bounded because a canvas scaled past a few hundred per cent is a wall of
+   blur, and one scaled under a tenth is unclickable. */
+export const MIN_ZOOM = 0.1;
+export const MAX_ZOOM = 8;
+export const clampZoom = (z) => {
+  // An empty box means "nothing typed yet", not zero. Number('') is 0 and
+  // Number(null) is 0, and reading either as a zoom clamps the map to its
+  // smallest size while the GM is halfway through typing a number.
+  if (z === null || z === undefined) return 1;
+  if (typeof z === 'string' && z.trim() === '') return 1;
+  const n = Number(z);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, n));
+};
+
 export const MAX_GRID = 200;
 export const MIN_GRID = 5;
 

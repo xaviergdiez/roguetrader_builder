@@ -1290,6 +1290,32 @@ export default function BattleMap({
             </button>
           </div>
 
+          {/* A floor of the GM's own, down the same road as a generated one:
+              it lands in the preview below and is saved by the same button. */}
+          <div className="rt-bm-bar">
+            <input ref={fileRef} type="file" accept="image/*" hidden
+              onChange={(e) => {
+                uploadGround(e.target.files && e.target.files[0]);
+                // Cleared, or picking the same file twice fires nothing.
+                e.target.value = '';
+              }} />
+            <button type="button" className="rt-btn ghost" disabled={genBusy}
+              onClick={() => fileRef.current && fileRef.current.click()}>
+              Upload a floor…
+            </button>
+            <label className="rt-bm-num">
+              <input type="checkbox" checked={cropSquare} disabled={genBusy}
+                onChange={(e) => setCropSquare(e.target.checked)} />
+              <span>Crop to square</span>
+            </label>
+            <span className="rt-bm-hint">
+              A floor tiles, so it wants a square: a photo or a screenshot will
+              be cropped to its middle unless you say otherwise. Stored at
+              512×512 to match the shipped grounds.
+            </span>
+          </div>
+
+          {uploadNote ? <p className="rt-bm-hint">{uploadNote}</p> : null}
           {genErr ? <p className="rt-warn">{genErr}</p> : null}
 
           {preview && (<>

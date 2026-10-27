@@ -2830,38 +2830,6 @@ export default function RogueTraderBuilder({ me, cloud }) {
     } catch (e) { setGroundErr(e.message); }
   };
 
-  /* THE MAP BOTH PLACES ARE LOOKING AT.
-
-     The window used to render the live map while the tab could be editing a
-     saved deck — two different maps, so a column added in one never showed in
-     the other. The deck selection and the view live up here now, and the tab
-     and the window read the same thing through the same writer. */
-  const decksForMap = readMapLibrary(homebrew && homebrew.battlemaps);
-  const [deckId, setDeckId] = useState(null);
-  const [mapView, setMapView] = useState('design');
-  const activeDeck = decksForMap.find((d) => d.id === deckId) || null;
-  const designing = mapView === 'design' && activeDeck;
-  const activeMap = designing
-    ? activeDeck.map
-    : readBattleMap((combat && combat.ground && combat.ground.map) || null);
-  const setActiveMap = (next) => {
-    if (designing) {
-      setHomebrew({
-        ...(homebrew || {}),
-        battlemaps: decksForMap.map((d) => (d.id === activeDeck.id ? { ...d, map: next } : d))
-      });
-      return;
-    }
-    setCombat({
-      ...combat,
-      ground: {
-        ...((combat && combat.ground) || {}),
-        npcs: (combat && combat.ground && combat.ground.npcs) || [],
-        map: next
-      }
-    });
-  };
-
   /* Keeps what was built in the map's own window. The target comes from the
      caller rather than being matched on name: an id writes over that deck, no
      id makes a new one, and nothing is inferred. */
@@ -2907,6 +2875,43 @@ export default function RogueTraderBuilder({ me, cloud }) {
   }, [bridgeCode]);
   const [fleet, setFleet] = useState([]);          // the GM's NPC ships
   const [combat, setCombat] = useState(EMPTY_COMBAT);
+
+  /* THE MAP BOTH PLACES ARE LOOKING AT.
+
+     The window used to render the live map while the tab could be editing a
+     saved deck — two different maps, so a column added in one never showed in
+     the other. The deck selection and the view live up here now, and the tab
+     and the window read the same thing through the same writer.
+
+     Has to sit BELOW `combat`: activeMap reads it while rendering, and read
+     above its own declaration it is a dead zone, which took the whole app
+     down rather than just the map. */
+  const decksForMap = readMapLibrary(homebrew && homebrew.battlemaps);
+  const [deckId, setDeckId] = useState(null);
+  const [mapView, setMapView] = useState('design');
+  const activeDeck = decksForMap.find((d) => d.id === deckId) || null;
+  const designing = mapView === 'design' && activeDeck;
+  const activeMap = designing
+    ? activeDeck.map
+    : readBattleMap((combat && combat.ground && combat.ground.map) || null);
+  const setActiveMap = (next) => {
+    if (designing) {
+      setHomebrew({
+        ...(homebrew || {}),
+        battlemaps: decksForMap.map((d) => (d.id === activeDeck.id ? { ...d, map: next } : d))
+      });
+      return;
+    }
+    setCombat({
+      ...combat,
+      ground: {
+        ...((combat && combat.ground) || {}),
+        npcs: (combat && combat.ground && combat.ground.npcs) || [],
+        map: next
+      }
+    });
+  };
+
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
   const [stepIx, setStepIx] = useState(0);     // 0..5 origin, 6 characteristics, 7 dossier

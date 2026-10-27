@@ -6,7 +6,7 @@ import {
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
-  clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice, rotateMap,
+  clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice, rotateMap, rotationFits,
   expandMap, expandPlan, MIN_GRID, MAX_GRID,
   resolveTheme, themeNumbersFor, groundsUsed,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
@@ -470,12 +470,21 @@ export default function BattleMap({
   }, [win]);
 
   /* ---- turning the map ----
-     A quarter turn at a time, as one undoable step. Overlays, the ruler and
+     A quarter turn at a time, as one undoable step. What turns is what has
+     been painted; the grid it sits in stays as it is. Overlays, the ruler and
      the firing square are cleared because the squares they pointed at are
      somewhere else now. */
+  const [turnNote, setTurnNote] = useState('');
   const rotateMapBy = (turns) => {
     const write = onChangeRef.current;
     if (!write) return;
+    if (!rotationFits(mapRef.current, turns)) {
+      const msg = 'The painted map is too big to turn inside this grid. Make the grid bigger first.';
+      setTurnNote(msg);
+      if (!showOptions) (win || window).alert(msg);
+      return;
+    }
+    setTurnNote('');
     remember(mapRef.current);
     gestureRef.current = false;
     write(rotateMap(mapRef.current, turns));
@@ -806,7 +815,7 @@ export default function BattleMap({
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;    // leave browser shortcuts alone
-      // R is two things. Held with a click it turns the whole map; tapped on
+      // R is two things. Held with a click it turns the painted map; tapped on
       // its own it turns the tile about to be stamped. Which one it was is
       // only known when the key comes up.
       if (k === 'r') { if (!e.repeat) { rHeldRef.current = true; rUsedRef.current = false; } }
@@ -1856,9 +1865,10 @@ export default function BattleMap({
           disabled={historyRef.current.future.length === 0}
           title="Redo (Shift+Cmd/Ctrl+Z)">Redo</button>
         <button type="button" className="rt-btn" onClick={() => rotateMapBy(-1)}
-          title="Turn the whole map 90 degrees anticlockwise. Hold R and Shift and click the map to do the same.">Rotate {'\u21BA'} 90{'\u00B0'}</button>
+          title="Turn what you have painted 90 degrees anticlockwise. The grid stays put. Hold R and Shift and click the map to do the same.">Rotate {'\u21BA'} 90{'\u00B0'}</button>
         <button type="button" className="rt-btn" onClick={() => rotateMapBy(1)}
-          title="Turn the whole map 90 degrees clockwise. Hold R and click the map to do the same.">Rotate {'\u21BB'} 90{'\u00B0'}</button>
+          title="Turn what you have painted 90 degrees clockwise. The grid stays put. Hold R and click the map to do the same.">Rotate {'\u21BB'} 90{'\u00B0'}</button>
+        {turnNote ? <span className="rt-bm-hint">{turnNote}</span> : null}
         <button type="button" className="rt-btn" onClick={() => setShowOptions(false)}
           title="Hide every toolbar for a clean map. H brings them back.">Hide options (H)</button>
         {win && (<>

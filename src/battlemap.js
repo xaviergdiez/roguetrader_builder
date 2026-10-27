@@ -986,49 +986,95 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   };
 }
 
-/* Turns the whole deck a quarter turn at a time, clockwise for a positive
-   count and anticlockwise for a negative one. Every layer moves together —
-   deck, doors, cover, hazards, foliage, markers, terrain, fog, contacts and
-   the party's viewpoint — and the grid swaps its columns and rows, so a deck
-   built for one edge of the table can be turned to face the other without
-   rebuilding it. Walls are derived from the floor, so they come out right on
-   their own.
+/* The layers a GM paints (deck, terrain, cover, hazards, foliage, doors,
+   markers, contacts) — the "created map", as opposed to the grid it sits in. */
+const PAINT_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'doors', 'markers', 'contacts'];
 
-   Not rotated: the floor TEXTURE. It is a tiling image, and turning it would
-   not change what the table sees. */
-export function rotateMap(map, turns = 1) {
-  const src = readMap(map);
-  const t = (((Math.round(Number(turns)) || 0) % 4) + 4) % 4;
-  let cur = src;
-  for (let i = 0; i < t; i++) cur = quarterTurn(cur);
-  return cur;
+/* The smallest box holding everything painted, or null for an empty deck. */
+export function paintBounds(map) {
+  const m = readMap(map);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const layer of PAINT_LAYERS) {
+    for (const k of Object.keys(m[layer] || {})) {
+      const p = parseKey(k);
+      if (!p) continue;
+      if (p.x < x0) x0 = p.x;
+      if (p.x > x1) x1 = p.x;
+      if (p.y < y0) y0 = p.y;
+      if (p.y > y1) y1 = p.y;
+    }
+  }
+  return Number.isFinite(x0) ? { x0, y0, x1, y1 } : null;
 }
 
-// One clockwise quarter turn: (x, y) in a grid of `rows` rows goes to
-// (rows - 1 - y, x), and the grid's width and height swap.
-function quarterTurn(m) {
-  const rows = m.rows;
-  const at = (x, y) => ({ x: rows - 1 - y, y: x });
+/* Turns what has been painted a quarter turn at a time, clockwise for a
+   positive count and anticlockwise for a negative one, and leaves the grid
+   alone. The map's columns, rows, scale and texture are the container; deck,
+   terrain, doors, cover, hazards, foliage, markers, fog and contacts are the
+   content, and they turn together about the middle of the painted area, so a
+   corridor laid east-west can be stood north-south without rebuilding it.
+   Walls are derived from the floor, so they come out right on their own.
+
+   A turn that would push the painted area past the edge of the grid (a
+   corridor 30 wide cannot stand up in 20 rows) is not made: the map comes
+   back unchanged, and rotationFits says so beforehand. */
+export function rotateMap(map, turns = 1) {
+  const src = readMap(map);
+  const t = quarterCount(turns);
+  if (t === 0) return src;
+  return turnContent(src, t) || src;
+}
+
+export function rotationFits(map, turns = 1) {
+  const src = readMap(map);
+  const t = quarterCount(turns);
+  return t === 0 || turnContent(src, t) !== null;
+}
+
+const quarterCount = (turns) => (((Math.round(Number(turns)) || 0) % 4) + 4) % 4;
+
+// Rounds halves away from zero, so a turn and its reverse shift the box by
+// exactly opposite amounts and four turns bring the deck back to where it was.
+const roundHalf = (v) => Math.sign(v) * Math.floor(Math.abs(v) + 0.5);
+
+// t is 1 (clockwise), 2 (half turn) or 3 (anticlockwise). Null if the turned
+// content would not fit the grid.
+function turnContent(m, t) {
+  const b = paintBounds(m);
+  if (!b) return m;
+  const w = b.x1 - b.x0 + 1, h = b.y1 - b.y0 + 1;
+  const nw = t === 2 ? w : h, nh = t === 2 ? h : w;
+  if (nw > m.cols || nh > m.rows) return null;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const nx0 = clamp(b.x0 + roundHalf((w - nw) / 2), 0, m.cols - nw);
+  const ny0 = clamp(b.y0 + roundHalf((h - nh) / 2), 0, m.rows - nh);
+  const at = (x, y) => {
+    const rx = x - b.x0, ry = y - b.y0;
+    const q = t === 1 ? { x: h - 1 - ry, y: rx }
+      : t === 3 ? { x: ry, y: w - 1 - rx }
+        : { x: w - 1 - rx, y: h - 1 - ry };
+    return { x: nx0 + q.x, y: ny0 + q.y };
+  };
+  const inGrid = (p) => p.x >= 0 && p.y >= 0 && p.x < m.cols && p.y < m.rows;
   const move = (layer, copy = (v) => v) => {
     const out = {};
     for (const [k, v] of Object.entries(layer || {})) {
       const p = parseKey(k);
       if (!p) continue;
       const q = at(p.x, p.y);
-      out[cellKey(q.x, q.y)] = copy(v);
+      if (inGrid(q)) out[cellKey(q.x, q.y)] = copy(v);
     }
     return out;
   };
   const vp = m.viewpoint ? at(m.viewpoint.x, m.viewpoint.y) : null;
   return {
     ...m,
-    cols: m.rows, rows: m.cols,
     floor: move(m.floor), cover: move(m.cover), hazards: move(m.hazards),
     obscuring: move(m.obscuring), ground: move(m.ground), explored: move(m.explored),
     doors: move(m.doors, (d) => ({ ...d })),
     markers: move(m.markers, (v) => ({ ...v })),
     contacts: move(m.contacts, (c) => ({ ...c })),
-    viewpoint: vp
+    viewpoint: vp && inGrid(vp) ? vp : null
   };
 }
 

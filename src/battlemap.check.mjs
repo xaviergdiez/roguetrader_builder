@@ -1616,50 +1616,84 @@ import { GEAR } from './gear.js';
 console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   MAP_THEMES.length, EMPTY_MAP.cols, EMPTY_MAP.rows);
 
-/* ---- turning the whole map a quarter turn at a time ---- */
+/* ---- turning what is painted, a quarter turn at a time ---- */
 {
-  const { rotateMap, readMap, expandMap } = await import('./battlemap.js');
+  const { rotateMap, rotationFits, paintBounds, readMap, expandMap } = await import('./battlemap.js');
+  // A 4 x 3 room (x 2..5, y 4..6) in the middle of a 12 x 10 grid.
   const base = readMap({
-    cols: 12, rows: 8,
-    floor: { '0,0': true, '3,2': true, '11,7': true },
-    doors: { '3,2': { kind: 'hatch', state: 'open' } },
-    cover: { '0,0': 'crates' }, hazards: { '11,7': 'fire' },
-    obscuring: { '3,2': 'heavy' }, ground: { '0,0': 'ice_shelf' },
-    markers: { '11,7': { type: 'objective', label: 'Vault' } },
-    explored: { '3,2': true },
-    contacts: { '0,0': { name: 'Ork', state: 'ping' } },
-    viewpoint: { x: 3, y: 2 }
+    cols: 12, rows: 10,
+    floor: { '2,4': true, '3,5': true, '5,6': true },
+    doors: { '3,5': { kind: 'hatch', state: 'open' } },
+    cover: { '2,4': 'crates' }, hazards: { '5,6': 'fire' },
+    obscuring: { '3,5': 'heavy' }, ground: { '2,4': 'ice_shelf' },
+    markers: { '5,6': { type: 'objective', label: 'Vault' } },
+    explored: { '3,5': true },
+    contacts: { '2,4': { name: 'Ork', state: 'ping' } },
+    viewpoint: { x: 3, y: 5 }
   });
+  assert.deepEqual(paintBounds(base), { x0: 2, y0: 4, x1: 5, y1: 6 });
 
   const cw = rotateMap(base, 1);
-  assert.equal(cw.cols, 8, 'columns and rows swap');
-  assert.equal(cw.rows, 12);
-  // clockwise: (x, y) -> (rows - 1 - y, x) with the OLD rows (8)
-  assert.ok(cw.floor['7,0'], '(0,0) goes to the top-right corner');
-  assert.ok(cw.floor['5,3'], '(3,2) -> (8-1-2, 3)');
-  assert.ok(cw.floor['0,11'], '(11,7) -> (0, 11): the bottom-left');
-  assert.equal(cw.doors['5,3'].kind, 'hatch', 'a door goes with its square');
-  assert.equal(cw.doors['5,3'].state, 'open');
-  assert.equal(cw.cover['7,0'], 'crates');
-  assert.equal(cw.hazards['0,11'], 'fire');
-  assert.equal(cw.obscuring['5,3'], 'heavy', 'foliage turns with the deck');
-  assert.equal(cw.ground['7,0'], 'ice_shelf', 'so does painted terrain');
-  assert.equal(cw.markers['0,11'].label, 'Vault');
-  assert.ok(cw.explored['5,3'], 'and the fog');
-  assert.equal(cw.contacts['7,0'].name, 'Ork');
-  assert.deepEqual(cw.viewpoint, { x: 5, y: 3 });
+  // the container is untouched
+  assert.equal(cw.cols, 12, 'the grid keeps its columns');
+  assert.equal(cw.rows, 10, 'and its rows');
+  assert.equal(cw.pxPerSquare, base.pxPerSquare);
+  assert.equal(cw.metresPerSquare, base.metresPerSquare);
+  // the painted 4 x 3 box (x 2..5, y 4..6) becomes 3 x 4 about its middle (x 3..5, y 3..6)
+  assert.deepEqual(paintBounds(cw), { x0: 3, y0: 3, x1: 5, y1: 6 });
+  // clockwise inside the box: top-left goes top-right, bottom-right goes bottom-left
+  assert.ok(cw.floor['5,3'], '(2,4) is the top-left, and goes to the top-right');
+  assert.ok(cw.floor['3,6'], '(5,6) is the bottom-right, and goes to the bottom-left');
+  assert.ok(cw.floor['4,4'], '(3,5) -> the middle');
+  assert.equal(cw.doors['4,4'].kind, 'hatch', 'a door goes with its square');
+  assert.equal(cw.doors['4,4'].state, 'open');
+  assert.equal(cw.cover['5,3'], 'crates');
+  assert.equal(cw.hazards['3,6'], 'fire');
+  assert.equal(cw.obscuring['4,4'], 'heavy', 'foliage turns with the deck');
+  assert.equal(cw.ground['5,3'], 'ice_shelf', 'so does painted terrain');
+  assert.equal(cw.markers['3,6'].label, 'Vault');
+  assert.ok(cw.explored['4,4'], 'and the fog');
+  assert.equal(cw.contacts['5,3'].name, 'Ork');
+  assert.deepEqual(cw.viewpoint, { x: 4, y: 4 });
   assert.equal(Object.keys(cw.floor).length, 3, 'nothing is lost or duplicated');
 
   // four turns is no turn, and left undoes right
   assert.deepEqual(rotateMap(base, 4), base);
   assert.deepEqual(rotateMap(rotateMap(base, 1), -1), base);
+  assert.deepEqual(rotateMap(rotateMap(base, 1), 3), rotateMap(base, 4));
+  let spun = base;
+  for (let i = 0; i < 4; i++) spun = rotateMap(spun, 1);
+  assert.deepEqual(spun, base, 'four single turns come home, odd-sized box and all');
+  spun = base;
+  for (let i = 0; i < 4; i++) spun = rotateMap(spun, -1);
+  assert.deepEqual(spun, base);
   assert.deepEqual(rotateMap(rotateMap(base, 2), 2), base);
   assert.deepEqual(rotateMap(base, -1), rotateMap(base, 3), 'three right turns are one left');
   const half = rotateMap(base, 2);
   assert.equal(half.cols, 12, 'a half turn keeps the grid');
-  assert.ok(half.floor['11,7'] && half.floor['8,5'] && half.floor['0,0'], '(x, y) -> (11 - x, 7 - y)');
+  assert.deepEqual(paintBounds(half), paintBounds(base), 'and the box');
+  assert.ok(half.floor['5,6'] && half.floor['4,5'] && half.floor['2,4'], 'a half turn flips the box: (x, y) -> (7 - x, 10 - y)');
+  assert.equal(half.cover['5,6'], 'crates', 'the crates are now bottom-right');
   assert.deepEqual(rotateMap(base, 0), base);
   assert.deepEqual(rotateMap(base, 'junk'), base, 'junk is no turn');
+  assert.deepEqual(rotateMap({ cols: 12, rows: 10 }, 1), readMap({ cols: 12, rows: 10 }), 'an empty deck has nothing to turn');
+
+  // A strip that cannot stand up inside the grid is left alone, not cut.
+  const strip = readMap({ cols: 30, rows: 10, floor: { '0,5': true, '29,5': true } });
+  assert.equal(rotationFits(strip, 1), false, '30 wide does not stand up in 10 rows');
+  assert.equal(rotationFits(strip, 2), true, 'but it can still be flipped');
+  assert.deepEqual(rotateMap(strip, 1), strip, 'refused, nothing lost');
+  assert.equal(rotationFits(base, 1), true);
+
+  // It fits against an edge by shifting rather than falling off it.
+  const edge = readMap({ cols: 10, rows: 10, floor: { '0,0': true, '5,0': true } });  // 6 x 1, top-left
+  const up = rotateMap(edge, 1);
+  assert.equal(up.cols, 10);
+  const ub = paintBounds(up);
+  assert.ok(ub.x0 >= 0 && ub.y0 >= 0 && ub.x1 < 10 && ub.y1 < 10, 'still on the grid');
+  assert.equal(ub.x1 - ub.x0 + 1, 1);
+  assert.equal(ub.y1 - ub.y0 + 1, 6, 'a row of six stands as a column of six');
+  assert.equal(Object.keys(up.floor).length, 2);
 
   // the foliage layer repeats when a deck is expanded, as the rest of the terrain does
   const grown = expandMap({ cols: 6, rows: 6, floor: { '1,1': true }, obscuring: { '1,1': 'light' } }, 12, 6, { mirror: false });

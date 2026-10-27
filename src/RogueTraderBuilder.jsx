@@ -2,10 +2,15 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import BattleMap from './BattleMap.jsx';
 import { shrinkToDataUrl } from './imageshrink.js';
+import {
+  readLocal as readLocalGrounds, writeLocal as writeLocalGrounds,
+  cloudList as groundsList, cloudGet as groundGet, cloudPut as groundPut,
+  takeLegacy as takeLegacyGrounds
+} from './grounds.js';
 import MapWindow from './MapWindow.jsx';
 import {
   readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap,
-  readThemeLibrary, readCustomTheme, readSavedMap
+  readCustomTheme, readSavedMap
 } from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId, sameNamed,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
@@ -2738,6 +2743,93 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [mapWindow, setMapWindow] = useState(false);
   const [mapErr, setMapErr] = useState('');
 
+  /* ---- generated grounds: their own store, not the homebrew library ----
+     A ground carries its floor as a data URL. Signed in, the index comes
+     back without floors and a floor is fetched when a deck actually needs
+     one; signed out there is no network to spare, so the browser holds them
+     whole. Owned here rather than in the GM panel because the map's own
+     window needs to save into it too — that window is where a GM works
+     during a session, and until now its save button was simply dead. */
+  const [grounds, setGrounds] = useState([]);
+  const [groundErr, setGroundErr] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const list = cloud ? await groundsList() : readLocalGrounds();
+        if (live) setGrounds(list);
+      } catch (e) {
+        if (live) { setGrounds(readLocalGrounds()); setGroundErr(e.message); }
+      }
+    })();
+    return () => { live = false; };
+  }, [cloud]);
+
+  // Grounds lived in the homebrew library for one release. Move them, never
+  // drop them: losing them at the store layer is the failure this split came
+  // out of. The library is written back only once they are safely stored.
+  useEffect(() => {
+    if (!homebrewLoaded) return;
+    const { legacy, cleaned } = takeLegacyGrounds(homebrew);
+    if (!legacy.length) return;
+    (async () => {
+      const moved = [];
+      for (const g of legacy) {
+        try {
+          if (cloud) await groundPut(g);
+          moved.push(g);
+        } catch (e) { setGroundErr(e.message); }
+      }
+      if (!moved.length) return;
+      if (!cloud) writeLocalGrounds([...readLocalGrounds(), ...moved]);
+      setGrounds((prev) => [...prev, ...moved.map(({ texture, ...meta }) => (cloud ? meta : { texture, ...meta }))]);
+      setHomebrew(cleaned);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homebrewLoaded]);
+
+  /* Saves one. Signed in the floor goes to its own key and only the index
+     entry is kept in memory, so a session's worth of grounds does not sit in
+     the tab as megabytes of base64. */
+  const saveGroundToLibrary = async (ground) => {
+    const ready = readCustomTheme(ground);
+    if (!ready) return null;
+    try {
+      if (cloud) {
+        const meta = await groundPut(ready);
+        // Held with its floor so the deck it was just applied to can draw it
+        // without a round trip back for what we already have.
+        setGrounds((prev) => [...prev.filter((g) => g.id !== meta.id),
+          { ...meta, texture: ready.texture }]);
+      } else {
+        const next = [...readLocalGrounds().filter((g) => g.id !== ready.id), ready];
+        if (!writeLocalGrounds(next)) {
+          throw new Error('Could not save — browser storage is full.');
+        }
+        setGrounds(next);
+      }
+      setGroundErr('');
+      return ready;
+    } catch (e) {
+      setGroundErr(e.message);
+      return null;
+    }
+  };
+
+  /* A ground's floor, fetched the first time a deck asks to be drawn on it.
+     The index has no floors in it, which is the whole point of the split. */
+  const loadGroundTexture = async (id) => {
+    const have = grounds.find((g) => g.id === id);
+    if (!have || have.texture || !cloud) return;
+    try {
+      const full = await groundGet(id);
+      if (full && full.texture) {
+        setGrounds((prev) => prev.map((g) => (g.id === id ? { ...g, texture: full.texture } : g)));
+      }
+    } catch (e) { setGroundErr(e.message); }
+  };
+
   /* Keeps what was built in the map's own window. The target comes from the
      caller rather than being matched on name: an id writes over that deck, no
      id makes a new one, and nothing is inferred. */
@@ -3618,6 +3710,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
           homebrew={homebrew} setHomebrew={setHomebrew}
           mapWindow={mapWindow} setMapWindow={setMapWindow}
           mapErr={mapErr} setMapErr={setMapErr}
+          grounds={grounds} onSaveGround={saveGroundToLibrary}
+          onNeedGroundTexture={loadGroundTexture} groundErr={groundErr}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -3650,7 +3744,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
               win={win}
               /* The projector needs the saved grounds too, or a deck built on
                  one would quietly fall back to a built-in theme out there. */
-              customThemes={readThemeLibrary(homebrew && homebrew.mapgrounds)}
+              /* THE SAVE BUTTON IN HERE WAS DEAD. The window had the picker
+                 but no way to add to it, so a ground generated during a
+                 session — which is when they are generated — went nowhere. */
+              customThemes={grounds}
+              onSaveTheme={saveGroundToLibrary}
+              onNeedTexture={loadGroundTexture}
               /* And a way to keep the work. This window is often the only one
                  open during a session, and until now everything built in it
                  lived on the live map with no road into the library. */
@@ -7613,7 +7712,8 @@ function shipProfile(ship, blueprint, custom, context = {}) {
 }
 
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
-  homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr, onClose }) {
+  homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
+  grounds, onSaveGround, onNeedGroundTexture, groundErr, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -7721,15 +7821,6 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   // The window itself is owned by the component above, so neither switching
   // tabs nor closing this dashboard shuts the map the table is playing on.
   const decks = readMapLibrary(homebrew && homebrew.battlemaps);
-  /* Generated grounds, kept beside the decks. They are themes the GM made,
-     so they belong in their library rather than in the build. */
-  const grounds = readThemeLibrary(homebrew && homebrew.mapgrounds);
-  const saveGround = (t) => {
-    const ready = readCustomTheme(t);
-    if (!ready) return null;
-    setHomebrew({ ...(homebrew || {}), mapgrounds: [...grounds, ready] });
-    return ready;
-  };
   const saveDecks = (list) => setHomebrew({ ...(homebrew || {}), battlemaps: list });
   const putDeck = (d) => saveDecks(decks.map((x) => (x.id === d.id ? d : x)));
   const [deckId, setDeckId] = useState(null);
@@ -8765,6 +8856,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           </button>
         </div>
         {mapErr ? <p className="rt-warn">{mapErr}</p> : null}
+        {groundErr ? <p className="rt-warn">{groundErr}</p> : null}
 
         {/* A deck is built between sessions and played later, so the library
             and the live map are two different things: designing is done with
@@ -8830,7 +8922,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
               : (next) => putDeck({ ...deck, map: next })}
             encounters={encounters}
             customThemes={grounds}
-            onSaveTheme={saveGround}
+            onSaveTheme={onSaveGround}
+            onNeedTexture={onNeedGroundTexture}
           />
         )}
       </>)}

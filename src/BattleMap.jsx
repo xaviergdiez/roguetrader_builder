@@ -272,7 +272,7 @@ const BAND_COLOUR = {
 
 export default function BattleMap({
   map, onChange, win = null, encounters = [], customThemes = [], onSaveTheme = null,
-  decks = [], onSaveDeck = null
+  decks = [], onSaveDeck = null, onNeedTexture = null
 }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = resolveTheme(m.theme, customThemes);
@@ -358,6 +358,14 @@ export default function BattleMap({
     return entry ? weaponOverlay(entry.stats) : null;
   }, [weaponKey]);
 
+  /* A saved ground is listed without its floor — the index would be
+     megabytes otherwise — so the one actually being drawn is asked for the
+     first time a deck lands on it. */
+  useEffect(() => {
+    if (!onNeedTexture) return;
+    if (theme && theme.custom && !theme.texture) onNeedTexture(theme.id);
+  }, [theme, onNeedTexture]);
+
   /* ---- the floor texture, loaded once per theme ---- */
   useEffect(() => {
     let cancelled = false;
@@ -366,6 +374,9 @@ export default function BattleMap({
     // supplies the grid colour, the wash and the rest — only the floor
     // changes.
     const src = m.customTexture || theme.texture;
+    // A saved ground whose floor has not arrived yet: the flat fallback
+    // holds the deck until it does, rather than a blank rectangle.
+    if (!src) { textureRef.current = null; setTextureTick((t) => t + 1); return undefined; }
     img.onload = () => { if (!cancelled) { textureRef.current = img; setTextureTick((t) => t + 1); } };
     // A missing texture is not an error: the deck is painted in the theme's
     // flat fallback colour instead, which still reads on a projector. It
@@ -1106,16 +1117,30 @@ export default function BattleMap({
   /* Keeps it. The preview becomes a named environment in the GM's own
      library, the map switches to it, and it is in the picker from then on
      beside the nine built in. */
-  const saveGround = () => {
-    if (!preview || !onSaveTheme) return;
-    const saved = onSaveTheme({
+  const saveGround = async () => {
+    if (!preview) return;
+    if (!onSaveTheme) {
+      // It used to be a disabled button with nothing to say. A GM pressing
+      // it learned only that pressing it did nothing.
+      setGenErr('This window cannot save grounds — open the map from the GM dashboard.');
+      return;
+    }
+    setGenBusy(true);
+    const saved = await onSaveTheme({
       name: genName.trim() || 'Saved ground',
       texture: preview.texture,
       prompt: [genDescribe, genCover].filter(Boolean).join(' / '),
       subtitle: genCover ? `with ${genCover}` : '',
       ...preview.numbers
     });
-    if (saved && saved.id) patch({ theme: saved.id, customTexture: null });
+    setGenBusy(false);
+    if (!saved || !saved.id) {
+      // The store said no — out of room, or offline. The message is already
+      // on screen; keep the preview so the work is not thrown away with it.
+      if (!genErr) setGenErr('Could not save that ground.');
+      return;
+    }
+    patch({ theme: saved.id, customTexture: null });
     setPreview(null);
     setGenName('');
     setGenOpen(false);
@@ -1240,7 +1265,7 @@ export default function BattleMap({
                 <input value={genName} maxLength={60} placeholder="Refinery floor"
                   onChange={(e) => setGenName(e.target.value)} />
               </label>
-              <button type="button" className="rt-btn" onClick={saveGround} disabled={!onSaveTheme}>
+              <button type="button" className="rt-btn" onClick={saveGround} disabled={genBusy}>
                 Save to my grounds
               </button>
               <button type="button" className="rt-btn ghost"

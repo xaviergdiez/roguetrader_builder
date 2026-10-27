@@ -1615,3 +1615,55 @@ import { GEAR } from './gear.js';
 
 console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   MAP_THEMES.length, EMPTY_MAP.cols, EMPTY_MAP.rows);
+
+/* ---- turning the whole map a quarter turn at a time ---- */
+{
+  const { rotateMap, readMap, expandMap } = await import('./battlemap.js');
+  const base = readMap({
+    cols: 12, rows: 8,
+    floor: { '0,0': true, '3,2': true, '11,7': true },
+    doors: { '3,2': { kind: 'hatch', state: 'open' } },
+    cover: { '0,0': 'crates' }, hazards: { '11,7': 'fire' },
+    obscuring: { '3,2': 'heavy' }, ground: { '0,0': 'ice_shelf' },
+    markers: { '11,7': { type: 'objective', label: 'Vault' } },
+    explored: { '3,2': true },
+    contacts: { '0,0': { name: 'Ork', state: 'ping' } },
+    viewpoint: { x: 3, y: 2 }
+  });
+
+  const cw = rotateMap(base, 1);
+  assert.equal(cw.cols, 8, 'columns and rows swap');
+  assert.equal(cw.rows, 12);
+  // clockwise: (x, y) -> (rows - 1 - y, x) with the OLD rows (8)
+  assert.ok(cw.floor['7,0'], '(0,0) goes to the top-right corner');
+  assert.ok(cw.floor['5,3'], '(3,2) -> (8-1-2, 3)');
+  assert.ok(cw.floor['0,11'], '(11,7) -> (0, 11): the bottom-left');
+  assert.equal(cw.doors['5,3'].kind, 'hatch', 'a door goes with its square');
+  assert.equal(cw.doors['5,3'].state, 'open');
+  assert.equal(cw.cover['7,0'], 'crates');
+  assert.equal(cw.hazards['0,11'], 'fire');
+  assert.equal(cw.obscuring['5,3'], 'heavy', 'foliage turns with the deck');
+  assert.equal(cw.ground['7,0'], 'ice_shelf', 'so does painted terrain');
+  assert.equal(cw.markers['0,11'].label, 'Vault');
+  assert.ok(cw.explored['5,3'], 'and the fog');
+  assert.equal(cw.contacts['7,0'].name, 'Ork');
+  assert.deepEqual(cw.viewpoint, { x: 5, y: 3 });
+  assert.equal(Object.keys(cw.floor).length, 3, 'nothing is lost or duplicated');
+
+  // four turns is no turn, and left undoes right
+  assert.deepEqual(rotateMap(base, 4), base);
+  assert.deepEqual(rotateMap(rotateMap(base, 1), -1), base);
+  assert.deepEqual(rotateMap(rotateMap(base, 2), 2), base);
+  assert.deepEqual(rotateMap(base, -1), rotateMap(base, 3), 'three right turns are one left');
+  const half = rotateMap(base, 2);
+  assert.equal(half.cols, 12, 'a half turn keeps the grid');
+  assert.ok(half.floor['11,7'] && half.floor['8,5'] && half.floor['0,0'], '(x, y) -> (11 - x, 7 - y)');
+  assert.deepEqual(rotateMap(base, 0), base);
+  assert.deepEqual(rotateMap(base, 'junk'), base, 'junk is no turn');
+
+  // the foliage layer repeats when a deck is expanded, as the rest of the terrain does
+  const grown = expandMap({ cols: 6, rows: 6, floor: { '1,1': true }, obscuring: { '1,1': 'light' } }, 12, 6, { mirror: false });
+  assert.equal(grown.obscuring['1,1'], 'light');
+  assert.equal(grown.obscuring['7,1'], 'light', 'the second copy carries its foliage');
+}
+console.log('battlemap.check.mjs: rotation passed');

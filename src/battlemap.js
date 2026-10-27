@@ -944,7 +944,7 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   const h = int(rows, src.rows, MIN_GRID, MAX_GRID);
   const sw = src.cols, sh = src.rows;
 
-  const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {}, ground = {};
+  const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {}, ground = {}, obscuring = {};
   for (let x = 0; x < w; x++) {
     // Which copy this column falls in, and whether that copy is flipped.
     const lx = (mirror && Math.floor(x / sw) % 2) ? sw - 1 - (x % sw) : x % sw;
@@ -962,6 +962,8 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
       // The terrain repeats with the deck it is painted on, or an expanded
       // ice shelf would come back as deck plate.
       if (src.ground[from]) ground[to] = src.ground[from];
+      // Foliage and smoke belong to the terrain, and repeat with it.
+      if (src.obscuring[from]) obscuring[to] = src.obscuring[from];
     }
   }
 
@@ -979,8 +981,54 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   return {
     ...src,
     cols: w, rows: h,
-    floor, cover, hazards, doors, markers, ground,
+    floor, cover, hazards, doors, markers, ground, obscuring,
     explored, contacts, viewpoint
+  };
+}
+
+/* Turns the whole deck a quarter turn at a time, clockwise for a positive
+   count and anticlockwise for a negative one. Every layer moves together —
+   deck, doors, cover, hazards, foliage, markers, terrain, fog, contacts and
+   the party's viewpoint — and the grid swaps its columns and rows, so a deck
+   built for one edge of the table can be turned to face the other without
+   rebuilding it. Walls are derived from the floor, so they come out right on
+   their own.
+
+   Not rotated: the floor TEXTURE. It is a tiling image, and turning it would
+   not change what the table sees. */
+export function rotateMap(map, turns = 1) {
+  const src = readMap(map);
+  const t = (((Math.round(Number(turns)) || 0) % 4) + 4) % 4;
+  let cur = src;
+  for (let i = 0; i < t; i++) cur = quarterTurn(cur);
+  return cur;
+}
+
+// One clockwise quarter turn: (x, y) in a grid of `rows` rows goes to
+// (rows - 1 - y, x), and the grid's width and height swap.
+function quarterTurn(m) {
+  const rows = m.rows;
+  const at = (x, y) => ({ x: rows - 1 - y, y: x });
+  const move = (layer, copy = (v) => v) => {
+    const out = {};
+    for (const [k, v] of Object.entries(layer || {})) {
+      const p = parseKey(k);
+      if (!p) continue;
+      const q = at(p.x, p.y);
+      out[cellKey(q.x, q.y)] = copy(v);
+    }
+    return out;
+  };
+  const vp = m.viewpoint ? at(m.viewpoint.x, m.viewpoint.y) : null;
+  return {
+    ...m,
+    cols: m.rows, rows: m.cols,
+    floor: move(m.floor), cover: move(m.cover), hazards: move(m.hazards),
+    obscuring: move(m.obscuring), ground: move(m.ground), explored: move(m.explored),
+    doors: move(m.doors, (d) => ({ ...d })),
+    markers: move(m.markers, (v) => ({ ...v })),
+    contacts: move(m.contacts, (c) => ({ ...c })),
+    viewpoint: vp
   };
 }
 

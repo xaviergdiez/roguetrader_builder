@@ -6,7 +6,7 @@ import {
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
-  clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice,
+  clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice, rotateMap,
   expandMap, expandPlan, MIN_GRID, MAX_GRID,
   resolveTheme, themeNumbersFor, groundsUsed,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
@@ -285,8 +285,8 @@ const BAND_COLOUR = {
 };
 
 export default function BattleMap({
-  map, onChange, win = null, encounters = [], customThemes = [], onSaveTheme = null,
-  decks = [], onSaveDeck = null, onNeedTexture = null
+  map, onChange, historyKey = null, win = null, encounters = [], customThemes = [], onSaveTheme = null,
+  decks = [], onSaveDeck = null, onLoadDeck = null, onNeedTexture = null
 }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = resolveTheme(m.theme, customThemes);
@@ -402,7 +402,110 @@ export default function BattleMap({
   const originRef = useRef(null);
   const measureRef = useRef(null);
 
-  const patch = (next) => onChange && onChange({ ...m, ...next });
+  /* ---- undo ----
+     One entry per GESTURE, not per square: a drag that paints forty cells is
+     one step, so Undo takes the stroke back rather than one square of it.
+     A gesture is everything between a mouse-down and the next mouse-up, and
+     a toolbar field typed into counts as one until the pointer next lets go.
+
+     The history belongs to whatever deck is open. `historyKey` names it (the
+     deck's id, or 'live'), and a change of key empties the stacks — Undo on
+     a freshly opened deck must never write the PREVIOUS deck's squares into
+     it. */
+  const MAX_HISTORY = 100;
+  const historyRef = useRef({ past: [], future: [] });
+  const gestureRef = useRef(false);
+  const [, setHistTick] = useState(0);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  const remember = (before) => {
+    const h = historyRef.current;
+    h.past.push(before);
+    if (h.past.length > MAX_HISTORY) h.past.shift();
+    h.future = [];
+    setHistTick((t) => t + 1);
+  };
+
+  const patch = (next) => {
+    if (!onChange) return;
+    if (!gestureRef.current) { remember(m); gestureRef.current = true; }
+    onChange({ ...m, ...next });
+  };
+
+  // Refs rather than closures: the key handler is bound once, and the
+  // writer it would capture is replaced on every render.
+  const undo = () => {
+    const h = historyRef.current;
+    const prev = h.past.pop();
+    const write = onChangeRef.current;
+    if (!prev || !write) return;
+    h.future.push(mapRef.current);
+    gestureRef.current = false;
+    write(prev);
+    setHistTick((t) => t + 1);
+  };
+  const redo = () => {
+    const h = historyRef.current;
+    const next = h.future.pop();
+    const write = onChangeRef.current;
+    if (!next || !write) return;
+    h.past.push(mapRef.current);
+    gestureRef.current = false;
+    write(next);
+    setHistTick((t) => t + 1);
+  };
+
+  useEffect(() => {
+    historyRef.current = { past: [], future: [] };
+    gestureRef.current = false;
+    setHistTick((t) => t + 1);
+  }, [historyKey]);
+
+  useEffect(() => {
+    const w = win || window;
+    const end = () => { gestureRef.current = false; };
+    w.addEventListener('mouseup', end);
+    return () => w.removeEventListener('mouseup', end);
+  }, [win]);
+
+  /* ---- turning the map ----
+     A quarter turn at a time, as one undoable step. Overlays, the ruler and
+     the firing square are cleared because the squares they pointed at are
+     somewhere else now. */
+  const rotateMapBy = (turns) => {
+    const write = onChangeRef.current;
+    if (!write) return;
+    remember(mapRef.current);
+    gestureRef.current = false;
+    write(rotateMap(mapRef.current, turns));
+    originRef.current = null; measureRef.current = null;
+    setOrigin(null); setAim(null); setMeasureFrom(null); setMeasureTo(null);
+  };
+  /* ---- loading a saved deck ----
+     The window is where a session is run, and until now it could save a deck
+     but not bring one back. What "load" means is the parent's call: onto the
+     live map for play (as Publish for play does: fog on, contacts hidden),
+     or, while a deck is being designed, switching to that deck. */
+  const [loadId, setLoadId] = useState('');
+  const loadChosenDeck = () => {
+    const deck = decks.find((d) => d.id === loadId);
+    if (!deck || !onLoadDeck) return;
+    const name = deck.name || 'Untitled deck';
+    const occupied = Object.keys(mapRef.current.floor || {}).length > 0;
+    if (occupied && !(win || window).confirm(
+      `Replace the map on screen with \u201c${name}\u201d? Undo (Cmd/Ctrl+Z) brings the current one back.`)) return;
+    remember(mapRef.current);
+    gestureRef.current = false;
+    originRef.current = null; measureRef.current = null;
+    setOrigin(null); setAim(null); setMeasureFrom(null); setMeasureTo(null);
+    onLoadDeck(deck);
+    setLoadId('');
+    setDeckNote(`Loaded \u201c${name}\u201d.`);
+  };
+  const rHeldRef = useRef(false);     // R is down: a click turns the map
+  const rUsedRef = useRef(false);     // ...and a tap of R turns the stamp instead
+  const spaceRef = useRef(false);     // Space is down: a drag pans
 
   // Which window this is. The projector's copy hides what the table must
   // not see; the GM's own tab shows it.
@@ -522,13 +625,20 @@ export default function BattleMap({
        derived from it. */
     if (mode === 'ground') {
       const ground = { ...m.ground };
-      for (const c of brushCells(pos, brush, m)) {
+      const cells = brushCells(pos, brush, m);
+      // The deck's own ground is the absence of paint rather than a value,
+      // so choosing it is how paint is lifted off again.
+      const lifting = paintGround === m.theme;
+      for (const c of cells) {
         const ck = cellKey(c.x, c.y);
-        // The deck's own ground is the absence of paint rather than a value,
-        // so choosing it is how paint is lifted off again.
-        if (paintGround === m.theme) delete ground[ck]; else ground[ck] = paintGround;
+        if (lifting) delete ground[ck]; else ground[ck] = paintGround;
       }
-      patch({ ground });
+      // Painting a terrain on a square with no deck lays the deck there too:
+      // a ground that is only drawn where there is already floor leaves a
+      // marsh, a lake or a field to be built square by square first. Squares
+      // that already have floor keep it exactly as it is, so nothing derived
+      // from it (walls, doors, fog) moves. Lifting paint never adds deck.
+      patch(lifting ? { ground } : { ground, floor: paintCells(m.floor, cells, true) });
       return;
     }
     if (mode === 'erase') {
@@ -685,21 +795,110 @@ export default function BattleMap({
   // sees the GM's keystrokes at all.
   useEffect(() => {
     const target = win || window;
+    const typing = (e) => ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target && e.target.tagName) || '');
     const onKey = (e) => {
-      const tag = (e.target && e.target.tagName) || '';
-      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;    // leave browser shortcuts alone
+      if (typing(e)) return;
       const k = e.key.toLowerCase();
-      if (k === 'r') setRotation((r) => (r + 90) % 360);
+      // Undo and redo, the way every editor does them.
+      if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+        if (k === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+        else if (k === 'y') { e.preventDefault(); redo(); }
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;    // leave browser shortcuts alone
+      // R is two things. Held with a click it turns the whole map; tapped on
+      // its own it turns the tile about to be stamped. Which one it was is
+      // only known when the key comes up.
+      if (k === 'r') { if (!e.repeat) { rHeldRef.current = true; rUsedRef.current = false; } }
       // H hides or brings back the toolbars; F takes the map's window
       // full screen; P does both at once, for the projector.
       else if (k === 'h') setShowOptions((v) => !v);
       else if (k === 'f' && win) toggleFullscreen();
       else if (k === 'p' && win) present();
     };
+    const onKeyUp = (e) => {
+      if (e.key.toLowerCase() !== 'r') return;
+      if (rHeldRef.current && !rUsedRef.current) setRotation((r) => (r + 90) % 360);
+      rHeldRef.current = false;
+    };
+    const onBlur = () => { rHeldRef.current = false; };
     target.addEventListener('keydown', onKey);
-    return () => target.removeEventListener('keydown', onKey);
+    target.addEventListener('keyup', onKeyUp);
+    target.addEventListener('blur', onBlur);
+    return () => {
+      target.removeEventListener('keydown', onKey);
+      target.removeEventListener('keyup', onKeyUp);
+      target.removeEventListener('blur', onBlur);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [win]);
+
+  /* ---- panning ----
+     Hold Space and drag. The pointer has to be over the map: Space also
+     presses whichever toolbar button was clicked last, and swallowing it
+     across the whole dashboard would break every other panel. The press is
+     caught on the way in, before the tool under the cursor sees it, so a pan
+     never paints a square. */
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return undefined;
+    const w = win || window;
+    const typing = (e) => ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target && e.target.tagName) || '');
+    let over = false;
+    let drag = null;
+    const cursor = (state) => {
+      el.classList.toggle('pan-ready', state === 'ready');
+      el.classList.toggle('panning', state === 'panning');
+    };
+    const onEnter = () => { over = true; };
+    const onLeave = () => { over = false; };
+    const onKeyDown = (e) => {
+      if (e.code !== 'Space' || !over || typing(e)) return;
+      e.preventDefault();
+      if (!e.repeat) { spaceRef.current = true; if (!drag) cursor('ready'); }
+    };
+    const onKeyUp = (e) => {
+      if (e.code !== 'Space') return;
+      if (spaceRef.current) e.preventDefault();    // no click on a focused button
+      spaceRef.current = false;
+      if (!drag) cursor(null);
+    };
+    const onDown = (e) => {
+      if (!spaceRef.current || e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      drag = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+      cursor('panning');
+    };
+    const onMove = (e) => {
+      if (!drag) return;
+      el.scrollLeft = drag.left - (e.clientX - drag.x);
+      el.scrollTop = drag.top - (e.clientY - drag.y);
+    };
+    const onUp = () => {
+      if (!drag) return;
+      drag = null;
+      cursor(spaceRef.current ? 'ready' : null);
+    };
+    const onBlur = () => { spaceRef.current = false; drag = null; cursor(null); };
+    el.addEventListener('mouseenter', onEnter);
+    el.addEventListener('mouseleave', onLeave);
+    el.addEventListener('mousedown', onDown, true);
+    w.addEventListener('keydown', onKeyDown);
+    w.addEventListener('keyup', onKeyUp);
+    w.addEventListener('mousemove', onMove);
+    w.addEventListener('mouseup', onUp);
+    w.addEventListener('blur', onBlur);
+    return () => {
+      el.removeEventListener('mouseenter', onEnter);
+      el.removeEventListener('mouseleave', onLeave);
+      el.removeEventListener('mousedown', onDown, true);
+      w.removeEventListener('keydown', onKeyDown);
+      w.removeEventListener('keyup', onKeyUp);
+      w.removeEventListener('mousemove', onMove);
+      w.removeEventListener('mouseup', onUp);
+      w.removeEventListener('blur', onBlur);
+      cursor(null);
+    };
   }, [win]);
 
   /* ---- full screen ----
@@ -1640,8 +1839,26 @@ export default function BattleMap({
           }}>Save deck</button>
           {deckNote ? <span className="rt-bm-hint">{deckNote}</span> : null}
         </>)}
+        {onLoadDeck && decks.length > 0 && (<>
+          <select value={loadId} onChange={(e) => setLoadId(e.target.value)}>
+            <option value="">Load a deck…</option>
+            {decks.map((d) => <option key={d.id} value={d.id}>{d.name || 'Untitled deck'}</option>)}
+          </select>
+          <button type="button" className="rt-btn" disabled={!loadId} onClick={loadChosenDeck}
+            title="Bring a saved deck onto the map. Undo takes it back.">Load deck</button>
+        </>)}
         <button type="button" className="rt-btn" onClick={exportPng}>Export PNG</button>
         <button type="button" className="rt-btn" onClick={clearAll}>Clear deck</button>
+        <button type="button" className="rt-btn" onClick={undo}
+          disabled={historyRef.current.past.length === 0}
+          title="Undo the last change (Cmd/Ctrl+Z)">Undo</button>
+        <button type="button" className="rt-btn" onClick={redo}
+          disabled={historyRef.current.future.length === 0}
+          title="Redo (Shift+Cmd/Ctrl+Z)">Redo</button>
+        <button type="button" className="rt-btn" onClick={() => rotateMapBy(-1)}
+          title="Turn the whole map 90 degrees anticlockwise. Hold R and Shift and click the map to do the same.">Rotate {'\u21BA'} 90{'\u00B0'}</button>
+        <button type="button" className="rt-btn" onClick={() => rotateMapBy(1)}
+          title="Turn the whole map 90 degrees clockwise. Hold R and click the map to do the same.">Rotate {'\u21BB'} 90{'\u00B0'}</button>
         <button type="button" className="rt-btn" onClick={() => setShowOptions(false)}
           title="Hide every toolbar for a clean map. H brings them back.">Hide options (H)</button>
         {win && (<>
@@ -1938,6 +2155,7 @@ export default function BattleMap({
         {/* Which terrain the brush lays down. The deck's own ground is first
             and named as such, because picking it is how paint comes off. */}
         {mode === 'ground' && (<>
+          <span className="rt-bm-hint">Paints new squares as well as existing ones.</span>
           <label className="rt-bm-num">
             <span>Terrain</span>
             <select value={paintGround} onChange={(e) => setPaintGround(e.target.value)}>
@@ -2195,12 +2413,20 @@ export default function BattleMap({
           onMouseMove={(e) => {
             const pos = posFromEvent(e);
             setHover(pos);
+            if (spaceRef.current || rHeldRef.current) return;   // panning, or turning the map
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure')) {
               applyAt(pos, true);
             }
           }}
           onMouseLeave={() => setHover(null)}
           onMouseDown={(e) => {
+            // R held: this click turns the map, a quarter turn clockwise, or
+            // anticlockwise with Shift, and does nothing else.
+            if (e.button === 0 && rHeldRef.current) {
+              rUsedRef.current = true;
+              rotateMapBy(e.shiftKey ? -1 : 1);
+              return;
+            }
             if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
           }}
           style={{

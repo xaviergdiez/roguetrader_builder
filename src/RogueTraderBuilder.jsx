@@ -1923,6 +1923,9 @@ const CSS = `
 .rt-bm-peek{position:absolute;top:8px;right:18px;z-index:5;opacity:.1;
   transition:opacity .15s;}
 .rt-bm-peek:hover,.rt-bm-peek:focus{opacity:1;}
+/* Space held over the map: it pans instead of painting. */
+.rt-bm-stage.pan-ready canvas{cursor:grab !important;}
+.rt-bm-stage.panning canvas{cursor:grabbing !important;}
 /* The canvas can be far wider than the dialog; scroll it rather than
    squashing it, so a square stays the size the GM calibrated it to. */
 /* A definite height, not just a cap: the stage is measured to work out how
@@ -2883,6 +2886,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
     setHomebrew({ ...(homebrew || {}), battlemaps: [...list, made] });
     return made;
   };
+  /* Bringing a saved deck onto the map from the window. For play it goes the
+     way Publish for play does (fog on, nothing explored, every contact
+     hidden), so the party is never handed a floorplan by a load. While a deck
+     is being designed it simply opens that deck instead. */
+  const loadDeckOntoMap = (deck) => {
+    if (designing) { setDeckId(deck.id); return; }
+    setActiveMap(publishMap(deck));
+  };
   const [brewOpen, setBrewOpen] = useState(false);
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeCode, setBridgeCode] = useState('');
@@ -2931,6 +2942,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const activeMap = designing
     ? activeDeck.map
     : readBattleMap((combat && combat.ground && combat.ground.map) || null);
+  // What the map's undo history belongs to: one deck's own, or the live map's.
+  const activeMapKey = designing ? activeDeck.id : 'live';
   const setActiveMap = (next) => {
     if (designing) {
       setHomebrew({
@@ -3798,7 +3811,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           grounds={grounds} onSaveGround={saveGroundToLibrary}
           onNeedGroundTexture={loadGroundTexture} groundErr={groundErr}
           deckId={deckId} setDeckId={setDeckId} mapView={mapView} setMapView={setMapView}
-          activeMap={activeMap} setActiveMap={setActiveMap}
+          activeMap={activeMap} setActiveMap={setActiveMap} activeMapKey={activeMapKey}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -3821,6 +3834,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
             <BattleMap
               map={activeMap}
               onChange={setActiveMap}
+              historyKey={activeMapKey}
               win={win}
               /* The projector needs the saved grounds too, or a deck built on
                  one would quietly fall back to a built-in theme out there. */
@@ -3835,6 +3849,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
                  lived on the live map with no road into the library. */
               decks={readMapLibrary(homebrew && homebrew.battlemaps)}
               onSaveDeck={saveLiveDeck}
+              onLoadDeck={loadDeckOntoMap}
             />
           )}
         </MapWindow>
@@ -7987,7 +8002,7 @@ function shipProfile(ship, blueprint, custom, context = {}) {
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
   grounds, onSaveGround, onNeedGroundTexture, groundErr,
-  deckId, setDeckId, mapView, setMapView, activeMap, setActiveMap, onClose }) {
+  deckId, setDeckId, mapView, setMapView, activeMap, setActiveMap, activeMapKey, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -9197,6 +9212,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           <BattleMap
             map={activeMap}
             onChange={setActiveMap}
+            historyKey={activeMapKey}
             encounters={encounters}
             customThemes={grounds}
             onSaveTheme={onSaveGround}

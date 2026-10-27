@@ -1955,6 +1955,10 @@ const CSS = `
   pointer-events:none;-webkit-user-drag:none;}
 .rt-bm-cropside{display:flex;flex-direction:column;gap:8px;min-width:0;}
 .rt-bm-cropside input[type=range]{width:160px;}
+/* The seed has to be readable at a glance: it is the one thing on this panel
+   worth writing down, and a box that cuts "TDU998" to "TDU" defeats it. */
+.rt-bm-gen .rt-bm-num input.rt-field{width:112px;font-family:ui-monospace,monospace;
+  letter-spacing:0.06em;}
 /* A section heading that carries its own action, so the field below it can
    run the full width of the panel and line up with every other one. */
 .rt-sechead{display:flex;align-items:center;justify-content:space-between;

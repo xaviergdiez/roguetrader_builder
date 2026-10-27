@@ -15,6 +15,7 @@ import {
 import { GEAR } from './gear.js';
 import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
 import { centreCrop, cropRect, dragBy, zoomTo, scaleBounds } from './texturecrop.js';
+import { generateDeck, newSeed, DECK_STYLES, styleById } from './mapgen.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
 /* The boarding map, projected under physical miniatures.
@@ -329,6 +330,12 @@ export default function BattleMap({
   // is none: { file, url, imgW, imgH, box, scale, x, y }.
   const [crop, setCrop] = useState(null);
   const dragRef = useRef(null);
+  // Deck generation. The seed is held here rather than on the map because it
+  // describes how the floor was made, not what it is — and the floor is the
+  // only record of the deck.
+  const [deckOpen, setDeckOpen] = useState(false);
+  const [genStyle, setGenStyle] = useState(DECK_STYLES[0].id);
+  const [genSeed, setGenSeed] = useState('');
   const [hover, setHover] = useState(null);
 
   const [weaponKey, setWeaponKey] = useState('lasgun');
@@ -1078,6 +1085,36 @@ export default function BattleMap({
     setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
   };
 
+  /* Lays out a deck: compartments, the runs between them, and a door at
+     every junction. The seed is what makes it a deck rather than a roll —
+     written down, it comes back, so an edit that goes wrong is recoverable
+     and a layout worth keeping can be handed to someone else.
+
+     REPLACES THE FLOOR, so it asks first when there is one. What it does not
+     touch is the ground, the calibration or the deck's name: those are the
+     GM's, and a generator that reset them would be taking more than it was
+     asked for. */
+  const rollDeck = () => {
+    if (Object.keys(m.floor).length
+      && !window.confirm('Replace the deck with a generated one? The ground and calibration are kept.')) {
+      return;
+    }
+    const seed = genSeed.trim() || newSeed();
+    const out = generateDeck({ cols: m.cols, rows: m.rows, style: genStyle, seed });
+    setGenSeed(out.seed);
+    patch({
+      floor: out.floor,
+      doors: out.doors,
+      // Everything that was placed ON the old deck refers to squares that no
+      // longer exist. Left behind, a crate sits in the void and a contact
+      // pings from inside a wall.
+      cover: {}, hazards: {}, markers: {}, contacts: {},
+      explored: {}, viewpoint: null
+    });
+    originRef.current = null; measureRef.current = null;
+    setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
+  };
+
   /* Generates a floor with the same Gemini pipeline the portraits use. The
      GM describes the ground; the server wraps that in the clauses that make
      it a floor rather than a picture (top-down, seamless, flat light, no grid
@@ -1256,6 +1293,11 @@ export default function BattleMap({
           onClick={() => setGenOpen((v) => !v)}>
           Ground{m.customTexture ? ' \u00b7 generated' : ''}
         </button>
+        <button type="button"
+          className={'rt-btn rt-bm-mode' + (deckOpen ? ' on' : '')}
+          onClick={() => setDeckOpen((v) => !v)}>
+          Deck
+        </button>
         {MODES.map((x) => (
           <button key={x.id} type="button"
             className={'rt-btn rt-bm-mode' + (mode === x.id ? ' on' : '')}
@@ -1286,6 +1328,50 @@ export default function BattleMap({
         <button type="button" className="rt-btn" onClick={exportPng}>Export PNG</button>
         <button type="button" className="rt-btn" onClick={clearAll}>Clear deck</button>
       </div>
+
+      {/* Laying out the deck, beside generating its ground: the two halves of
+          "make me somewhere to fight", in one place. */}
+      {deckOpen && (
+        <div className="rt-bm-gen">
+          <div className="rt-sechead">
+            <h4>Generate a deck</h4>
+            <button type="button" className="rt-btn ghost"
+              onClick={() => setDeckOpen(false)}>Close</button>
+          </div>
+
+          <div className="rt-bm-bar">
+            <label className="rt-bm-num">
+              <span>Layout</span>
+              <select value={genStyle} onChange={(e) => setGenStyle(e.target.value)}>
+                {DECK_STYLES.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </label>
+            <label className="rt-bm-num">
+              <span>Seed</span>
+              {/* Typed and kept, because this is what makes a generated deck
+                  reproducible. Blank rolls a fresh one and shows it. */}
+              <input className="rt-field" value={genSeed} maxLength={24}
+                placeholder="blank to roll"
+                onChange={(e) => setGenSeed(e.target.value)} />
+            </label>
+            <button type="button" className="rt-btn ghost"
+              onClick={() => setGenSeed(newSeed())}>New seed</button>
+            <button type="button" className="rt-btn" onClick={rollDeck}>
+              Generate deck
+            </button>
+          </div>
+
+          <p className="rt-bm-hint">
+            {styleById(genStyle).note} Laid out across the current
+            {' '}{m.cols}×{m.rows} grid, with a door wherever a run meets a
+            compartment — so one fog click reveals one room, not the deck.
+            Replaces the floor and the bulkheads; the ground, the calibration
+            and the deck's name are kept.
+          </p>
+        </div>
+      )}
 
       {genOpen && (
         <div className="rt-bm-gen">

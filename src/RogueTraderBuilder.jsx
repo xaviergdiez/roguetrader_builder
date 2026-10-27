@@ -5,7 +5,7 @@ import { shrinkToDataUrl } from './imageshrink.js';
 import MapWindow from './MapWindow.jsx';
 import {
   readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap,
-  readThemeLibrary, readCustomTheme
+  readThemeLibrary, readCustomTheme, readSavedMap
 } from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId, sameNamed,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
@@ -2737,6 +2737,23 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // that closing the dashboard mid-encounter does not shut the map with it.
   const [mapWindow, setMapWindow] = useState(false);
   const [mapErr, setMapErr] = useState('');
+
+  /* Keeps what was built in the map's own window. The target comes from the
+     caller rather than being matched on name: an id writes over that deck, no
+     id makes a new one, and nothing is inferred. */
+  const saveLiveDeck = ({ id, name, map }) => {
+    const list = readMapLibrary(homebrew && homebrew.battlemaps);
+    if (id) {
+      const target = list.find((d) => d.id === id);
+      if (!target) return null;
+      const next = list.map((d) => (d.id === id ? { ...d, map } : d));
+      setHomebrew({ ...(homebrew || {}), battlemaps: next });
+      return { ...target, map };
+    }
+    const made = readSavedMap({ name: String(name || '').trim() || 'Saved deck', map });
+    setHomebrew({ ...(homebrew || {}), battlemaps: [...list, made] });
+    return made;
+  };
   const [brewOpen, setBrewOpen] = useState(false);
   const [bridgeOpen, setBridgeOpen] = useState(false);
   const [bridgeCode, setBridgeCode] = useState('');
@@ -3634,6 +3651,11 @@ export default function RogueTraderBuilder({ me, cloud }) {
               /* The projector needs the saved grounds too, or a deck built on
                  one would quietly fall back to a built-in theme out there. */
               customThemes={readThemeLibrary(homebrew && homebrew.mapgrounds)}
+              /* And a way to keep the work. This window is often the only one
+                 open during a session, and until now everything built in it
+                 lived on the live map with no road into the library. */
+              decks={readMapLibrary(homebrew && homebrew.battlemaps)}
+              onSaveDeck={saveLiveDeck}
             />
           )}
         </MapWindow>

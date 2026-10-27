@@ -11,7 +11,7 @@ import {
   CONTACT_STATES, nextContactState, readContact, auspexSweep, fogStateAt,
   readSavedMap, readMapLibrary, newBattleMap, publishMap,
   regionAt, regionsAroundDoor, revealArea, concealArea, openReach, visibleExplored,
-  fitGrid, MAX_CUSTOM_TEXTURE,
+  fitGrid, MAX_CUSTOM_TEXTURE, brushCells, MAX_GRID, MIN_GRID,
   themeNumbersFor, BRIGHT_FLOOR, readCustomTheme, readThemeLibrary, resolveTheme,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
@@ -93,9 +93,10 @@ import { GEAR } from './gear.js';
   assert.equal(readMap({ tokens: { n1: { x: 1, y: 1 } } }).tokens, undefined);
 
   // Out-of-range dimensions are clamped, not taken on trust: a 10,000-column
-  // map would try to draw 200,000 grid lines.
-  assert.equal(readMap({ cols: 99999 }).cols, 100);
-  assert.equal(readMap({ cols: 1 }).cols, 5);
+  // map would try to draw 200,000 grid lines. The bound itself is checked
+  // against MAX_GRID below, so it is named rather than written twice.
+  assert.equal(readMap({ cols: 99999 }).cols, MAX_GRID);
+  assert.equal(readMap({ cols: 1 }).cols, MIN_GRID);
   assert.equal(readMap({ cols: 'nonsense' }).cols, EMPTY_MAP.cols);
 
   // Half-metre squares survive; zero and negative do not, because every
@@ -977,6 +978,63 @@ import { GEAR } from './gear.js';
   assert.deepEqual(auspexSweep(m, { x: 0, y: 0 }, 0), m.contacts);
 }
 
+/* ---- the brush ---- */
+
+{
+  const map = readMap({ cols: 20, rows: 20 });
+  const key = (c) => `${c.x},${c.y}`;
+
+  // Size 1 is a single square, which is what every tool did before the brush
+  // existed. It has to stay exactly that, or every old habit changes.
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, 1, map), [{ x: 5, y: 5 }]);
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, undefined, map), [{ x: 5, y: 5 }]);
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, 0, map), [{ x: 5, y: 5 }]);
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, -4, map), [{ x: 5, y: 5 }]);
+
+  // An odd brush is centred on the cursor.
+  const three = brushCells({ x: 5, y: 5 }, 3, map).map(key).sort();
+  assert.equal(three.length, 9);
+  assert.ok(three.includes('4,4') && three.includes('6,6') && three.includes('5,5'));
+
+  // An even one has no true centre, so the cursor is its top-left corner and
+  // you paint away from where you clicked. Pinned because the alternative —
+  // a block that shifts with the drag direction — is the thing this avoids.
+  assert.deepEqual(brushCells({ x: 5, y: 5 }, 2, map).map(key).sort(),
+    ['5,5', '5,6', '6,5', '6,6']);
+
+  // Clipped at the edges rather than running off the deck.
+  assert.equal(brushCells({ x: 0, y: 0 }, 3, map).length, 4);
+  assert.equal(brushCells({ x: 19, y: 19 }, 3, map).length, 4);
+  assert.ok(brushCells({ x: 5, y: 5 }, 999, map).every(
+    (c) => c.x >= 0 && c.y >= 0 && c.x < 20 && c.y < 20));
+  assert.deepEqual(brushCells(null, 3, map), []);
+
+  // And it composes with the painter, which is the whole point of it.
+  const floor = paintCells({}, brushCells({ x: 5, y: 5 }, 3, map));
+  assert.equal(Object.keys(floor).length, 9);
+  assert.deepEqual(paintCells(floor, brushCells({ x: 5, y: 5 }, 3, map), false), {});
+}
+
+/* ---- the grid can be big, but not unbounded ---- */
+
+{
+  // The ceiling is the browser's, not a preference: a canvas has a hard
+  // pixel limit and the deck is one canvas of cols x px. Past MAX_GRID the
+  // square would have to shrink below the base of the model standing on it.
+  assert.equal(readMap({ cols: MAX_GRID, rows: MAX_GRID }).cols, MAX_GRID);
+  assert.equal(readMap({ cols: MAX_GRID + 1 }).cols, MAX_GRID);
+  assert.equal(readMap({ cols: 99999 }).cols, MAX_GRID);
+  assert.equal(readMap({ cols: 1 }).cols, MIN_GRID);
+  assert.equal(fitGrid(999999, 32), MAX_GRID);
+  assert.ok(MAX_GRID >= 200, 'a hall should not need two decks');
+  // fitGrid and readMap agree, or Fit to screen would produce a grid readMap
+  // then quietly trimmed.
+  for (const px of [10, 24, 40, 70]) {
+    const n = fitGrid(100000, px);
+    assert.equal(readMap({ cols: n }).cols, n, 'fitGrid produced a size readMap trims');
+  }
+}
+
 /* ---- filling the screen means more squares, not bigger ones ---- */
 
 {
@@ -989,9 +1047,9 @@ import { GEAR } from './gear.js';
   assert.equal(fitGrid(1000, 20), 50);
   // Clamped the same way cols and rows are, so a tiny or vast viewport
   // still yields a grid readMap will accept unchanged.
-  assert.equal(fitGrid(10, 32), 5);
-  assert.equal(fitGrid(0, 32), 5);
-  assert.equal(fitGrid(999999, 32), 100);
+  assert.equal(fitGrid(10, 32), MIN_GRID);
+  assert.equal(fitGrid(0, 32), MIN_GRID);
+  assert.equal(fitGrid(999999, 32), MAX_GRID);
   assert.equal(fitGrid(960, 0), fitGrid(960, EMPTY_MAP.pxPerSquare), 'a zero square falls back');
   assert.equal(readMap({ cols: fitGrid(1920, 32) }).cols, 60, 'and readMap takes it as-is');
 }

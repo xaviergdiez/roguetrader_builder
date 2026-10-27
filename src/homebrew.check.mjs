@@ -45,7 +45,7 @@ assert.deepEqual(normalise({ hulls: [null, 'x', 3, { id: 'h1' }] }).hulls, [{ id
 assert.deepEqual(normalise({ components: [{ id: 'c1' }, undefined] }).components, [{ id: 'c1' }]);
 // and an unexpected key is not carried either
 assert.deepEqual(Object.keys(normalise({ hulls: [], components: [], junk: 1 })).sort(),
-  ['components', 'encounters', 'endeavours', 'hulls']);
+  ['battlemaps', 'components', 'encounters', 'endeavours', 'hulls', 'mapgrounds']);
 
 // Encounters ride in this same library rather than on a route of their own,
 // so they get the same treatment as the other two keys.
@@ -72,17 +72,21 @@ assert.deepEqual(normalise({ endeavours: [null, { id: 'd1' }] }).endeavours, [{ 
     hulls: [{ id: 'hull-x', name: 'X' }],
     components: [{ id: 'comp-y' }],
     encounters: [{ id: 'enc-z', name: 'Ambush' }],
-    endeavours: [{ id: 'end-w', name: 'The Cloud-Fane' }]
+    endeavours: [{ id: 'end-w', name: 'The Cloud-Fane' }],
+    battlemaps: [{ id: 'bmap-v', name: 'Hulk deck 1' }],
+    mapgrounds: [{ id: 'env-u', name: 'Refinery floor' }]
   };
   assert.equal(writeLocal(lib), true);
   assert.equal(store.has(HOMEBREW_KEY), true);
   assert.deepEqual(readLocal(), lib);
 
-  // A library written before encounters existed still reads, with an empty
-  // encounter list rather than an absent key the UI would have to guard.
+  // A library written before the later ones existed still reads, with empty
+  // lists rather than absent keys the UI would have to guard.
   store.set(HOMEBREW_KEY, JSON.stringify({ hulls: [{ id: 'old' }], components: [] }));
-  assert.deepEqual(readLocal(),
-    { hulls: [{ id: 'old' }], components: [], encounters: [], endeavours: [] });
+  assert.deepEqual(readLocal(), {
+    hulls: [{ id: 'old' }], components: [], encounters: [], endeavours: [],
+    battlemaps: [], mapgrounds: []
+  });
 
   // a corrupt blob reads as empty rather than throwing
   store.set(HOMEBREW_KEY, '{not json');
@@ -103,8 +107,10 @@ assert.deepEqual(normalise({ endeavours: [null, { id: 'd1' }] }).endeavours, [{ 
   const got = await cloudGet();
   // Normalised on the way in, so a server that predates encounters still
   // hands the editor a library with every key present.
-  assert.deepEqual(got,
-    { hulls: [{ id: 'hull-a' }], components: [], encounters: [], endeavours: [] });
+  assert.deepEqual(got, {
+    hulls: [{ id: 'hull-a' }], components: [], encounters: [], endeavours: [],
+    battlemaps: [], mapgrounds: []
+  });
   assert.equal(calls[0].opts, undefined, 'a GET sends no body');
 
   calls.length = 0;
@@ -117,8 +123,10 @@ assert.deepEqual(normalise({ endeavours: [null, { id: 'd1' }] }).endeavours, [{ 
   calls.length = 0;
   await cloudPut({ hulls: [null, { id: 'ok' }], components: 'no', encounters: [{ id: 'e' }] });
   const sent2 = JSON.parse(calls[0].opts.body);
-  assert.deepEqual(sent2.homebrew,
-    { hulls: [{ id: 'ok' }], components: [], encounters: [{ id: 'e' }], endeavours: [] });
+  assert.deepEqual(sent2.homebrew, {
+    hulls: [{ id: 'ok' }], components: [], encounters: [{ id: 'e' }], endeavours: [],
+    battlemaps: [], mapgrounds: []
+  });
 
   // ...and on the way back, so a bad answer cannot poison the editor
   nextResponse = () => ({ status: 200, body: { homebrew: { hulls: 'broken' } } });
@@ -145,3 +153,41 @@ nextResponse = () => ({ status: 500 });
 await assert.rejects(cloudGet(), /returned 500/);
 
 console.log('homebrew store: all checks passed');
+
+/* ---- every library the app keeps here survives a round trip ---- */
+
+{
+  // THE BUG THIS PREVENTS: normalise rebuilds the object from a fixed list
+  // of keys, so a library added later and not named here is DROPPED on every
+  // read and every write. Saved decks and generated grounds were lost that
+  // way — they lived in React state until the next round trip and then went.
+  //
+  // Listed explicitly rather than derived from EMPTY, so adding a key to
+  // EMPTY without carrying it through normalise still fails here.
+  const LIBRARIES = ['hulls', 'components', 'encounters', 'endeavours',
+    'battlemaps', 'mapgrounds'];
+
+  const full = {};
+  for (const k of LIBRARIES) full[k] = [{ id: k + '-1', name: k }];
+
+  const out = normalise(full);
+  for (const k of LIBRARIES) {
+    assert.equal(out[k].length, 1, k + ' was dropped by normalise');
+    assert.equal(out[k][0].id, k + '-1', k + ' lost its contents');
+  }
+  // And EMPTY names them all, or a fresh library starts without the key and
+  // the first read of it is undefined rather than [].
+  for (const k of LIBRARIES) {
+    assert.ok(Array.isArray(EMPTY[k]), k + ' is missing from EMPTY');
+  }
+  // isEmpty has to know about them too, or a library holding only decks
+  // reads as empty and the app offers to seed it over the top.
+  for (const k of LIBRARIES) {
+    assert.equal(isEmpty({ [k]: [{ id: 'x' }] }), false,
+      'a library holding only ' + k + ' reads as empty');
+  }
+  assert.equal(isEmpty({}), true);
+  assert.equal(isEmpty(normalise(null)), true);
+}
+
+console.log('homebrew.js: every library survives normalise');

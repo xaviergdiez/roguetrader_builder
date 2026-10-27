@@ -5,7 +5,7 @@ import {
   wallMask, cornerPillar, WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
-  overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid,
+  overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
   resolveTheme, themeNumbersFor,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
@@ -271,7 +271,8 @@ const BAND_COLOUR = {
 };
 
 export default function BattleMap({
-  map, onChange, win = null, encounters = [], customThemes = [], onSaveTheme = null
+  map, onChange, win = null, encounters = [], customThemes = [], onSaveTheme = null,
+  decks = [], onSaveDeck = null
 }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = resolveTheme(m.theme, customThemes);
@@ -280,6 +281,19 @@ export default function BattleMap({
   const [tileId, setTileId] = useState('corridor_1x5');
   const [rotation, setRotation] = useState(0);
   const [markerType, setMarkerType] = useState('objective');
+  const [brush, setBrush] = useState(1);
+  /* A VIEW control, deliberately not stored on the map. px/square is the
+     projector's calibration and must not move; zoom scales what is already
+     drawn so the GM can read a corner or take in the whole deck. On the
+     projector it belongs at 100%, which is why it resets rather than
+     following the deck around. */
+  const [zoom, setZoom] = useState(1);
+  // Saving the deck from here. The target is PICKED, never guessed: writing
+  // over the wrong deck and quietly making a duplicate are both losses, and
+  // this window is where a GM works without the library in front of them.
+  const [deckTarget, setDeckTarget] = useState('');
+  const [deckName, setDeckName] = useState('');
+  const [deckNote, setDeckNote] = useState('');
   const [doorKind, setDoorKind] = useState('bulkhead');
   const [coverType, setCoverType] = useState('crates');
   const [hazardType, setHazardType] = useState('fire');
@@ -389,13 +403,23 @@ export default function BattleMap({
     if (!pos) return;
     const k = cellKey(pos.x, pos.y);
 
-    if (mode === 'paint') { patch({ floor: paintCells(m.floor, [pos], true) }); return; }
+    if (mode === 'paint') {
+      patch({ floor: paintCells(m.floor, brushCells(pos, brush, m), true) });
+      return;
+    }
     if (mode === 'erase') {
-      const doors = { ...m.doors }; delete doors[k];
-      const markers = { ...m.markers }; delete markers[k];
-      const cover = { ...m.cover }; delete cover[k];
-      const hazards = { ...m.hazards }; delete hazards[k];
-      patch({ floor: paintCells(m.floor, [pos], false), doors, markers, cover, hazards });
+      // Everything standing on a square goes with the square. Erasing the
+      // floor and leaving its bulkhead behind would put a door in the void.
+      const cells = brushCells(pos, brush, m);
+      const doors = { ...m.doors };
+      const markers = { ...m.markers };
+      const cover = { ...m.cover };
+      const hazards = { ...m.hazards };
+      for (const c of cells) {
+        const ck = cellKey(c.x, c.y);
+        delete doors[ck]; delete markers[ck]; delete cover[ck]; delete hazards[ck];
+      }
+      patch({ floor: paintCells(m.floor, cells, false), doors, markers, cover, hazards });
       return;
     }
     // Revealing is a drag as well as a click: a corridor is swept, not
@@ -900,7 +924,8 @@ export default function BattleMap({
         ctx.strokeRect(c.x * px, c.y * px, px, px);
       }
     } else if (hover && (mode === 'paint' || mode === 'erase')) {
-      fill([hover], mode === 'erase' ? 'rgba(231,76,60,0.4)' : 'rgba(46,204,113,0.4)');
+      fill(brushCells(hover, brush, m),
+        mode === 'erase' ? 'rgba(231,76,60,0.4)' : 'rgba(46,204,113,0.4)');
     }
 
     // 9. The measuring tape.
@@ -928,7 +953,7 @@ export default function BattleMap({
       ctx.textAlign = 'left';
       ctx.fillText(bar.label, bx + 4, by - px * 0.3);
     }
-  }, [m, px, theme, hover, mode, tileId, rotation, overlay, origin, aim, weapon, coneAngle, projecting,
+  }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, showLos, textureTick]);
 
   /* ---- controls ---- */
@@ -1043,9 +1068,12 @@ export default function BattleMap({
         try { why = (await res.json()).error || why; } catch { /* not json */ }
         throw new Error(why);
       }
-      // Shrunk here, as a portrait is: it is kept on a saved record, and the
-      // bytes Gemini returns are far more than a tiling floor needs.
-      const texture = await shrinkToDataUrl(await res.blob(), 768, 0.8);
+      /* Shrunk hard, because it is kept in the GM's library as a data URL
+         and that library has a real byte ceiling. 512 is plenty for a floor
+         that TILES — at a 40px square one copy already spans twelve squares
+         — and it is the difference between a handful of saved grounds
+         fitting and the first one filling the budget on its own. */
+      const texture = await shrinkToDataUrl(await res.blob(), 512, 0.75);
       setPreview({ texture, numbers: await sampleNumbers(texture) });
     } catch (e) {
       setGenErr(e.message || 'Generation failed');
@@ -1128,6 +1156,28 @@ export default function BattleMap({
             className={'rt-btn rt-bm-mode' + (mode === x.id ? ' on' : '')}
             onClick={() => setMode(x.id)}>{x.label}</button>
         ))}
+        {onSaveDeck && (<>
+          <select value={deckTarget} onChange={(e) => { setDeckTarget(e.target.value); setDeckNote(''); }}>
+            <option value="">Save as a new deck\u2026</option>
+            {decks.map((d) => (
+              <option key={d.id} value={d.id}>Save over: {d.name || 'Untitled deck'}</option>
+            ))}
+          </select>
+          {!deckTarget && (
+            <input className="rt-field" value={deckName} maxLength={80}
+              placeholder="Name this deck"
+              onChange={(e) => setDeckName(e.target.value)} />
+          )}
+          <button type="button" className="rt-btn" onClick={() => {
+            const saved = onSaveDeck({ id: deckTarget || null, name: deckName, map: m });
+            if (saved) {
+              setDeckNote(`Saved to \u201c${saved.name}\u201d.`);
+              setDeckTarget(saved.id);
+              setDeckName('');
+            }
+          }}>Save deck</button>
+          {deckNote ? <span className="rt-bm-hint">{deckNote}</span> : null}
+        </>)}
         <button type="button" className="rt-btn" onClick={exportPng}>Export PNG</button>
         <button type="button" className="rt-btn" onClick={clearAll}>Clear deck</button>
       </div>
@@ -1221,6 +1271,17 @@ export default function BattleMap({
           <button type="button" className="rt-btn"
             onClick={() => setRotation((r) => (r + 90) % 360)}>Rotate {rotation}° (R)</button>
         </>)}
+
+        {(mode === 'paint' || mode === 'erase') && (
+          <label className="rt-bm-num">
+            <span>Brush</span>
+            <select value={String(brush)} onChange={(e) => setBrush(Number(e.target.value))}>
+              {[1, 2, 3, 5, 7, 10].map((n) => (
+                <option key={n} value={String(n)}>{n}\u00d7{n}</option>
+              ))}
+            </select>
+          </label>
+        )}
 
         {mode === 'marker' && (
           <select value={markerType} onChange={(e) => setMarkerType(e.target.value)}>
@@ -1366,6 +1427,14 @@ export default function BattleMap({
         {num('mm / square', m.mmPerSquare, (v) => patch({ mmPerSquare: v }), 5, 100)}
         {num('Metres / square', m.metresPerSquare, (v) => patch({ metresPerSquare: v }), 0.5, 10, 0.5)}
         <button type="button" className="rt-btn" onClick={fitToStage}>Fit to screen</button>
+        <label className="rt-bm-num">
+          <span>Zoom</span>
+          <select value={String(zoom)} onChange={(e) => setZoom(Number(e.target.value))}>
+            {[0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4].map((z) => (
+              <option key={z} value={String(z)}>{Math.round(z * 100)}%</option>
+            ))}
+          </select>
+        </label>
         <label className="rt-bm-num"><input type="checkbox" checked={showZones}
           onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
         <label className="rt-bm-num"><input type="checkbox" checked={showCalibration}
@@ -1393,6 +1462,10 @@ export default function BattleMap({
       )}
 
       <div className="rt-bm-stage" ref={stageRef}>
+        {/* The wrapper takes the scaled size because a CSS transform does not
+            affect layout — without it the stage would not know there was
+            anything to scroll to. */}
+        <div style={{ width: m.cols * px * zoom, height: m.rows * px * zoom }}>
         <canvas
           ref={canvasRef}
           onMouseMove={(e) => {
@@ -1404,8 +1477,16 @@ export default function BattleMap({
           onMouseDown={(e) => {
             if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
           }}
-          style={{ cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
+          style={{
+            cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer',
+            transform: zoom === 1 ? undefined : `scale(${zoom})`,
+            transformOrigin: 'top left',
+            // Nearest-neighbour when magnified: a deck zoomed in should show
+            // its squares, not a blurred guess at them.
+            imageRendering: zoom > 1 ? 'pixelated' : undefined
+          }}
         />
+        </div>
       </div>
 
     </div>

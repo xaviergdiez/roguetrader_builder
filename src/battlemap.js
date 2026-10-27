@@ -262,6 +262,18 @@ export const EMPTY_MAP = {
 // generated ground is costing more to load than the deck it decorates.
 export const MAX_CUSTOM_TEXTURE = 1_500_000;
 
+/* The largest grid a deck may be.
+
+   NOT a design preference — a browser canvas has a hard pixel ceiling
+   (16384 a side in Chrome, lower on some machines) and the deck is drawn as
+   one canvas of cols x px. At 200 squares and a 40px square that is already
+   8000px a side, which is where MAX_CANVAS_PX sits. Past this the square
+   would have to shrink below the size of the miniature standing on it, which
+   decalibrates the projector — the one thing the calibration exists to stop.
+   Zoom is the answer to a big deck, not a smaller square. */
+export const MAX_GRID = 200;
+export const MIN_GRID = 5;
+
 export const cellKey = (x, y) => `${Math.round(x)},${Math.round(y)}`;
 export const parseKey = (k) => {
   const parts = String(k).split(',');
@@ -403,8 +415,8 @@ export function readMap(m) {
        drawing, where the saved library is actually in hand. */
     theme: (typeof src.theme === 'string' && src.theme.trim())
       ? src.theme.trim().slice(0, 64) : DEFAULT_THEME,
-    cols: int(src.cols, EMPTY_MAP.cols, 5, 100),
-    rows: int(src.rows, EMPTY_MAP.rows, 5, 100),
+    cols: int(src.cols, EMPTY_MAP.cols, MIN_GRID, MAX_GRID),
+    rows: int(src.rows, EMPTY_MAP.rows, MIN_GRID, MAX_GRID),
     // Half-metre squares are legitimate (a cramped gun deck), so this one is
     // not rounded to an integer like the rest.
     metresPerSquare: (() => {
@@ -526,7 +538,7 @@ export function fogStateAt(map, x, y) {
 export const fitGrid = (availablePx, pxPerSquare) => {
   const px = Number(pxPerSquare) || EMPTY_MAP.pxPerSquare;
   const n = Math.floor((Number(availablePx) || 0) / px);
-  return Math.max(5, Math.min(100, n));
+  return Math.max(MIN_GRID, Math.min(MAX_GRID, n));
 };
 
 /* --------------------------- revealing an area ---------------------------
@@ -714,6 +726,31 @@ export function stampCells(tile, pos, rotation = 0, map = EMPTY_MAP) {
       const x = x0 + dx;
       const y = y0 + dy;
       if (x >= 0 && x < map.cols && y >= 0 && y < map.rows) out.push({ x, y });
+    }
+  }
+  return out;
+}
+
+/* The cells a brush covers, centred on the cursor. Size 1 is a single
+   square, which is what every tool did before; a bigger brush is how you
+   clear a hall without a hundred clicks.
+
+   An odd size is centred on the cursor. An even one has no true centre, so
+   the cursor is the block's top-left corner — a 2-brush at (5,5) covers
+   (5,5)..(6,6), and you paint away from where you clicked. The alternative
+   is a block whose centre shifts with the direction of the drag, which is
+   worse than a fixed bias you can learn in one stroke. */
+export function brushCells(pos, size, map) {
+  const m = map || EMPTY_MAP;
+  if (!pos) return [];
+  const n = Math.max(1, Math.min(25, Math.round(Number(size) || 1)));
+  const back = Math.floor((n - 1) / 2);
+  const out = [];
+  for (let dx = 0; dx < n; dx++) {
+    for (let dy = 0; dy < n; dy++) {
+      const x = Math.round(pos.x) - back + dx;
+      const y = Math.round(pos.y) - back + dy;
+      if (x >= 0 && y >= 0 && x < m.cols && y < m.rows) out.push({ x, y });
     }
   }
   return out;

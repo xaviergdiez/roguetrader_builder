@@ -196,6 +196,16 @@ export function readCustomTheme(x) {
     // What it was asked for, kept so it can be generated again or adjusted.
     prompt: String(src.prompt || '').slice(0, 800),
     texture,
+    /* The ground's sixteen props, as one 4x4 sheet, already keyed to
+       transparency by the browser that made it. A string when this ground has
+       props and null when it has none, and null is the ordinary case: every
+       ground saved before props existed has none, and uploading a floor does
+       not generate any. The index entry carries a boolean instead (see
+       api/grounds.js) so the picker can say which grounds are dressed without
+       hauling the sheets about. */
+    sprites: typeof src.sprites === 'string'
+      && /^data:image\/(png|jpeg|webp);base64,/.test(src.sprites)
+      && src.sprites.length <= MAX_CUSTOM_SPRITES ? src.sprites : null,
     custom: true,
     grid: col(src.grid, n.grid),
     accent: col(src.accent, n.accent),
@@ -317,6 +327,10 @@ export const EMPTY_MAP = {
 // ~1.5MB of base64, which is a 768px JPEG with room to spare. Past this a
 // generated ground is costing more to load than the deck it decorates.
 export const MAX_CUSTOM_TEXTURE = 1_500_000;
+// A prop sheet is sixteen tokens in one 1024px image, and mostly transparent,
+// which WebP packs hard. Its own ceiling rather than the floor's: the two are
+// stored apart and a sheet going over should not cost a ground its floor.
+export const MAX_CUSTOM_SPRITES = 1_500_000;
 
 /* The largest grid a deck may be.
 

@@ -7,7 +7,7 @@ import {
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
   clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice, rotateMap, rotationFits,
-  expandMap, expandPlan, MIN_GRID, MAX_GRID,
+  expandMap, expandPlan, MIN_GRID, MAX_GRID, MAX_CUSTOM_SPRITES,
   resolveTheme, themeNumbersFor, groundsUsed, tokensNeeded,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
@@ -19,7 +19,9 @@ import { GEAR } from './gear.js';
 import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
 import { centreCrop, cropRect, dragBy, zoomTo, scaleBounds } from './texturecrop.js';
 import { generateDeck, growDeck as buildAroundDeck, newSeed, DECK_STYLES, styleById } from './mapgen.js';
-import { spriteRole, spriteTurn, SHEET_FOR_THEME } from './spritesheet.js';
+import {
+  spriteRole, spriteTurn, SHEET_FOR_THEME, SPRITE_SLOTS, cellRect, keyBlack
+} from './spritesheet.js';
 import { generateTerrain, readTerrainPrompt, TERRAIN_SIZES, TERRAIN_SCOPES } from './terrain.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
@@ -162,6 +164,83 @@ function IconButton({ icon, label, onClick, on = false, disabled = false, classN
         style={{ '--tip-shift': shift + 'px' }}>{label}</span>
     </button>
   );
+}
+
+/* ---- prop sheets in the browser ----
+
+   The nine sheets that ship are cut up on a desktop by tools/slice-sprites.mjs.
+   A sheet the GM generates mid-session has to be cut up here, by the same
+   rules out of spritesheet.js, or a generated set would not sit beside a
+   shipped one.
+
+   Two steps, and the ORDER is the thing. The black is keyed into alpha at the
+   size it arrived, and only then is the sheet shrunk for storage. Shrinking
+   first averages each token with a background it has not been separated from
+   yet, and bakes in a dark fringe that no later keying can find — the same
+   trap the desktop tool documents, and it is easier to fall into here because
+   a canvas makes the shrink the convenient thing to do first. */
+function imageFrom(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not read that image.'));
+    img.src = src;
+  });
+}
+
+/* 768 across, so each of the sixteen cells is 192px.
+
+   Measured rather than chosen: the shipped sheets, keyed and re-encoded, come
+   to 535-840KB as data URLs at 1024, against a store that refuses anything
+   over 900KB. A busy sheet — the jungle one — sits 60KB under the ceiling,
+   which means a busier generated one fails to save AFTER the GM has paid for
+   the call. At 768 the same three land at 317-485KB, roughly half the budget,
+   and 192px a cell is still more than a 40-96px square ever asks for. */
+async function keySheet(blob, { store = 768, quality = 0.78 } = {}) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await imageFrom(url);
+    // Square, and the smaller side wins: a sheet that came back 1024x1032
+    // must still cut into sixteen equal cells.
+    const side = Math.min(img.naturalWidth, img.naturalHeight);
+    if (!side) throw new Error('That sheet came back empty.');
+
+    const full = document.createElement('canvas');
+    full.width = side; full.height = side;
+    const fg = full.getContext('2d', { willReadFrequently: true });
+    fg.drawImage(img, 0, 0, side, side, 0, 0, side, side);
+    const px = fg.getImageData(0, 0, side, side);
+    keyBlack(px.data);
+    fg.putImageData(px, 0, 0);
+
+    // Now it may be shrunk: every pixel carries its own alpha, so the filter
+    // mixes art with transparency rather than with black.
+    const out = document.createElement('canvas');
+    out.width = Math.min(store, side); out.height = out.width;
+    const og = out.getContext('2d');
+    og.imageSmoothingQuality = 'high';
+    og.drawImage(full, 0, 0, out.width, out.height);
+    return out.toDataURL('image/webp', quality);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/* A stored sheet into sixteen pictures, by role. Canvases rather than Images
+   because drawImage takes either and this way nothing is encoded, decoded and
+   re-encoded on the way to being drawn. The sheet is already transparent —
+   keySheet did that before it was stored — so this is pure cutting. */
+function sliceSheet(img) {
+  const side = Math.min(img.naturalWidth, img.naturalHeight);
+  const out = {};
+  for (const s of SPRITE_SLOTS) {
+    const r = cellRect(s.slot, side, side);
+    const c = document.createElement('canvas');
+    c.width = r.w; c.height = r.h;
+    c.getContext('2d').drawImage(img, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+    out[s.role] = c;
+  }
+  return out;
 }
 
 /* Draws one prop picture into its square, turned a quarter at a time where
@@ -442,6 +521,9 @@ export default function BattleMap({
   const [genCond, setGenCond] = useState('none');
   const [genName, setGenName] = useState('');
   const [genBusy, setGenBusy] = useState(false);
+  // Its own flag, not genBusy: the props take their own trip to the model and
+  // the floor's buttons should not all grey out while they are coming.
+  const [propsBusy, setPropsBusy] = useState(false);
   const [genErr, setGenErr] = useState('');
   // What came back, held here rather than written to the deck: nothing is
   // kept until the GM says they are happy with it.
@@ -788,14 +870,12 @@ export default function BattleMap({
   const tokenKey = tokenNeeds.join('|');
 
   /* Where a ground's prop pictures come from. Only the nine that ship have a
-     folder; a ground the GM uploaded or generated carries its own tokens on
-     the ground record instead, and has none until it has been given some. */
+     folder of cut tokens; a ground the GM generated carries its own sixteen
+     as one sheet on the ground record, cut up below, and one they merely
+     uploaded a floor for has none at all. */
   const tokenSrc = (ground, role) => {
     const custom = resolveTheme(ground, customThemes);
-    if (custom && custom.custom) {
-      const own = custom.tokens && custom.tokens[role];
-      return own || null;
-    }
+    if (custom && custom.custom) return null;
     return SHEET_FOR_THEME[ground] ? `/maps/tokens/${ground}/${role}.webp` : null;
   };
 
@@ -830,13 +910,46 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenKey, customThemes]);
 
+  /* ---- a generated ground's own props ----
+
+     A ground the GM generated carries its sixteen props as ONE sheet rather
+     than sixteen files, because that is how it was generated and how it is
+     stored: one blob in one Redis record, which is also why the props keep
+     the light and the wear of the floor they belong to.
+
+     So it is cut up here, once per ground, and held as sixteen canvases. */
+  const sheetsRef = useRef(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const id of groundIds) {
+      if (sheetsRef.current.has(id)) continue;
+      const t = resolveTheme(id, customThemes);
+      if (!t || !t.custom || !t.sprites) continue;
+      // Claimed before the decode finishes, or every redraw queues it again.
+      sheetsRef.current.set(id, null);
+      imageFrom(t.sprites)
+        .then((img) => {
+          if (cancelled) return;
+          sheetsRef.current.set(id, sliceSheet(img));
+          setTokenTick((n) => n + 1);
+        })
+        // A sheet that will not decode leaves that ground's props flat, which
+        // is what a ground with no sheet at all does.
+        .catch(() => { if (!cancelled) setTokenTick((n) => n + 1); });
+    }
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groundKey, customThemes]);
+
   /* The picture for one square's prop, or null to draw it the old way. */
   const tokenAt = (kind, id, state, cx, cy) => {
     const at = { x: cx, y: cy };
     const role = spriteRole(kind, id, state, at);
     if (!role) return null;
     const ground = (m.ground && m.ground[cellKey(cx, cy)]) || m.theme;
-    const img = tokensRef.current.get(ground + '/' + role);
+    const sheet = sheetsRef.current.get(ground);
+    const img = (sheet && sheet[role]) || tokensRef.current.get(ground + '/' + role);
     return img ? { img, turn: spriteTurn(role, at) } : null;
   };
 
@@ -2186,6 +2299,43 @@ export default function BattleMap({
     }
   };
 
+  /* The props that stand on that floor: sixteen doors, barriers, crates,
+     pillars, fires and thickets, generated as ONE 4x4 sheet from the same
+     description the floor came from.
+
+     One image rather than sixteen, which is one call rather than sixteen —
+     but the reason is not the bill. Generated one at a time they come back in
+     sixteen different lights and sixteen degrees of wear, and a deck dressed
+     in them looks like a collage; asked for together, the model is composing
+     a set. It is the same reason the nine that ship are sheets. */
+  const generateProps = async () => {
+    if (!preview) return;
+    setGenErr(''); setPropsBusy(true);
+    try {
+      const res = await fetch('/api/generate-texture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'sprites', describe: genDescribe, cover: genCover, condition: genCond
+        })
+      });
+      if (!res.ok) {
+        let why = `Generation failed (${res.status})`;
+        try { why = (await res.json()).error || why; } catch { /* not json */ }
+        throw new Error(why);
+      }
+      const sprites = await keySheet(await res.blob());
+      if (sprites.length > MAX_CUSTOM_SPRITES) {
+        throw new Error('That sheet came back too large to store. Try generating it again.');
+      }
+      setPreview((p) => (p ? { ...p, sprites } : p));
+    } catch (e) {
+      setGenErr(e.message || 'Generation failed');
+    } finally {
+      setPropsBusy(false);
+    }
+  };
+
   /* A floor of the GM's own. It lands in the same preview a generated one
      does, so it is judged tiled and saved by the same road.
 
@@ -2280,6 +2430,10 @@ export default function BattleMap({
     const saved = await onSaveTheme({
       name: genName.trim() || 'Saved ground',
       texture: preview.texture,
+      // Null rather than absent when there are none: the store reads an
+      // absent sheet as "leave what is there alone", which is what renaming a
+      // dressed ground wants, and an explicit null as "it has none".
+      sprites: preview.sprites || null,
       prompt: [genDescribe, genCover].filter(Boolean).join(' / '),
       subtitle: genCover ? `with ${genCover}` : '',
       ...preview.numbers
@@ -2885,6 +3039,38 @@ export default function BattleMap({
                 how it repeats and a single copy hides every seam. */}
             <div className="rt-bm-preview"
               style={{ backgroundImage: `url(${preview.texture})` }} />
+
+            {/* The props that stand on it. Offered rather than automatic: it
+                is a second trip to the model, and the first floor generated
+                is usually not the one kept. */}
+            <div className="rt-bm-bar">
+              <button type="button" className="rt-btn" onClick={generateProps}
+                disabled={propsBusy || genBusy}
+                title="Doors, cover, hazards and foliage built of this ground's own materials, as one sheet">
+                {propsBusy ? 'Generating props…'
+                  : preview.sprites ? 'Generate the props again' : 'Generate matching props'}
+              </button>
+              {preview.sprites ? (
+                <span className="rt-bm-hint">
+                  Sixteen props, saved with this ground and drawn on any deck that uses it.
+                </span>
+              ) : (
+                <span className="rt-bm-hint">
+                  Optional. Without them a deck on this ground draws its doors and cover
+                  as plain shapes, the way it always has.
+                </span>
+              )}
+            </div>
+            {preview.sprites && (
+              <div className="rt-bm-sheet" title="The sixteen props, cut from the generated sheet">
+                {SPRITE_SLOTS.map((s) => (
+                  <i key={s.role} title={s.name}
+                    style={{ backgroundImage: `url(${preview.sprites})`,
+                      backgroundPosition: `${(s.slot % 4) * 33.333}% ${Math.floor(s.slot / 4) * 33.333}%` }} />
+                ))}
+              </div>
+            )}
+
             <div className="rt-bm-bar">
               <label className="rt-bm-num">
                 <span>Name it</span>

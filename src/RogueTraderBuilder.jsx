@@ -1964,6 +1964,24 @@ const CSS = `
 .rt-bm-group:last-of-type{border-right:0;}
 .rt-bm-toolname{display:inline-flex;align-items:center;gap:6px;font-family:var(--display);
   font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass-lit);}
+/* A generated ground's sixteen props, shown as the sheet cut into squares.
+   Each cell is the whole sheet behind a window 1/4 of its width, moved to that
+   cell's corner — four across, so the step is 100/(4-1) per cell. A chequer
+   behind them, because the tokens are transparent and half of them are pale:
+   on a flat dark panel an ice barrier is invisible and reads as a failed
+   generation. */
+   The chequer is on the CONTAINER, not the cells: each cell's own background
+   is the sheet, set inline, and an inline background-image would paint over a
+   chequer declared on the same element. */
+.rt-bm-sheet{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin:0 0 8px;
+  padding:3px;background-color:#191919;
+  background-image:linear-gradient(45deg,#262626 25%,transparent 25%,transparent 75%,#262626 75%),
+    linear-gradient(45deg,#262626 25%,transparent 25%,transparent 75%,#262626 75%);
+  background-size:12px 12px;background-position:0 0,6px 6px;
+  border:1px solid var(--brass-dim);}
+.rt-bm-sheet i{display:block;aspect-ratio:1;background-size:400% 400%;
+  background-repeat:no-repeat;}
+
 /* The grounds a procedural terrain may use. */
 .rt-bm-palette{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px;}
 .rt-bm-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px 3px 6px;
@@ -2911,10 +2929,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
     try {
       if (cloud) {
         const meta = await groundPut(ready);
-        // Held with its floor so the deck it was just applied to can draw it
-        // without a round trip back for what we already have.
+        // Held with its floor and its props so the deck it was just applied
+        // to can draw it without a round trip back for what we already have.
         setGrounds((prev) => [...prev.filter((g) => g.id !== meta.id),
-          { ...meta, texture: ready.texture }]);
+          { ...meta, texture: ready.texture, sprites: ready.sprites || null }]);
       } else {
         const next = [...readLocalGrounds().filter((g) => g.id !== ready.id), ready];
         if (!writeLocalGrounds(next)) {
@@ -2938,7 +2956,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
     try {
       const full = await groundGet(id);
       if (full && full.texture) {
-        setGrounds((prev) => prev.map((g) => (g.id === id ? { ...g, texture: full.texture } : g)));
+        // The props come back in the same answer when the ground has any, so
+        // a dressed ground is drawn complete rather than appearing and then
+        // sprouting its doors a moment later.
+        setGrounds((prev) => prev.map((g) => (g.id === id
+          ? { ...g, texture: full.texture, sprites: full.sprites || null }
+          : g)));
       }
     } catch (e) { setGroundErr(e.message); }
   };

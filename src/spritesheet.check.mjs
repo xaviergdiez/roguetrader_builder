@@ -67,15 +67,20 @@ ok(hazardRoles.void === null && hazardRoles.radiation === null,
   'vacuum and radiation are drawn flat, deliberately');
 ok(spriteRole('nonsense', 'x') === null, 'an unknown kind asks for nothing');
 
-/* ---- the two low-cover pictures alternate by position ---- */
+/* ---- every barrier is the same picture ----
+   A barrier is laid square by square to make a LINE, so neighbours must match:
+   two different low-cover pictures alternating along a run read as a railing
+   that turns into a wall and back. This asserts the cohesion directly, because
+   an earlier version did alternate them and it looked like a mistake. */
 const lows = [];
 for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) lows.push(spriteRole('cover', 'low', null, { x, y }));
-ok(new Set(lows).size === 2, 'low cover uses both of its pictures');
-ok(spriteRole('cover', 'low', null, { x: 0, y: 0 }) === spriteRole('cover', 'low', null, { x: 0, y: 0 }),
-  'and the same square always gets the same one');
-ok(spriteRole('cover', 'low', null, { x: 1, y: 0 }) !== spriteRole('cover', 'low', null, { x: 0, y: 0 }),
-  'neighbours differ, so a run of barrier is not one stamp repeated');
+ok(new Set(lows).size === 1, 'every barrier on the deck is the same picture');
+ok(lows[0] === 'barrier', 'and it is the railing, not the low wall');
 ok(SPRITE_ROLES.includes(spriteRole('cover', 'low', null, null)), 'and it still works with no position');
+// A barrier must not be scattered by position either, or a run of them would
+// come apart again at the angles rather than at the artwork.
+ok(SPRITE_SLOTS.find((s) => s.role === 'barrier').turn === false,
+  'and it is never turned on its own, which would break the run just as badly');
 
 /* ---- the grid ---- */
 for (const size of [2048, 1024, 512, 2046]) {
@@ -136,6 +141,80 @@ ok(keyBlack(px(200, 0, 0))[3] === 255, 'and so is a saturated red');
 }
 // A custom range, as a sheet with a dirtier background would need.
 ok(keyBlack(px(60, 60, 60), { lo: 70, hi: 100 })[3] === 0, 'LO and HI can be moved');
+
+/* ---- dark art is not background ----
+
+   The bug this prevents: judged on brightness alone, a rusted iron door's own
+   panels are darker than the edge-feather threshold, so two thirds of the
+   door came out see-through and the deck plate showed through it. Measured
+   before the fix at 66% of the solid art on one sheet.
+
+   A dark pixel WALLED IN by art is the art's own shadow. A dark pixel the
+   background can walk to is an edge. That is the whole rule. */
+{
+  const W = 9;
+  // Inside the feather band, whatever the band currently is: pinning this to a
+  // literal is how these checks went stale when HI moved from 52 to 34.
+  const DARK = Math.round((BLACK_LO + BLACK_HI) / 2);
+  // A ring of bright art with a dark interior, on a dark background.
+  const img = new Uint8ClampedArray(W * W * 4);
+  const set = (x, y, v) => {
+    const i = (y * W + x) * 4;
+    img[i] = v; img[i + 1] = v; img[i + 2] = v; img[i + 3] = 255;
+  };
+  for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) set(x, y, 2);   // background
+  for (let y = 2; y <= 6; y++) for (let x = 2; x <= 6; x++) set(x, y, 200); // the art
+  // Its inside is dark — the shadow in a door's recess — and sits inside the
+  // band, so brightness alone would have called it half-background.
+  for (let y = 3; y <= 5; y++) for (let x = 3; x <= 5; x++) set(x, y, DARK);
+  keyBlack(img, { w: W, h: W });
+  const alphaAt = (x, y) => img[(y * W + x) * 4 + 3];
+
+  ok(alphaAt(0, 0) === 0, 'the background still goes');
+  ok(alphaAt(4, 4) === 255, 'but the shadow INSIDE the art stays solid');
+  ok(alphaAt(3, 3) === 255, 'all of it, not just the middle');
+  ok(alphaAt(2, 2) === 255, 'and the art itself is untouched');
+
+  // The same interior, left open to the outside, is background again: an
+  // open doorway is a hole and must show the floor through it.
+  const open2 = new Uint8ClampedArray(img.length);
+  for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+    const i = (y * W + x) * 4;
+    open2[i] = 2; open2[i + 1] = 2; open2[i + 2] = 2; open2[i + 3] = 255;
+  }
+  const put = (x, y, v) => {
+    const i = (y * W + x) * 4;
+    open2[i] = v; open2[i + 1] = v; open2[i + 2] = v; open2[i + 3] = 255;
+  };
+  for (let y = 2; y <= 6; y++) for (let x = 2; x <= 6; x++) put(x, y, 200);
+  for (let y = 3; y <= 5; y++) for (let x = 3; x <= 5; x++) put(x, y, DARK);
+  for (let y = 3; y <= 5; y++) put(6, y, DARK);      // break the wall open
+  keyBlack(open2, { w: W, h: W });
+  ok(open2[(4 * W + 4) * 4 + 3] < 255,
+    'a dark region the background can reach is still faded');
+
+  /* TRUE BLACK IS A HOLE WHEREVER IT IS. This is what keeps an open doorway
+     open and the gaps between a railing's balusters clear, even though both
+     are enclosed by the art around them. */
+  const holed = new Uint8ClampedArray(W * W * 4);
+  const mark = (x, y, v) => {
+    const i = (y * W + x) * 4;
+    holed[i] = v; holed[i + 1] = v; holed[i + 2] = v; holed[i + 3] = 255;
+  };
+  for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) mark(x, y, 2);
+  for (let y = 2; y <= 6; y++) for (let x = 2; x <= 6; x++) mark(x, y, 200);
+  for (let y = 3; y <= 5; y++) for (let x = 3; x <= 5; x++) mark(x, y, 0);
+  keyBlack(holed, { w: W, h: W });
+  ok(holed[(4 * W + 4) * 4 + 3] === 0, 'an enclosed pure-black hole is still a hole');
+  ok(holed[(2 * W + 2) * 4 + 3] === 255, 'and the frame around it is solid');
+
+  // Without dimensions it is a strip with no inside, so everything is
+  // reachable: the old brightness-only behaviour, which is what the
+  // pixel-level checks above rely on.
+  const strip = Uint8ClampedArray.from([DARK, DARK, DARK, 255]);
+  keyBlack(strip);
+  ok(strip[3] > 0 && strip[3] < 255, 'with no shape given, a dark pixel still fades');
+}
 
 /* ---- coverage ---- */
 {

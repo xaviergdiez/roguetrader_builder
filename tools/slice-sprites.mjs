@@ -45,12 +45,17 @@ const THEME_FOR_SHEET = Object.fromEntries(
 
 const kb = (n) => (n / 1024).toFixed(0) + 'kB';
 
-/* One cell: cut it out at full resolution, key the black into alpha, THEN
-   shrink. In that order on purpose — shrinking first would average the art
-   with the background it has not been separated from yet, and every token
-   would come out with a dark halo baked in that no later keying could find.
+/* One cell, cut at full resolution and shrunk only afterwards. In that order
+   on purpose — shrinking first would average the art with the background it
+   has not been separated from yet, and every token would come out with a dark
+   halo baked in that no later keying could find.
 
-   The cell is copied out of the whole sheet's pixels by hand rather than with
+   The sheet is keyed WHOLE, before any of this, so that the flood fill which
+   separates background from the art's own shadows sees one continuous
+   background rather than sixteen framed ones — and so that it does exactly
+   what the browser does to a generated sheet.
+
+   The cell is copied out of the sheet's pixels by hand rather than with
    sharp's extract, because a sharp pipeline is single use: asking one for
    sixteen different crops gets you one crop and fifteen errors, and building
    sixteen pipelines decodes the same 2048px JPEG sixteen times. */
@@ -62,7 +67,6 @@ async function cutCell(raw, sheetW, sheetH, index) {
     cell.set(raw.subarray(from, from + r.w * 4), y * r.w * 4);
   }
 
-  keyBlack(cell);
   const coverage = cellCoverage(cell);
 
   const webp = await sharp(Buffer.from(cell.buffer, cell.byteOffset, cell.length),
@@ -102,6 +106,9 @@ async function main() {
     if (meta.width % 4 || meta.height % 4) {
       console.warn(`  ! ${file} is ${meta.width}x${meta.height}; cells will lose the odd pixel`);
     }
+
+    // The black into alpha, once, over the whole sheet.
+    keyBlack(raw, { w: meta.width, h: meta.height });
 
     const dir = join(OUT, theme);
     if (!DRY) await mkdir(dir, { recursive: true });

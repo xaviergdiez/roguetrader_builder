@@ -484,43 +484,6 @@ export const writeCover = (id, turn = 0) => {
   return lie(turn) ? { id, turn: 1 } : id;
 };
 
-/* Every barrier on the deck, turned together.
-
-   A barrier is laid square by square and a run of them is a railing along a
-   gantry or across a hold. Laid the wrong way round, turning them one at a
-   time is as many clicks as laying them was — and a half-turned run is worse
-   than a wrong one, because it reads as two barriers meeting. So they turn as
-   a set. Bulk cover is left alone: it has no angle, and bumping it would
-   scatter a hold of crates for no reason the GM asked for. */
-export function turnAllCover(map, turns = 1) {
-  const m = readMap(map);
-  // Two states, so turning is a flip and an even number of turns is none.
-  const t = lie(turns);
-  if (!t) return m;
-  const cover = {};
-  let moved = 0;
-  for (const [k, v] of Object.entries(m.cover)) {
-    const c = readCover(v);
-    if (!c) continue;
-    const type = coverById(c.id);
-    if (type && type.directional) { cover[k] = writeCover(c.id, c.turn + t); moved++; }
-    else cover[k] = v;
-  }
-  return moved ? { ...m, cover } : m;
-}
-
-// How many barriers there are to turn, for the button to say so — and to be
-// disabled when there are none.
-export function countDirectionalCover(map) {
-  const m = readMap(map);
-  let n = 0;
-  for (const v of Object.values(m.cover)) {
-    const c = readCover(v);
-    const type = c && coverById(c.id);
-    if (type && type.directional) n++;
-  }
-  return n;
-}
 
 // The cover type on a square, whichever form the square is stored in. Most
 // callers want the type and not the angle: it is the type that blocks sight

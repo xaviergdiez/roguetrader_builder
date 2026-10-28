@@ -10,7 +10,7 @@ import {
   expandMap, expandPlan, MIN_GRID, MAX_GRID, MAX_CUSTOM_SPRITES,
   resolveTheme, themeNumbersFor, groundsUsed, tokensNeeded,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, readCover, writeCover,
-  turnAllCover, countDirectionalCover, HAZARD_TYPES, hazardById,
+  HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText, lineBlocked, LOS_MAX_SQUARES, keepClean,
   weaponOverlay, calibrationBar, deploymentRows
@@ -211,7 +211,10 @@ async function keySheet(blob, { store = 768, quality = 0.78 } = {}) {
     const fg = full.getContext('2d', { willReadFrequently: true });
     fg.drawImage(img, 0, 0, side, side, 0, 0, side, side);
     const px = fg.getImageData(0, 0, side, side);
-    keyBlack(px.data);
+    // The dimensions matter: without them the keying cannot tell the art's own
+    // dark shadows from background showing through, and two thirds of a dark
+    // token comes out see-through.
+    keyBlack(px.data, { w: side, h: side });
     fg.putImageData(px, 0, 0);
 
     // Now it may be shrunk: every pixel carries its own alpha, so the filter
@@ -532,21 +535,6 @@ export default function BattleMap({
   // Its own flag, not genBusy: the props take their own trip to the model and
   // the floor's buttons should not all grey out while they are coming.
   const [propsBusy, setPropsBusy] = useState(false);
-
-  /* Every barrier on the deck, turned together.
-
-     Laying a railing along a gantry is a square at a time, and realising at
-     the end that the whole run lies the wrong way should not mean laying it
-     again — so one press turns the lot. Only barriers move: crates, pillars
-     and hatches fill their square and have no way round to be wrong.
-
-     Goes through remember() like any other edit, so undo takes it back. */
-  const barrierCount = useMemo(() => countDirectionalCover(m), [m]);
-  const turnBarriers = () => {
-    if (!barrierCount) return;
-    remember(mapRef.current);
-    patch({ cover: turnAllCover(m, 1).cover });
-  };
 
   /* ---- asking before something destructive, INSIDE the map ----
 
@@ -2648,14 +2636,6 @@ export default function BattleMap({
   const menuActions = () => {
     const a = [];
     if (mode === 'stamp') a.push({ key: 'rot', label: `Rotate the tile (now ${rotation}\u00b0)`, hint: 'R', run: () => setRotation((r) => (r + 90) % 360) });
-    // Turning the whole run at once, reachable with the toolbars hidden.
-    if (mode === 'cover' && coverType === 'low' && barrierCount) {
-      a.push({
-        key: 'turnall', icon: 'rotateRight',
-        label: `Turn all ${barrierCount} barrier${barrierCount === 1 ? '' : 's'}`,
-        run: turnBarriers
-      });
-    }
     if (mode === 'ground') {
       a.push({
         key: 'terrain', label: 'Procedural terrain\u2026', icon: 'ground',
@@ -3384,13 +3364,6 @@ export default function BattleMap({
                 <option value={1}>Along {'—'} vertical</option>
               </select>
             </label>
-          )}
-          {coverType === 'low' && (
-            <button type="button" className="rt-btn" onClick={turnBarriers}
-              disabled={barrierCount === 0}
-              title="Turn every barrier already on this deck a quarter, so a run of them lies the same way">
-              Turn all {barrierCount || ''}
-            </button>
           )}
           <span className="rt-bm-hint">
             {coverType === 'low'

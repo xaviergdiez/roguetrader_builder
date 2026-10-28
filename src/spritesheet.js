@@ -39,7 +39,15 @@ export const SHEET_CELLS = SHEET_COLS * SHEET_ROWS;
    floor above them costs the outermost wisp of the smoke and gas cells, which
    was at a tenth of an opacity nobody can see anyway. */
 export const BLACK_LO = 24;
-export const BLACK_HI = 52;
+/* HI is low, and deliberately. It started at 52 on the reasoning that a wider
+   band gives a softer edge, and a wider band is exactly what made a grimdark
+   set see-through: this art is DARK, so a rusted bulkhead's own recessed
+   panels sit in the 24-52 range and came out part-transparent with the deck
+   plate showing through them. Narrowed to 34 and checked against the art
+   rather than reasoned about — the doors, hatches, machinery and crates all
+   read solid at 34, the smoke and gas clouds are still soft, and nothing
+   gained the dark outline a hard cut would have given it. */
+export const BLACK_HI = 34;
 
 /* ---- the slots ----
    Fixed, and the same on all nine sheets, because the prompt that makes a
@@ -135,7 +143,20 @@ export function spriteRole(kind, id, state = null, at = null) {
     if (id === 'crates') return 'crates';
     if (id === 'machinery') return 'machinery';
     if (id === 'pillar') return 'pillar';
-    if (id === 'low') return alternate(at) ? 'wall_low' : 'barrier';
+    /* ONE picture for every barrier, so a run of them is one barrier.
+
+       The sheets carry two low-cover pictures — a railing and a low wall —
+       and this used to alternate between them by position, on the reasoning
+       that repeating one picture looks stamped. That reasoning is wrong for
+       this prop in particular: a barrier is laid square by square to make a
+       LINE, and alternating two different barriers along it reads as a
+       railing that changes into a wall and back. Cohesion beats variety for
+       the one prop whose whole purpose is to join up with itself.
+
+       That leaves wall_low cut and shipped but unasked for, like the smoke
+       cell: it wants to be a cover type of its own, with its own Armour
+       Points, rather than a second skin for this one. */
+    if (id === 'low') return 'barrier';
     return null;
   }
   if (kind === 'hazard') {
@@ -162,17 +183,6 @@ export function spriteRole(kind, id, state = null, at = null) {
   return null;
 }
 
-// Which of a pair a square gets. A cheap checker rather than a hash: these
-// only ever come in twos, and a checker never puts a run of the same one down
-// the length of a barrier.
-function alternate(at) {
-  if (!at) return false;
-  const x = Number(at.x);
-  const y = Number(at.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-  return ((Math.abs(Math.round(x)) + Math.abs(Math.round(y))) % 2) === 1;
-}
-
 /* ---- the grid ----
    Where a cell sits on a sheet of any size. The shipped sheets are 2048 and a
    generated one may be 1024, so nothing here may assume 512px cells; the only
@@ -195,23 +205,76 @@ export function cellRect(index, sheetW, sheetH = sheetW) {
    Alpha comes from the brightest channel, not from a luminance weighting: a
    pure blue warp glow and a pure yellow arc are both fully present art, and
    weighting the channels the way the eye does would call the blue one
-   half-transparent for being blue. */
-export function keyBlack(rgba, { lo = BLACK_LO, hi = BLACK_HI } = {}) {
+   half-transparent for being blue.
+
+   WHY THE BAND NEEDS TO KNOW WHERE IT IS.
+
+   Brightness alone cannot tell dark ART from half-transparent BACKGROUND, and
+   a grimdark set is mostly dark art. Judged on brightness alone, two thirds of
+   a rusted bulkhead's own panels came out see-through, and the deck plate
+   showed straight through the door — measured, not guessed: 66% of the solid
+   art on the space hulk's door, 46% on the flagship's. The pale ice tokens
+   were fine at 12%, which is exactly why it looked like a theme problem.
+
+   So the band is resolved by CONNECTIVITY. The background is the dark region
+   that reaches the edge of the cell; a dark pixel walled in by art is art, and
+   stays solid. Only a pixel that something could reach from outside is faded,
+   which is what an edge is.
+
+   Pure black is still cleared wherever it is found, connected or not. That is
+   what keeps an open doorway open, and the gaps between a railing's balusters
+   and a grating's bars clear: those are holes, and a hole is rendered as true
+   #000 while a shadow inside a door is merely dark. */
+export function keyBlack(rgba, { lo = BLACK_LO, hi = BLACK_HI, w = 0, h = 0 } = {}) {
   const span = Math.max(1, hi - lo);
-  for (let i = 0; i < rgba.length; i += 4) {
-    const r = rgba[i];
-    const g = rgba[i + 1];
-    const b = rgba[i + 2];
+  const n = rgba.length / 4;
+  /* No dimensions given means a strip of pixels with no inside — every one of
+     them is on the edge, so every one is reachable, which is the old
+     brightness-only behaviour. That is what the pixel-level checks want and
+     it is the right reading of "I did not tell you the shape". */
+  const width = w > 0 && h > 0 && w * h === n ? w : n;
+  const height = width === n ? 1 : h;
+
+  // Which pixels the background can reach, walking only through pixels dark
+  // enough to be background or its edge. A stack rather than recursion: a
+  // 512-square cell of near-black would blow the call stack.
+  const open = new Uint8Array(n);
+  const stack = [];
+  const maxAt = (p) => {
+    const i = p * 4;
+    const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+    return r > g ? (r > b ? r : b) : (g > b ? g : b);
+  };
+  const push = (p) => { if (!open[p] && maxAt(p) < hi) { open[p] = 1; stack.push(p); } };
+  for (let x = 0; x < width; x++) { push(x); push((height - 1) * width + x); }
+  for (let y = 0; y < height; y++) { push(y * width); push(y * width + width - 1); }
+  while (stack.length) {
+    const p = stack.pop();
+    const x = p % width, y = (p - x) / width;
+    if (x > 0) push(p - 1);
+    if (x < width - 1) push(p + 1);
+    if (y > 0) push(p - width);
+    if (y < height - 1) push(p + width);
+  }
+
+  for (let p = 0; p < n; p++) {
+    const i = p * 4;
+    const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
     const m = r > g ? (r > b ? r : b) : (g > b ? g : b);
     if (m <= lo) {
-      // Zero the colour as well. An invisible pixel's colour still shows up
-      // once anything scales the image: the filter mixes it with its visible
-      // neighbours, and black leaking in that way is exactly the fringe this
-      // whole routine exists to avoid.
+      /* True black, wherever it sits: the background, and the holes in the
+         art — an open doorway, the gaps in a railing, the slots of a grate.
+
+         Zero the colour as well. An invisible pixel's colour still shows up
+         once anything scales the image: the filter mixes it with its visible
+         neighbours, and black leaking in that way is exactly the fringe this
+         whole routine exists to avoid. */
       rgba[i] = 0; rgba[i + 1] = 0; rgba[i + 2] = 0; rgba[i + 3] = 0;
       continue;
     }
-    if (m >= hi) { rgba[i + 3] = 255; continue; }
+    // Dark, but walled in by art: this is the art's own shadow, not the
+    // background showing through it.
+    if (m >= hi || !open[p]) { rgba[i + 3] = 255; continue; }
     const a = (m - lo) / span;
     // Undo the premultiply: this pixel is the art's own colour faded toward
     // black by `a`, so dividing by `a` recovers the colour it was.

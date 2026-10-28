@@ -15,7 +15,7 @@ import {
   clampZoom, MIN_ZOOM, MAX_ZOOM,
   themeNumbersFor, BRIGHT_FLOOR, readCustomTheme, readThemeLibrary, resolveTheme,
   textureAdvice, SQUARE_TOLERANCE, expandMap, expandPlan, groundsUsed, tokensNeeded,
-  readCover, writeCover, turnAllCover, countDirectionalCover,
+  readCover, writeCover,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -1660,26 +1660,6 @@ import { GEAR } from './gear.js';
     assert.equal(coverBetween(sighted, { x: 4, y: 1 }, { x: 6, y: 1 }).id, 'low',
       'and a turned railing still gives its Armour Points');
 
-    /* Turning the whole run at once. */
-    const run = readMap({
-      cols: 10, rows: 10,
-      cover: { '1,1': 'low', '2,1': 'low', '3,1': { id: 'low', turn: 1 }, '4,1': 'crates' }
-    });
-    assert.equal(countDirectionalCover(run), 3, 'three barriers and a crate stack');
-    const turned = turnAllCover(run, 1);
-    assert.deepEqual(turned.cover['1,1'], { id: 'low', turn: 1 }, 'across becomes along');
-    assert.deepEqual(turned.cover['2,1'], { id: 'low', turn: 1 });
-    assert.equal(turned.cover['3,1'], 'low', 'and one already standing lies back down');
-    assert.equal(turned.cover['4,1'], 'crates', 'the crates are left alone');
-    // Two presses and it is back where it started, which is what makes the
-    // button safe to lean on.
-    assert.deepEqual(turnAllCover(turnAllCover(run, 1), 1).cover, run.cover,
-      'turning twice is where it began');
-    assert.deepEqual(turnAllCover(run, 0).cover, run.cover, 'no turn is no change');
-    assert.equal(countDirectionalCover(readMap({ cols: 8, rows: 8 })), 0, 'a bare deck has none');
-    // Nothing else about the map moves.
-    assert.equal(turned.cols, 10);
-    assert.deepEqual(Object.keys(turned.cover).sort(), Object.keys(run.cover).sort());
   }
 
   /* ---- which prop pictures the deck needs ----

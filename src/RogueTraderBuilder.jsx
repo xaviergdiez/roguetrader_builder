@@ -1964,6 +1964,23 @@ const CSS = `
 .rt-bm-group:last-of-type{border-right:0;}
 .rt-bm-toolname{display:inline-flex;align-items:center;gap:6px;font-family:var(--display);
   font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass-lit);}
+/* The map asking before it destroys something.
+
+   Fixed to the viewport rather than absolute inside the map, because the map
+   may be scrolled a long way down a 500-square deck and a question that
+   appears at the deck's origin is a question nobody is looking at. Fixed also
+   survives full screen, which is where this has to work: the alternative was
+   a browser dialog, and in the popped-out window that opened on the window
+   BEHIND the map, where it could not be seen or clicked. */
+.rt-bm-askwrap{position:fixed;inset:0;z-index:80;display:flex;align-items:center;
+  justify-content:center;padding:16px;background:rgba(3,5,4,.72);}
+.rt-bm-ask{width:min(440px,100%);padding:16px 18px;background:var(--panel);
+  border:1px solid var(--brass);box-shadow:0 18px 50px rgba(0,0,0,.7);}
+.rt-bm-ask h4{margin:0 0 8px;font-family:var(--display);font-size:14px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lit);}
+.rt-bm-ask p{margin:0 0 14px;font-size:13px;line-height:1.5;color:var(--text);}
+.rt-bm-askrow{display:flex;gap:8px;justify-content:flex-end;}
+
 /* A generated ground's sixteen props, shown as the sheet cut into squares.
    Each cell is the whole sheet behind a window 1/4 of its width, moved to that
    cell's corner — four across, so the step is 100/(4-1) per cell. A chequer

@@ -9,7 +9,8 @@ import {
   clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice, rotateMap, rotationFits,
   expandMap, expandPlan, MIN_GRID, MAX_GRID, MAX_CUSTOM_SPRITES,
   resolveTheme, themeNumbersFor, groundsUsed, tokensNeeded,
-  DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
+  DOOR_KINDS, doorKindById, COVER_TYPES, coverById, readCover, writeCover,
+  turnAllCover, countDirectionalCover, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText, lineBlocked, LOS_MAX_SQUARES, keepClean,
   weaponOverlay, calibrationBar, deploymentRows
@@ -509,6 +510,13 @@ export default function BattleMap({
   const [deckMsg, setDeckMsg] = useState('');
   const [doorKind, setDoorKind] = useState('bulkhead');
   const [coverType, setCoverType] = useState('crates');
+  /* Which way the next barrier lies: 0 across the square, 1 standing up it.
+     Only a low barrier has a direction worth choosing — crates, machinery and
+     a pillar fill their square and are already turned by position so a run of
+     them does not look stamped — so the control only appears for that one,
+     but the number is stored for any cover, because turning the whole deck
+     has to turn whatever is on it. */
+  const [coverTurn, setCoverTurn] = useState(0);
   const [hazardType, setHazardType] = useState('fire');
   const [obscureType, setObscureType] = useState('medium');
   const [noiseKind, setNoiseKind] = useState('shot');
@@ -524,6 +532,60 @@ export default function BattleMap({
   // Its own flag, not genBusy: the props take their own trip to the model and
   // the floor's buttons should not all grey out while they are coming.
   const [propsBusy, setPropsBusy] = useState(false);
+
+  /* Every barrier on the deck, turned together.
+
+     Laying a railing along a gantry is a square at a time, and realising at
+     the end that the whole run lies the wrong way should not mean laying it
+     again — so one press turns the lot. Only barriers move: crates, pillars
+     and hatches fill their square and have no way round to be wrong.
+
+     Goes through remember() like any other edit, so undo takes it back. */
+  const barrierCount = useMemo(() => countDirectionalCover(m), [m]);
+  const turnBarriers = () => {
+    if (!barrierCount) return;
+    remember(mapRef.current);
+    patch({ cover: turnAllCover(m, 1).cover });
+  };
+
+  /* ---- asking before something destructive, INSIDE the map ----
+
+     window.confirm looked like the simple answer and was the wrong one, in
+     two ways that both end with the GM pressing a button and nothing
+     happening:
+
+     1. THIS COMPONENT RUNS IN THE DASHBOARD'S JS CONTEXT even when it is
+        painted into the popped-out map window, because it gets there through
+        a React portal (see MapWindow.jsx). So bare `window` is the DASHBOARD's
+        window, and `window.confirm` opened a dialog on a window sitting
+        BEHIND the map — invisible, unclickable, and holding the map's own
+        code hostage until something was clicked. "Clear the deck does
+        nothing" was this.
+     2. Even addressed to the right window it is wrong for the one screen that
+        matters most. The map is run full screen on a projector, and a browser
+        chrome dialog over a projected deck is either suppressed or is a grey
+        system box in front of the table.
+
+     So the map asks in its own panel, rendered inside its own DOM — which is
+     whichever window the map is in — and the handlers await the answer. */
+  const [ask, setAsk] = useState(null);
+  // The resolve lives in a ref rather than in the state: putting it in state
+  // means settling it from inside a state updater, and an updater that has a
+  // side effect is run twice by StrictMode.
+  const askRef = useRef(null);
+  const confirmInMap = (opts) => new Promise((resolve) => {
+    // A second question while one is up would strand the first handler
+    // waiting for an answer that can never come. Decline it instead.
+    if (askRef.current) { resolve(false); return; }
+    askRef.current = resolve;
+    setAsk(opts);
+  });
+  const closeAsk = (yes) => {
+    const settle = askRef.current;
+    askRef.current = null;
+    setAsk(null);
+    if (settle) settle(yes);
+  };
   const [genErr, setGenErr] = useState('');
   // What came back, held here rather than written to the deck: nothing is
   // kept until the GM says they are happy with it.
@@ -731,13 +793,17 @@ export default function BattleMap({
      live map for play (as Publish for play does: fog on, contacts hidden),
      or, while a deck is being designed, switching to that deck. */
   const [loadId, setLoadId] = useState('');
-  const loadChosenDeck = () => {
+  const loadChosenDeck = async () => {
     const deck = decks.find((d) => d.id === loadId);
     if (!deck || !onLoadDeck) return;
     const name = deck.name || 'Untitled deck';
     const occupied = Object.keys(mapRef.current.floor || {}).length > 0;
-    if (occupied && !(win || window).confirm(
-      `Replace the map on screen with \u201c${name}\u201d? Undo (Cmd/Ctrl+Z) brings the current one back.`)) return;
+    if (occupied && !await confirmInMap({
+      title: 'Replace what is on screen?',
+      body: `\u201c${name}\u201d takes the place of the map on screen. Undo (Cmd/Ctrl+Z)`
+        + ' brings the current one back.',
+      yes: 'Load it'
+    })) return;
     remember(mapRef.current);
     gestureRef.current = false;
     originRef.current = null; measureRef.current = null;
@@ -749,13 +815,16 @@ export default function BattleMap({
   /* Throwing a deck out of the library. The map's undo cannot reach this \u2014
      it is the stored library, not the map on screen \u2014 so it asks first, and
      says so. */
-  const deleteChosenDeck = () => {
+  const deleteChosenDeck = async () => {
     const deck = decks.find((d) => d.id === loadId);
     if (!deck || !onDeleteDeck) return;
     const name = deck.name || 'Untitled deck';
-    if (!(win || window).confirm(
-      `Delete the saved deck \u201c${name}\u201d? It goes out of the library for good `
-      + 'and undo on the map will not bring it back. Whatever is on screen stays.')) return;
+    if (!await confirmInMap({
+      title: `Delete \u201c${name}\u201d?`,
+      body: 'It goes out of the library for good, and undo on the map will not bring it'
+        + ' back. Whatever is on screen stays.',
+      yes: 'Delete it'
+    })) return;
     onDeleteDeck(deck);
     setLoadId('');
     // Save over a deck that no longer exists and the save would quietly make
@@ -942,15 +1011,22 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groundKey, customThemes]);
 
-  /* The picture for one square's prop, or null to draw it the old way. */
-  const tokenAt = (kind, id, state, cx, cy) => {
+  /* The picture for one square's prop, or null to draw it the old way.
+
+     `turn` is what the SQUARE says, and it is ADDED to what the role says.
+     The two mean different things and both are wanted: spriteTurn breaks up a
+     run of identical props that have no front, while the square's own turn is
+     a barrier the GM deliberately stood on end. Adding them means a barrier
+     (which spriteTurn leaves alone, having a front) obeys the GM exactly,
+     while crates (which carry no turn of their own) keep being scattered. */
+  const tokenAt = (kind, id, state, cx, cy, turn = 0) => {
     const at = { x: cx, y: cy };
     const role = spriteRole(kind, id, state, at);
     if (!role) return null;
     const ground = (m.ground && m.ground[cellKey(cx, cy)]) || m.theme;
     const sheet = sheetsRef.current.get(ground);
     const img = (sheet && sheet[role]) || tokensRef.current.get(ground + '/' + role);
-    return img ? { img, turn: spriteTurn(role, at) } : null;
+    return img ? { img, turn: (spriteTurn(role, at) + turn) % 4 } : null;
   };
 
   const measurement = useMemo(() => {
@@ -1067,7 +1143,14 @@ export default function BattleMap({
     }
     if (mode === 'cover') {
       const cover = { ...m.cover };
-      if (cover[k] === coverType) delete cover[k]; else cover[k] = coverType;
+      const have = readCover(cover[k]);
+      const want = writeCover(coverType, coverTurn);
+      /* Clicking the same cover the same way round lifts it, as it always
+         did. Clicking it the OTHER way round turns it instead — the GM
+         walking a railing along a corridor and reaching the corner wants to
+         turn that square, not clear it and lay it again. */
+      if (have && have.id === coverType && have.turn === coverTurn) delete cover[k];
+      else cover[k] = want;
       patch({ cover });
       return;
     }
@@ -1164,6 +1247,10 @@ export default function BattleMap({
     const typing = (e) => ['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target && e.target.tagName) || '');
     const onKey = (e) => {
       if (typing(e)) return;
+      // A question is up and waiting: it owns the keyboard. Otherwise H would
+      // hide the toolbars behind the dialog and R would turn the deck the GM
+      // is being asked about.
+      if (askRef.current) return;
       const k = e.key.toLowerCase();
       // Undo and redo, the way every editor does them.
       if ((e.metaKey || e.ctrlKey) && !e.altKey) {
@@ -1611,14 +1698,18 @@ export default function BattleMap({
       // 3c. Cover. Sight-blocking cover fills its square; cover you can shoot
       //     over is drawn as a low bar, so the two are told apart at a glance
       //     from across the table rather than by remembering which is which.
-      each(m.cover, (cx, cy, id) => {
-        const cv = coverById(id);
+      each(m.cover, (cx, cy, raw) => {
+        const rec = readCover(raw);
+        const cv = rec && coverById(rec.id);
         if (!cv) return;
         const x0 = cx * px, y0 = cy * px;
         /* The art says which cover this is and roughly how tall it stands,
            which is the distinction the grey boxes were drawing by hand. */
-        const tok = tokenAt('cover', id, null, cx, cy);
+        const tok = tokenAt('cover', rec.id, null, cx, cy, rec.turn);
         if (tok) { drawToken(ctx, tok, x0, y0, px); return; }
+        /* No picture for it: the flat drawing, and a barrier drawn flat
+           follows its own direction too — a bar along the bottom edge when it
+           lies across the square, down the right-hand edge when it stands. */
         if (cv.blocksSight) {
           ctx.fillStyle = 'rgba(78,88,96,0.92)';
           ctx.fillRect(x0 + px * 0.1, y0 + px * 0.1, px * 0.8, px * 0.8);
@@ -1631,11 +1722,17 @@ export default function BattleMap({
           ctx.stroke();
         } else {
           const bh = Math.max(3, px * 0.2);
+          const long = px * 0.84, off = px * 0.08, back = px - bh - px * 0.12;
+          // Across the bottom of the square, or down its right-hand side when
+          // the GM stood it on end — the same two states the token has.
+          const bar = rec.turn
+            ? [x0 + back, y0 + off, bh, long]
+            : [x0 + off, y0 + back, long, bh];
           ctx.fillStyle = 'rgba(120,135,145,0.9)';
-          ctx.fillRect(x0 + px * 0.08, y0 + px - bh - px * 0.12, px * 0.84, bh);
+          ctx.fillRect(...bar);
           ctx.strokeStyle = 'rgba(200,215,225,0.9)';
           ctx.lineWidth = 1;
-          ctx.strokeRect(x0 + px * 0.08, y0 + px - bh - px * 0.12, px * 0.84, bh);
+          ctx.strokeRect(...bar);
         }
       });
 
@@ -2161,9 +2258,25 @@ export default function BattleMap({
     return out;
   };
 
-  const clearAll = () => {
-    if (!window.confirm('Clear the deck, bulkheads and markers?')) return;
-    patch({ floor: {}, doors: {}, markers: {} });
+  const clearAll = async () => {
+    if (!await confirmInMap({
+      title: 'Clear the deck?',
+      body: 'Everything drawn on this deck goes: the floor and its walls, the doors,'
+        + ' cover, hazards, foliage, markers, contacts, painted terrain and what the'
+        + ' party has explored. The grid size, the ground and the calibration stay.',
+      yes: 'Clear it'
+    })) return;
+    /* EVERYTHING THAT STOOD ON THE DECK, not just the floor.
+
+       It used to clear the floor, the doors and the markers, which left the
+       crates, the fires, the foliage, the painted terrain and the fog
+       behind — floating over a deck that was no longer there. With the props
+       drawn as grey boxes that read as faint debris; now that they are
+       photographs of crates it reads as the deck not having cleared at all. */
+    patch({
+      floor: {}, doors: {}, markers: {}, cover: {}, hazards: {}, obscuring: {},
+      contacts: {}, ground: {}, explored: {}, viewpoint: null
+    });
     originRef.current = null; measureRef.current = null;
     setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
   };
@@ -2172,7 +2285,7 @@ export default function BattleMap({
      bare grid for the GM to paint. Nothing is asked first: it is additive
      where it grows, and `Expand deck` back to the old numbers puts it back —
      except where it SHRINKS, which drops squares, so that is confirmed. */
-  const expandDeck = () => {
+  const expandDeck = async () => {
     const plan = expandPlan(m, growCols, growRows);
     if (!onChange) return;
     /* THE DEFAULT GROWS FROM WHAT IS PAINTED. The painted deck stays where it
@@ -2187,11 +2300,12 @@ export default function BattleMap({
       setDeckMsg(`Built ${out.rooms} new room${out.rooms === 1 ? '' : 's'} off the painted deck (seed ${out.seed}).`);
       return;
     }
-    if (plan.shrinking
-      && !window.confirm(
-        `${plan.cols}×${plan.rows} is smaller than this deck. Squares outside it are dropped.`)) {
-      return;
-    }
+    if (plan.shrinking && !await confirmInMap({
+      title: 'Shrink the deck?',
+      body: `${plan.cols}\u00d7${plan.rows} is smaller than this deck. Every square outside`
+        + ' it is dropped, along with whatever is standing on it.',
+      yes: 'Shrink it'
+    })) return;
     remember(mapRef.current);
     gestureRef.current = false;
     onChange(expandMap(m, growCols, growRows, { mirror: growHow !== 'repeat' }));
@@ -2230,7 +2344,7 @@ export default function BattleMap({
       + `${c.hazards ? `, ${c.hazards} of hazard` : ''}${c.band ? ', and a ' + (terrainRead.band ? terrainRead.band.kind : 'band') : ''}. Seed ${out.seed}.`);
   };
 
-  const rollDeck = () => {
+  const rollDeck = async () => {
     const seed = genSeed.trim() || newSeed();
     /* With a deck already painted, the default is to build around it: the
        generator fills the empty ground with rooms joined to what is there,
@@ -2243,10 +2357,12 @@ export default function BattleMap({
       setDeckMsg(`Built ${built.rooms} new room${built.rooms === 1 ? '' : 's'} around the painted deck (seed ${built.seed}).`);
       return;
     }
-    if (Object.keys(m.floor).length
-      && !window.confirm('Replace the deck with a generated one? The ground and calibration are kept.')) {
-      return;
-    }
+    if (Object.keys(m.floor).length && !await confirmInMap({
+      title: 'Replace the deck?',
+      body: 'A generated layout takes the place of what is drawn here. The ground, the'
+        + ' grid size and the calibration are kept. Undo brings this deck back.',
+      yes: 'Generate it'
+    })) return;
     const out = generateDeck({ cols: m.cols, rows: m.rows, style: genStyle, seed });
     setGenSeed(out.seed);
     patch({
@@ -2498,7 +2614,17 @@ export default function BattleMap({
       add('density', 'Density', OBSCURING.map((o) => radio(o.id, `${o.name} \u00b7 stops sight after ${o.blocksAfterM} m`, obscureType === o.id, () => setObscureType(o.id))));
     }
     if (mode === 'door') add('door', 'Door kind', DOOR_KINDS.map((d) => radio(d.id, `${d.name} \u00b7 AP ${d.ap}`, doorKind === d.id, () => setDoorKind(d.id))));
-    if (mode === 'cover') add('cover', 'Cover', COVER_TYPES.map((c) => radio(c.id, `${c.name} \u00b7 AP ${c.ap}`, coverType === c.id, () => setCoverType(c.id))));
+    if (mode === 'cover') {
+      add('cover', 'Cover', COVER_TYPES.map((c) => radio(c.id, `${c.name} \u00b7 AP ${c.ap}`, coverType === c.id, () => setCoverType(c.id))));
+      // Reachable with the toolbars hidden, which is how the map is run on a
+      // projector \u2014 and laying a barrier is exactly a mid-session job.
+      if (coverType === 'low') {
+        add('coverturn', 'Barrier lies', [
+          radio('across', 'Across \u2014 horizontal', coverTurn === 0, () => setCoverTurn(0)),
+          radio('along', 'Along \u2014 vertical', coverTurn === 1, () => setCoverTurn(1))
+        ]);
+      }
+    }
     if (mode === 'hazard') add('hazard', 'Hazard', HAZARD_TYPES.map((h) => radio(h.id, h.name, hazardType === h.id, () => setHazardType(h.id))));
     if (mode === 'noise') add('noise', 'Sound', NOISE.map((n) => radio(n.id, `${n.name} \u00b7 heard to ${n.radiusM} m`, noiseKind === n.id, () => setNoiseKind(n.id))));
     if (mode === 'marker') add('marker', 'Marker', MARKER_TYPES.map((t) => radio(t.id, t.name, markerType === t.id, () => setMarkerType(t.id))));
@@ -2522,6 +2648,14 @@ export default function BattleMap({
   const menuActions = () => {
     const a = [];
     if (mode === 'stamp') a.push({ key: 'rot', label: `Rotate the tile (now ${rotation}\u00b0)`, hint: 'R', run: () => setRotation((r) => (r + 90) % 360) });
+    // Turning the whole run at once, reachable with the toolbars hidden.
+    if (mode === 'cover' && coverType === 'low' && barrierCount) {
+      a.push({
+        key: 'turnall', icon: 'rotateRight',
+        label: `Turn all ${barrierCount} barrier${barrierCount === 1 ? '' : 's'}`,
+        run: turnBarriers
+      });
+    }
     if (mode === 'ground') {
       a.push({
         key: 'terrain', label: 'Procedural terrain\u2026', icon: 'ground',
@@ -3239,7 +3373,30 @@ export default function BattleMap({
               </option>
             ))}
           </select>
-          <span className="rt-bm-hint">{(coverById(coverType) || {}).note}</span>
+          {/* Only the low barrier: it is the one cover with a direction. The
+              rest fill their square, and are already turned by position so a
+              run of them is not one stamp repeated. */}
+          {coverType === 'low' && (
+            <label className="rt-bm-num">
+              <span>Lies</span>
+              <select value={coverTurn} onChange={(e) => setCoverTurn(Number(e.target.value))}>
+                <option value={0}>Across {'—'} horizontal</option>
+                <option value={1}>Along {'—'} vertical</option>
+              </select>
+            </label>
+          )}
+          {coverType === 'low' && (
+            <button type="button" className="rt-btn" onClick={turnBarriers}
+              disabled={barrierCount === 0}
+              title="Turn every barrier already on this deck a quarter, so a run of them lies the same way">
+              Turn all {barrierCount || ''}
+            </button>
+          )}
+          <span className="rt-bm-hint">
+            {coverType === 'low'
+              ? 'Lay it along a corridor or across one. Clicking a barrier the other way round turns it; the same way round lifts it.'
+              : (coverById(coverType) || {}).note}
+          </span>
         </>)}
 
         {mode === 'hazard' && (<>
@@ -3424,6 +3581,32 @@ export default function BattleMap({
         />
         </div>
       </div>
+
+      {/* Deliberately outside the toolbars' own gate: the map is run with the
+          options hidden on a projector, and a question asked there has to be
+          answerable without first bringing the toolbars back. */}
+      {ask && (
+        <div className="rt-bm-askwrap" role="presentation"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) closeAsk(false); }}>
+          <div className="rt-bm-ask" role="alertdialog" aria-modal="true"
+            aria-labelledby="rt-ask-t" aria-describedby="rt-ask-b"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { e.preventDefault(); closeAsk(false); }
+              if (e.key === 'Enter') { e.preventDefault(); closeAsk(true); }
+            }}>
+            <h4 id="rt-ask-t">{ask.title}</h4>
+            <p id="rt-ask-b">{ask.body}</p>
+            <div className="rt-bm-askrow">
+              {/* Autofocused so Enter answers it and Escape dismisses it
+                  without the GM reaching for the mouse mid-session. */}
+              <button type="button" className="rt-btn" autoFocus
+                onClick={() => closeAsk(true)}>{ask.yes || 'Yes'}</button>
+              <button type="button" className="rt-btn ghost"
+                onClick={() => closeAsk(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {menu && (
         <div className="rt-bm-menu" ref={menuRef} role="menu" aria-label="Map menu"

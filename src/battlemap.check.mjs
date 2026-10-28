@@ -14,7 +14,7 @@ import {
   fitGrid, MAX_CUSTOM_TEXTURE, brushCells, MAX_GRID, MIN_GRID,
   clampZoom, MIN_ZOOM, MAX_ZOOM,
   themeNumbersFor, BRIGHT_FLOOR, readCustomTheme, readThemeLibrary, resolveTheme,
-  textureAdvice, SQUARE_TOLERANCE, expandMap, expandPlan, groundsUsed,
+  textureAdvice, SQUARE_TOLERANCE, expandMap, expandPlan, groundsUsed, tokensNeeded,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -1598,6 +1598,70 @@ import { GEAR } from './gear.js';
     assert.deepEqual(groundsUsed(readMap({ theme: 'ice' })), ['ice']);
     assert.deepEqual(groundsUsed(null), [DEFAULT_THEME], 'and nothing still names one');
     assert.deepEqual(groundsUsed(EMPTY_MAP), [EMPTY_MAP.theme]);
+  }
+
+  /* ---- which prop pictures the deck needs ----
+     The point of asking is to fetch only those, so the test that matters is
+     that an empty deck asks for nothing and a dressed one asks for exactly
+     what it is wearing. */
+  {
+    assert.deepEqual(tokensNeeded(readMap({ theme: 'ice' })), [],
+      'a bare deck needs no props');
+    assert.deepEqual(tokensNeeded(null), [], 'and neither does nothing at all');
+
+    const dressed = readMap({
+      theme: 'space_hulk',
+      cols: 10, rows: 10,
+      floor: { '1,1': true, '2,1': true, '3,1': true, '4,1': true, '5,1': true },
+      doors: { '1,1': { kind: 'bulkhead', state: 'closed' }, '2,1': { kind: 'hatch', state: 'open' } },
+      cover: { '3,1': 'crates' },
+      hazards: { '4,1': 'fire', '5,1': 'radiation' },
+      obscuring: { '3,1': 'heavy' }
+    });
+    const want = tokensNeeded(dressed);
+    assert.ok(want.includes('space_hulk/door_closed'), 'the shut bulkhead');
+    assert.ok(want.includes('space_hulk/hatch'), 'the hatch');
+    assert.ok(want.includes('space_hulk/crates'), 'the crates');
+    assert.ok(want.includes('space_hulk/fire'), 'the fire');
+    assert.ok(want.includes('space_hulk/thicket'), 'the dense foliage');
+    // Radiation has no token on the sheets, so nothing is fetched for it and
+    // that square keeps the flat warning wash.
+    assert.ok(!want.some((k) => /radiation/.test(k)), 'nothing is fetched for radiation');
+    assert.equal(want.length, 5, 'and nothing else is fetched: ' + want.join(' '));
+    assert.deepEqual(want, [...want].sort(), 'sorted, so two sets compare as strings');
+
+    /* A prop standing on a painted square uses THAT ground's props — an ice
+       crate on ice, not the deck's crate sitting on snow. */
+    const mixed = readMap({
+      theme: 'space_hulk',
+      cols: 10, rows: 10,
+      floor: { '1,1': true, '2,1': true },
+      ground: { '2,1': 'ice' },
+      cover: { '1,1': 'crates', '2,1': 'crates' }
+    });
+    const both = tokensNeeded(mixed);
+    assert.ok(both.includes('space_hulk/crates') && both.includes('ice/crates'),
+      'the same cover on two grounds is two pictures: ' + both.join(' '));
+    assert.equal(both.length, 2);
+
+    // Forty crates on one ground is still one picture to fetch.
+    const many = readMap({
+      theme: 'ice', cols: 20, rows: 20,
+      cover: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`${i % 20},${i < 20 ? 0 : 1}`, 'machinery']))
+    });
+    assert.deepEqual(tokensNeeded(many), ['ice/machinery'], 'one file, not forty');
+
+    // Junk in the stores must not become a request for "undefined/undefined".
+    const junk = readMap({
+      theme: 'ice', cols: 8, rows: 8,
+      cover: { 'x,y': 'crates', '1,1': 'nonsense' },
+      hazards: { '2,2': 'nonsense' },
+      doors: { '3,3': { kind: 'bulkhead', state: 'closed' } }
+    });
+    const fromJunk = tokensNeeded(junk);
+    assert.ok(fromJunk.every((k) => /^[a-z_0-9-]+\/[a-z_]+$/.test(k)),
+      'every key is a real ground and a real role: ' + fromJunk.join(' '));
+    assert.ok(fromJunk.includes('ice/door_closed'), 'and the good one still comes through');
   }
 
   /* ---- it repeats with the deck it is painted on ---- */

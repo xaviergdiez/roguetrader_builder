@@ -27,6 +27,7 @@
    to-hit roll. Before this, that number was typed in by hand and guessed. */
 
 import { rangeBand, RANGE_MODIFIERS, parseWeaponStats } from './groundcombat.js';
+import { spriteRole } from './spritesheet.js';
 
 /* ------------------------------ themes ------------------------------ */
 
@@ -738,6 +739,37 @@ export function groundsUsed(map) {
     if (!m.floor || m.floor[k]) add(m.ground[k]);
   }
   return out;
+}
+
+/* Which prop pictures a deck needs, as "<ground>/<role>" strings.
+
+   Worked out from what is actually ON the deck rather than loaded wholesale:
+   each ground has sixteen tokens weighing about half a megabyte together, and
+   a deck with two doors and no cover has no business fetching the crates, the
+   fire and the foliage. The ground is per square, so a crate standing on a
+   square painted with ice is an ICE crate — the props follow the floor they
+   are standing on, which is the whole point of having a set per ground.
+
+   Expects a map already through readMap. Returns a sorted array so callers can
+   join it into a cache key and compare two of them cheaply. */
+export function tokensNeeded(map) {
+  const m = map && typeof map === 'object' ? map : EMPTY_MAP;
+  const base = typeof m.theme === 'string' ? m.theme : DEFAULT_THEME;
+  const out = new Set();
+  const want = (k, kind, id, state) => {
+    const at = parseKey(k);
+    if (!at) return;
+    const role = spriteRole(kind, id, state, at);
+    if (!role) return;
+    out.add(((m.ground || {})[k] || base) + '/' + role);
+  };
+  for (const [k, v] of Object.entries(m.doors || {})) {
+    if (v) want(k, 'door', v.kind, v.state);
+  }
+  for (const [k, v] of Object.entries(m.cover || {})) want(k, 'cover', v);
+  for (const [k, v] of Object.entries(m.hazards || {})) want(k, 'hazard', v);
+  for (const [k, v] of Object.entries(m.obscuring || {})) want(k, 'obscure', v);
+  return [...out].sort();
 }
 
 /* --------------------------- projector calibration ---------------------------

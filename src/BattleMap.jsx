@@ -8,7 +8,7 @@ import {
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
   clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice, rotateMap, rotationFits,
   expandMap, expandPlan, MIN_GRID, MAX_GRID,
-  resolveTheme, themeNumbersFor, groundsUsed,
+  resolveTheme, themeNumbersFor, groundsUsed, tokensNeeded,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText, lineBlocked, LOS_MAX_SQUARES, keepClean,
@@ -19,6 +19,7 @@ import { GEAR } from './gear.js';
 import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
 import { centreCrop, cropRect, dragBy, zoomTo, scaleBounds } from './texturecrop.js';
 import { generateDeck, growDeck as buildAroundDeck, newSeed, DECK_STYLES, styleById } from './mapgen.js';
+import { spriteRole, spriteTurn, SHEET_FOR_THEME } from './spritesheet.js';
 import { generateTerrain, readTerrainPrompt, TERRAIN_SIZES, TERRAIN_SCOPES } from './terrain.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 
@@ -161,6 +162,19 @@ function IconButton({ icon, label, onClick, on = false, disabled = false, classN
         style={{ '--tip-shift': shift + 'px' }}>{label}</span>
     </button>
   );
+}
+
+/* Draws one prop picture into its square, turned a quarter at a time where
+   that prop has no front (see spriteTurn). The turn is about the square's own
+   centre, so a rotated crate stays in its square rather than wandering into
+   the next one. */
+function drawToken(ctx, tok, x0, y0, px) {
+  if (!tok.turn) { ctx.drawImage(tok.img, x0, y0, px, px); return; }
+  ctx.save();
+  ctx.translate(x0 + px / 2, y0 + px / 2);
+  ctx.rotate((tok.turn * Math.PI) / 2);
+  ctx.drawImage(tok.img, -px / 2, -px / 2, px, px);
+  ctx.restore();
 }
 
 /* ---- overlay art ----
@@ -749,6 +763,82 @@ export default function BattleMap({
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groundKey, customThemes, m.theme, m.customTexture]);
+
+  /* ---- the prop tokens ----
+
+     A door, a crate stack, a pillar, a fire: sixteen pictures per ground, cut
+     off that ground's sprite sheet by tools/slice-sprites.mjs and served from
+     public/maps/tokens. Before these the props were drawn as grey boxes and
+     coloured stripes, which read perfectly well and looked like a programmer's
+     placeholder, because that is what they were.
+
+     Fetched square by square rather than by the setful: tokensNeeded() reads
+     the deck and asks for the pictures the deck actually uses, so a corridor
+     with two bulkheads pulls down two files instead of half a megabyte of
+     crates and foliage nobody placed.
+
+     Keyed "<ground>/<role>", so the same crate on an ice square and a deck
+     square are two different pictures and both are cached. A value of null
+     means "asked for and not there" — which is not an error and not retried:
+     those squares keep the flat drawing, and a ground the GM generated has no
+     sheet until they generate one. */
+  const tokensRef = useRef(new Map());
+  const [tokenTick, setTokenTick] = useState(0);
+  const tokenNeeds = useMemo(() => tokensNeeded(m), [m]);
+  const tokenKey = tokenNeeds.join('|');
+
+  /* Where a ground's prop pictures come from. Only the nine that ship have a
+     folder; a ground the GM uploaded or generated carries its own tokens on
+     the ground record instead, and has none until it has been given some. */
+  const tokenSrc = (ground, role) => {
+    const custom = resolveTheme(ground, customThemes);
+    if (custom && custom.custom) {
+      const own = custom.tokens && custom.tokens[role];
+      return own || null;
+    }
+    return SHEET_FOR_THEME[ground] ? `/maps/tokens/${ground}/${role}.webp` : null;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const wanted = new Set(tokenNeeds);
+    // Props the GM has since erased are dropped, the way the floors are: a
+    // session spent trying cover types should not end holding every token in
+    // the set decoded.
+    for (const k of [...tokensRef.current.keys()]) {
+      if (!wanted.has(k)) tokensRef.current.delete(k);
+    }
+    for (const k of wanted) {
+      if (tokensRef.current.has(k)) continue;
+      const cut = k.indexOf('/');
+      const src = tokenSrc(k.slice(0, cut), k.slice(cut + 1));
+      if (!src) { tokensRef.current.set(k, null); continue; }
+      // Claimed before the load finishes, or a redraw mid-flight queues the
+      // same file again — and a deck of forty crates would ask forty times.
+      tokensRef.current.set(k, null);
+      const img = new Image();
+      img.onload = () => {
+        if (cancelled) return;
+        tokensRef.current.set(k, img);
+        setTokenTick((t) => t + 1);
+      };
+      img.onerror = () => { if (!cancelled) setTokenTick((t) => t + 1); };
+      img.src = src;
+    }
+    setTokenTick((t) => t + 1);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenKey, customThemes]);
+
+  /* The picture for one square's prop, or null to draw it the old way. */
+  const tokenAt = (kind, id, state, cx, cy) => {
+    const at = { x: cx, y: cy };
+    const role = spriteRole(kind, id, state, at);
+    if (!role) return null;
+    const ground = (m.ground && m.ground[cellKey(cx, cy)]) || m.theme;
+    const img = tokensRef.current.get(ground + '/' + role);
+    return img ? { img, turn: spriteTurn(role, at) } : null;
+  };
 
   const measurement = useMemo(() => {
     if (!measureFrom || !measureTo) return null;
@@ -1370,6 +1460,21 @@ export default function BattleMap({
         const hz = hazardById(id);
         if (!hz) return;
         const x0 = cx * px, y0 = cy * px;
+        /* With a picture for this hazard, the picture IS the warning and the
+           stripes come off — a fire that looks like fire does not also need
+           hatching. The coloured edge stays: it is what says which hazard
+           this is from across the table, and smoke and gas are much the same
+           shape of grey cloud. */
+        const tok = tokenAt('hazard', id, null, cx, cy);
+        if (tok) {
+          drawToken(ctx, tok, x0, y0, px);
+          ctx.strokeStyle = hz.colour;
+          ctx.globalAlpha = 0.8;
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(x0 + 1, y0 + 1, px - 2, px - 2);
+          ctx.globalAlpha = 1;
+          return;
+        }
         ctx.save();
         ctx.beginPath(); ctx.rect(x0, y0, px, px); ctx.clip();
         ctx.fillStyle = hz.colour;
@@ -1397,6 +1502,10 @@ export default function BattleMap({
         const cv = coverById(id);
         if (!cv) return;
         const x0 = cx * px, y0 = cy * px;
+        /* The art says which cover this is and roughly how tall it stands,
+           which is the distinction the grey boxes were drawing by hand. */
+        const tok = tokenAt('cover', id, null, cx, cy);
+        if (tok) { drawToken(ctx, tok, x0, y0, px); return; }
         if (cv.blocksSight) {
           ctx.fillStyle = 'rgba(78,88,96,0.92)';
           ctx.fillRect(x0 + px * 0.1, y0 + px * 0.1, px * 0.8, px * 0.8);
@@ -1422,6 +1531,8 @@ export default function BattleMap({
       each(m.obscuring, (cx, cy, id) => {
         const ob = obscuringById(id);
         if (!ob) return;
+        const tok = tokenAt('obscure', id, null, cx, cy);
+        if (tok) { drawToken(ctx, tok, cx * px, cy * px, px); return; }
         ctx.save();
         ctx.globalAlpha = ob.alpha;
         ctx.fillStyle = ob.colour;
@@ -1451,7 +1562,24 @@ export default function BattleMap({
       each(m.doors, (cx, cy, door) => {
         const { kind, state } = door;
         const x0 = cx * px, y0 = cy * px;
-        ctx.fillStyle = state === 'open' ? '#2ecc71' : state === 'jammed' ? '#f39c12' : '#e74c3c';
+        const stateColour = state === 'open' ? '#2ecc71' : state === 'jammed' ? '#f39c12' : '#e74c3c';
+        /* A door drawn as a picture still has to say whether it is SHUT, and
+           the pictures cannot: open has its own art, but jammed and closed are
+           the same leaf and the difference decides whether the party can walk
+           through. So the state keeps its colour, as a frame around the art
+           rather than the bar that was the whole drawing before. */
+        const tok = tokenAt('door', kind, state, cx, cy);
+        if (tok) {
+          drawToken(ctx, tok, x0, y0, px);
+          ctx.strokeStyle = stateColour;
+          ctx.lineWidth = Math.max(1.5, px * 0.05);
+          ctx.globalAlpha = 0.9;
+          const o = ctx.lineWidth / 2;
+          ctx.strokeRect(x0 + o, y0 + o, px - ctx.lineWidth, px - ctx.lineWidth);
+          ctx.globalAlpha = 1;
+          return;
+        }
+        ctx.fillStyle = stateColour;
         const leaf = Math.max(3, px * 0.16);
         // A hatch is drawn narrow and short of the walls, a bulkhead spans the
         // opening: the one you can crawl through should not look like the one
@@ -1704,7 +1832,7 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick,
-      noiseKind, zoom, showOptions]);
+      tokenTick, noiseKind, zoom, showOptions]);
 
   // Scrolling and resizing the stage move the window over the deck.
   useEffect(() => {

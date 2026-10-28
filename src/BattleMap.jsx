@@ -2315,7 +2315,11 @@ export default function BattleMap({
     const ticked = terrainPick || [...new Set([m.theme, ...customThemes.map((t) => t.id)])];
     const out = generateTerrain({
       map: m, grounds: allGrounds, palette: ticked, prompt: terrainPrompt,
-      seed: terrainSeed.trim() || undefined, size: terrainSize, scope: terrainScope
+      seed: terrainSeed.trim() || undefined, size: terrainSize, scope: terrainScope,
+      // On a blank deck this builds rooms and corridors to paint onto, and
+      // uses the layout style the Deck panel is set to rather than a second
+      // picker saying the same thing.
+      style: genStyle
     });
     setTerrainSeed(out.seed);
     if (out.empty) {
@@ -2324,10 +2328,12 @@ export default function BattleMap({
     }
     const next = { ground: out.ground, obscuring: out.obscuring, cover: out.cover, hazards: out.hazards };
     if (out.laid) next.floor = out.floor;
+    // A layout it built brings its own bulkheads.
+    if (out.built) next.doors = out.doors;
     patch(next);
     const c = out.counts;
     setTerrainNote(
-      `Laid ${c.squares.toLocaleString()} squares in ${c.regions} regions from ${c.grounds} ground${c.grounds === 1 ? '' : 's'}`
+      `${out.built ? `Built ${out.rooms} rooms and laid ` : 'Laid '}${c.squares.toLocaleString()} squares in ${c.regions} regions from ${c.grounds} ground${c.grounds === 1 ? '' : 's'}`
       + `${c.foliage ? `, ${c.foliage} of foliage` : ''}${c.cover ? `, ${c.cover} of cover` : ''}`
       + `${c.hazards ? `, ${c.hazards} of hazard` : ''}${c.band ? ', and a ' + (terrainRead.band ? terrainRead.band.kind : 'band') : ''}. Seed ${out.seed}.`);
   };

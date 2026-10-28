@@ -91,12 +91,41 @@ const grounds = [
   for (const k of Object.keys(rich.obscuring)) assert.ok(m.floor[k]);
   assert.ok(rich.notes.length >= 3, 'it says what it understood');
 
-  // The whole grid lays deck as well, from nothing.
+  /* A BLANK DECK GETS A LAYOUT, NOT A SLAB.
+
+     This used to lay deck across every square of the grid and dress it, which
+     is terrain but not a map: one press produced a filled rectangle with no
+     rooms, no corridors and nothing to fight over. It now builds a layout
+     first and paints the terrain onto that. */
   const blank = readMap({ cols: 40, rows: 30 });
   const land = generateTerrain({ map: blank, grounds, palette: ['ice', 'desert'], prompt: 'a river', seed: 'L', scope: 'deck' });
-  assert.equal(land.laid, true, 'no deck: the whole grid');
-  assert.equal(Object.keys(land.floor).length, 40 * 30);
-  assert.equal(Object.keys(land.ground).length, 40 * 30);
+  assert.equal(land.laid, true, 'it lays deck, having none to paint on');
+  assert.equal(land.built, true, 'and says it built the layout');
+  const laidN = Object.keys(land.floor).length;
+  assert.ok(laidN > 0, 'there is a deck');
+  assert.ok(laidN < 40 * 30 * 0.92, `rooms and corridors, not a filled box (${laidN} of ${40 * 30})`);
+  assert.ok(Object.keys(land.doors).length > 0, 'and it has bulkheads');
+  assert.ok(land.rooms > 1, `and more than one room (${land.rooms})`);
+  // Terrain only where there is deck under it: paint in the void draws nothing
+  // and would be fetched for nothing.
+  for (const k of Object.keys(land.ground)) assert.ok(land.floor[k], `ground off the deck at ${k}`);
+  for (const k of Object.keys(land.obscuring)) assert.ok(land.floor[k], `foliage off the deck at ${k}`);
+  for (const k of Object.keys(land.cover)) assert.ok(land.floor[k], `cover off the deck at ${k}`);
+  for (const k of Object.keys(land.hazards)) assert.ok(land.floor[k], `a hazard off the deck at ${k}`);
+  // Same seed, same landscape.
+  const again = generateTerrain({ map: blank, grounds, palette: ['ice', 'desert'], prompt: 'a river', seed: 'L', scope: 'deck' });
+  assert.deepEqual(again.floor, land.floor, 'the same seed builds the same layout');
+  assert.deepEqual(again.ground, land.ground, 'and paints it the same way');
+  assert.notDeepEqual(
+    generateTerrain({ map: blank, grounds, palette: ['ice', 'desert'], prompt: 'a river', seed: 'OTHER', scope: 'deck' }).floor,
+    land.floor, 'and another seed builds a different one');
+
+  // "The whole grid" still means the whole grid: it is the way to make a
+  // landscape that has no structure at all.
+  const slab = generateTerrain({ map: blank, grounds, palette: ['ice', 'desert'], prompt: 'a river', seed: 'L', scope: 'grid' });
+  assert.equal(Object.keys(slab.floor).length, 40 * 30, 'the whole grid is still filled');
+  assert.equal(Object.keys(slab.ground).length, 40 * 30);
+  assert.equal(slab.built, false, 'and nothing is built for it');
 
   // A deck with nothing to cover returns an empty result rather than throwing.
   const none = generateTerrain({ map: readMap({ cols: 40, rows: 30, floor: { '1,1': true }, ground: { '1,1': 'ice' } }), grounds, palette: ['ice'], seed: 'x', scope: 'free' });

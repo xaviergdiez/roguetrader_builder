@@ -1925,7 +1925,7 @@ const CSS = `
 .rt-bm-peek:hover,.rt-bm-peek:focus{opacity:1;}
 /* ---- the toolbar's icon buttons ---- */
 .rt-ico{display:block;flex:0 0 auto;}
-.rt-ico-btn{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+.rt-ico-btn{position:relative;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
   width:34px;height:34px;padding:0;color:var(--gold-lit);border:1px solid var(--brass-dim);
   background:linear-gradient(180deg,var(--panel-lit),var(--panel));
   transition:color .14s,border-color .14s,filter .14s;}
@@ -1934,6 +1934,30 @@ const CSS = `
 .rt-ico-btn:disabled{opacity:.3;cursor:default;}
 .rt-ico-btn:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--gold);}
 .rt-ico-text{width:auto;min-width:50px;padding:0 6px;font-family:var(--mono);font-size:11px;letter-spacing:.04em;}
+/* The icon's name under the pointer. Hidden with visibility rather than
+   display so it keeps a box the button can measure before anyone sees it;
+   --tip-shift is how far it had to move to stay inside the window. */
+.rt-ico-tip{position:absolute;top:calc(100% + 6px);left:50%;
+  transform:translateX(calc(-50% + var(--tip-shift,0px)));
+  z-index:30;width:max-content;max-width:220px;padding:4px 7px;
+  font-family:var(--mono);font-size:10.5px;line-height:1.35;letter-spacing:.03em;
+  text-transform:none;text-align:center;white-space:normal;color:var(--bone);
+  background:var(--ink);border:1px solid var(--brass);
+  box-shadow:0 4px 10px rgba(0,0,0,.55);
+  opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s;}
+.rt-ico-btn:hover .rt-ico-tip,
+.rt-ico-btn:focus-visible .rt-ico-tip{opacity:1;visibility:visible;}
+/* A greyed icon is the one most worth naming — "why can I not press this?" —
+   and the browser's own tooltip never answers, because a disabled control
+   gets no mouse events. The style engine still paints :hover, so the name
+   appears; the script that keeps a tooltip inside the window does NOT run,
+   so these hang off the button's left edge rather than its middle, which is
+   where there is room for them to open. */
+.rt-ico-btn:disabled .rt-ico-tip{left:0;transform:none;}
+/* Except in the right-click menu, which scrolls: a tooltip hanging below its
+   button would be clipped by the menu's own edge, so those icons keep the
+   browser's own tooltip. */
+.rt-bm-menu .rt-ico-tip{display:none;}
 .rt-bm-top{row-gap:6px;}
 .rt-bm-group{display:flex;flex-wrap:wrap;gap:3px;align-items:center;padding-right:8px;
   border-right:1px solid var(--brass-dim);}
@@ -3014,6 +3038,18 @@ export default function RogueTraderBuilder({ me, cloud }) {
       }
     });
   };
+  /* Throwing a deck out of the library, from the map's own window. The window
+     is often the only thing open during a session, so the library it can add
+     to has to be one it can also tidy. The caller has already asked. */
+  const deleteSavedDeck = (deck) => {
+    const list = readMapLibrary(homebrew && homebrew.battlemaps);
+    if (!list.some((d) => d.id === deck.id)) return;
+    setHomebrew({ ...(homebrew || {}), battlemaps: list.filter((d) => d.id !== deck.id) });
+    // Deleting the deck being designed would leave the editor pointed at
+    // nothing it could write to, so the selection goes back to no deck. The
+    // drawing on screen is untouched either way.
+    if (deckId === deck.id) setDeckId(null);
+  };
 
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
@@ -3903,6 +3939,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               decks={decksForMap}
               onSaveDeck={saveLiveDeck}
               onLoadDeck={loadDeckOntoMap}
+              onDeleteDeck={deleteSavedDeck}
             />
           )}
         </MapWindow>
@@ -9249,10 +9286,17 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                 setBattleMap(publishMap(deck));
                 setMapView('live');
               }}>Publish for play</button>
+              {/* Asks first: this is a whole deck's drawing, there is no undo
+                  for the library, and the button sits one square away from
+                  Publish for play. */}
               <button type="button" className="rt-btn ghost" onClick={() => {
+                const name = deck.name || 'Untitled deck';
+                if (!window.confirm(
+                  `Delete the saved deck “${name}”? This cannot be undone.`)) return;
                 saveDecks(decks.filter((d) => d.id !== deck.id));
                 setDeckId(null);
-              }}>Delete</button>
+              }}
+                title="Remove this deck from your library for good">Delete deck</button>
             </>)}
           </>) : (
             <span className="rt-bm-hint">

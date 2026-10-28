@@ -108,14 +108,57 @@ function Icon({ name, size = 18 }) {
   );
 }
 
-// A button that is only a picture, with its name on it for the pointer and the
-// screen reader alike.
+/* A button that is only a picture, with its name on it for the pointer and the
+   screen reader alike.
+
+   The name is also drawn as a tooltip of our own. `title` stays — it is what
+   a screen reader reads and what a patient pointer gets — but the browser
+   waits about a second before showing it and draws it in system grey, which
+   is long enough that a GM mid-session guesses at a dozen icons instead of
+   reading them. This one appears at once, in the app's own type.
+
+   It is nudged sideways when it would run off the window: the toolbar wraps,
+   so a button regularly ends a row hard against the right edge, and a
+   centred tooltip would hang half its text outside the glass.
+
+   The nudge is worked out from where the tooltip WOULD sit, centred on the
+   button, rather than from where it currently sits. An incremental
+   correction looks the same in one pass and is wrong in two: `place` runs
+   from more than one event, both passes measure the same unmoved tooltip,
+   and the shifts add up — the first version pushed a tooltip 182px when 91
+   was the whole fix, which left it nowhere near its own icon. */
 function IconButton({ icon, label, onClick, on = false, disabled = false, className = '' }) {
+  const tipRef = useRef(null);
+  const [shift, setShift] = useState(0);
+  const place = (e) => {
+    const btn = e.currentTarget;
+    const tip = tipRef.current;
+    if (!tip) return;
+    const view = btn.ownerDocument.defaultView || window;
+    const b = btn.getBoundingClientRect();
+    // The width is the one measurement the shift cannot affect — and it is
+    // the real width, so a two-word label is not moved as if it were a
+    // sentence. Hidden with visibility rather than display precisely so
+    // there is a box to measure before anyone has seen it.
+    const half = tip.getBoundingClientRect().width / 2;
+    const mid = b.left + b.width / 2;
+    const pad = 8;
+    let want = 0;
+    if (mid + half > view.innerWidth - pad) want = (view.innerWidth - pad) - (mid + half);
+    if (mid - half + want < pad) want = pad - (mid - half);
+    setShift(Math.round(want));
+  };
   return (
     <button type="button" className={'rt-ico-btn' + (on ? ' on' : '') + (className ? ' ' + className : '')}
       title={label} aria-label={label} aria-pressed={on || undefined}
-      disabled={disabled} onClick={onClick}>
+      disabled={disabled} onClick={onClick}
+      onMouseEnter={place} onFocus={place}
+      // Measured again next time rather than kept: the window may have been
+      // resized, or the bar rewrapped, since this one was placed.
+      onMouseLeave={() => setShift(0)} onBlur={() => setShift(0)}>
       <Icon name={icon} />
+      <span className="rt-ico-tip" ref={tipRef} aria-hidden="true"
+        style={{ '--tip-shift': shift + 'px' }}>{label}</span>
     </button>
   );
 }
@@ -343,7 +386,7 @@ const BAND_COLOUR = {
 
 export default function BattleMap({
   map, onChange, historyKey = null, win = null, encounters = [], customThemes = [], onSaveTheme = null,
-  decks = [], onSaveDeck = null, onLoadDeck = null, onNeedTexture = null
+  decks = [], onSaveDeck = null, onLoadDeck = null, onDeleteDeck = null, onNeedTexture = null
 }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = resolveTheme(m.theme, customThemes);
@@ -606,6 +649,23 @@ export default function BattleMap({
     onLoadDeck(deck);
     setLoadId('');
     setDeckNote(`Loaded \u201c${name}\u201d.`);
+  };
+  /* Throwing a deck out of the library. The map's undo cannot reach this \u2014
+     it is the stored library, not the map on screen \u2014 so it asks first, and
+     says so. */
+  const deleteChosenDeck = () => {
+    const deck = decks.find((d) => d.id === loadId);
+    if (!deck || !onDeleteDeck) return;
+    const name = deck.name || 'Untitled deck';
+    if (!(win || window).confirm(
+      `Delete the saved deck \u201c${name}\u201d? It goes out of the library for good `
+      + 'and undo on the map will not bring it back. Whatever is on screen stays.')) return;
+    onDeleteDeck(deck);
+    setLoadId('');
+    // Save over a deck that no longer exists and the save would quietly make
+    // a new one under the old name instead.
+    if (deckTarget === deck.id) setDeckTarget('');
+    setDeckNote(`Deleted \u201c${name}\u201d.`);
   };
   const rHeldRef = useRef(false);     // R is down: a click turns the map
   const rUsedRef = useRef(false);     // ...and a tap of R turns the stamp instead
@@ -2299,7 +2359,11 @@ export default function BattleMap({
           <IconButton icon="pan" label="Pan: drag the map to move it (or hold Space)" on={panOn}
             onClick={() => setPanOn((v) => !v)} />
           <IconButton icon="zoomOut" label="Zoom out" onClick={() => zoomAt(zoomRef.current / 1.25)} />
-          <button type="button" className="rt-ico-btn rt-ico-text" title="Back to 100%. Hold Z or the right button and scroll to zoom."
+          {/* Reads its own value, so it needs no tooltip of ours — but it did
+              need a name, which it had only for the pointer. */}
+          <button type="button" className="rt-ico-btn rt-ico-text"
+            title="Back to 100%. Hold Z or the right button and scroll to zoom."
+            aria-label={`Zoom ${Math.round(zoom * 100)}%. Click for 100%.`}
             onClick={() => zoomAt(1)}>{Math.round(zoom * 100)}%</button>
           <IconButton icon="zoomIn" label="Zoom in" onClick={() => zoomAt(zoomRef.current * 1.25)} />
           <IconButton icon="fit" label="Fit the grid to the screen" onClick={fitToStage} />
@@ -2360,16 +2424,29 @@ export default function BattleMap({
                 }
               }}>Save deck</button>
             </>)}
-            {onLoadDeck && decks.length > 0 && (<>
+            {/* One picker, two things to do with what it picks. */}
+            {(onLoadDeck || onDeleteDeck) && decks.length > 0 && (<>
               <select value={loadId} onChange={(e) => setLoadId(e.target.value)}>
-                <option value="">Load a deck…</option>
+                <option value="">Pick a saved deck…</option>
                 {decks.map((d) => <option key={d.id} value={d.id}>{d.name || 'Untitled deck'}</option>)}
               </select>
-              <button type="button" className="rt-btn" disabled={!loadId} onClick={loadChosenDeck}
-                title="Bring a saved deck onto the map. Undo takes it back.">Load deck</button>
+              {onLoadDeck && (
+                <button type="button" className="rt-btn" disabled={!loadId} onClick={loadChosenDeck}
+                  title="Bring a saved deck onto the map. Undo takes it back.">Load deck</button>
+              )}
+              {onDeleteDeck && (
+                <IconButton icon="trash" disabled={!loadId} onClick={deleteChosenDeck}
+                  label="Delete the chosen deck from the library. This cannot be undone." />
+              )}
             </>)}
-            {!onSaveDeck && !onLoadDeck && (
-              <span className="rt-bm-hint">This window cannot save decks. Open the map from the GM dashboard.</span>
+            {/* The dashboard keeps its own deck row above this map, so the
+                library is already in front of the GM and this panel has
+                nothing to add. It used to say "open the map from the GM
+                dashboard", which is where it was being read. */}
+            {!onSaveDeck && !onLoadDeck && !onDeleteDeck && (
+              <span className="rt-bm-hint">
+                Decks are picked, named, published and deleted in the row above.
+              </span>
             )}
             {deckNote ? <span className="rt-bm-hint">{deckNote}</span> : null}
           </div>

@@ -64,7 +64,13 @@ const IMG = 'data:image/jpeg;base64,' + 'A'.repeat(200);
   calls.length = 0;
   nextResponse = () => ({ status: 200, body: { grounds: [{ id: 'env-1', name: 'Fen' }] } });
   const index = await cloudList();
-  assert.deepEqual(index, [{ id: 'env-1', name: 'Fen' }]);
+  /* Marked as the GM's own on the way in. The server has no reason to say so
+     — it only ever holds their grounds — but the renderer tells a saved
+     ground from a built-in one by this flag, and without it a ground came
+     back from the index as neither: in the picker, but never asked for its
+     floor or its props, because the code that fetches those skips anything
+     not custom. */
+  assert.deepEqual(index, [{ id: 'env-1', name: 'Fen', custom: true }]);
   assert.equal(calls[0].url, '/api/grounds');
   assert.equal(calls[0].opts.method, undefined, 'a list is a plain GET');
   assert.equal(calls[0].opts.body, undefined, 'and sends no body');

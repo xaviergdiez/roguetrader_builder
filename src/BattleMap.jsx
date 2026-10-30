@@ -980,15 +980,23 @@ export default function BattleMap({
   useEffect(() => {
     let cancelled = false;
     for (const id of groundIds) {
-      if (sheetsRef.current.has(id)) continue;
       const t = resolveTheme(id, customThemes);
-      if (!t || !t.custom || !t.sprites) continue;
-      // Claimed before the decode finishes, or every redraw queues it again.
-      sheetsRef.current.set(id, null);
-      imageFrom(t.sprites)
+      /* THE INDEX CARRIES A BOOLEAN, NOT A SHEET. The grounds list is fetched
+         without its pictures — that is the whole point of the split — so a
+         ground arrives saying `sprites: true` and only gets the data URL once
+         its floor is fetched. Slicing whatever is in the field meant trying to
+         decode `true`, and the cache claim below then blocked the real sheet
+         from ever being sliced when it turned up a moment later. */
+      const sheet = t && t.custom && typeof t.sprites === 'string' ? t.sprites : null;
+      const have = sheetsRef.current.get(id);
+      // Cached against the sheet it was cut from, so the arrival of the real
+      // one replaces a claim made against nothing.
+      if (!sheet || (have && have.src === sheet)) continue;
+      sheetsRef.current.set(id, { src: sheet, cells: null });
+      imageFrom(sheet)
         .then((img) => {
           if (cancelled) return;
-          sheetsRef.current.set(id, sliceSheet(img));
+          sheetsRef.current.set(id, { src: sheet, cells: sliceSheet(img) });
           setTokenTick((n) => n + 1);
         })
         // A sheet that will not decode leaves that ground's props flat, which
@@ -1013,7 +1021,8 @@ export default function BattleMap({
     if (!role) return null;
     const ground = (m.ground && m.ground[cellKey(cx, cy)]) || m.theme;
     const sheet = sheetsRef.current.get(ground);
-    const img = (sheet && sheet[role]) || tokensRef.current.get(ground + '/' + role);
+    const img = (sheet && sheet.cells && sheet.cells[role])
+      || tokensRef.current.get(ground + '/' + role);
     return img ? { img, turn: (spriteTurn(role, at) + turn) % 4 } : null;
   };
 

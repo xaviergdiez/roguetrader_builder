@@ -2931,7 +2931,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       }
       if (!moved.length) return;
       if (!cloud) writeLocalGrounds([...readLocalGrounds(), ...moved]);
-      setGrounds((prev) => [...prev, ...moved.map(({ texture, ...meta }) => (cloud ? meta : { texture, ...meta }))]);
+      setGrounds((prev) => [...prev, ...moved.map(({ texture, ...meta }) => (cloud ? { ...meta, custom: true } : { texture, ...meta }))]);
       setHomebrew(cleaned);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps

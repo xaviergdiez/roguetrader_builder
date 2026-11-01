@@ -36,6 +36,9 @@ function clean(homebrew) {
   // same size, and the plan's function budget is nearly spent.
   // `battlemaps` are saved decks and `mapgrounds` are generated floors.
   // Omitting them here dropped them on every write, whatever the client sent.
+  // Both have stores of their own now (api/decks.js, api/grounds.js); they are
+  // still accepted here so a library written before the split can be read, and
+  // the client moves what it finds out of them.
   return {
     hulls: entries(h.hulls),
     components: entries(h.components),

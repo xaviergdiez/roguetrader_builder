@@ -242,7 +242,10 @@ export function toHit({
   evadingDoS = null,        // null = the target did not evade
   crippled = false,
   silhouetted = false,
-  scatter = false
+  scatter = false,
+  // Whatever the void map knows about the shot's line that the table above
+  // does not: each { label, value }, e.g. a dust cloud in the way.
+  extras = []
 } = {}) {
   const weapon = componentById(weaponId);
   const range = weaponRange != null ? weaponRange
@@ -272,6 +275,7 @@ export function toHit({
   // Point-blank is 0 VU, and only a Scatter weapon gains from it.
   const pointBlank = Number(distanceVU) === 0 && scatter;
   if (pointBlank) add('Point-blank broadside', 10);
+  for (const x of Array.isArray(extras) ? extras : []) add(String(x.label || 'Terrain'), Math.round(Number(x.value) || 0));
 
   const total = parts.reduce((n, p) => n + p.value, base);
 

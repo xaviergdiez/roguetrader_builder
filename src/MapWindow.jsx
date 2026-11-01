@@ -14,7 +14,7 @@ import { createPortal } from 'react-dom';
    the popup is just another place to paint it. Nothing is serialised,
    nothing is synchronised, and the map cannot disagree with itself. */
 
-export default function MapWindow({ title = 'Battle map', width = 1400, height = 900, onClose, children }) {
+export default function MapWindow({ title = 'Battle map', name = 'rt-battlemap', width = 1400, height = 900, onClose, children }) {
   const [container, setContainer] = useState(null);
 
   useEffect(() => {
@@ -28,7 +28,7 @@ export default function MapWindow({ title = 'Battle map', width = 1400, height =
     const sh = Math.max(600, scr.availHeight || height);
     const left = scr.availLeft || 0;
     const top = scr.availTop || 0;
-    const w = window.open('', 'rt-battlemap',
+    const w = window.open('', name,
       `popup=yes,width=${sw},height=${sh},left=${left},top=${top}`);
     // Blocked, almost always because the open did not come from a click.
     // Say so rather than silently rendering nothing.

@@ -148,6 +148,20 @@ assert.equal(EVASION_CAP, -50);
   assert.equal(noScatter.target, 65, 'no Scatter, no point-blank bonus');
 }
 
+// The void map hands terrain in as extra parts, and they land on the total
+// and in the breakdown.
+{
+  const plain = toHit({ ballisticSkill: 40, weaponId: 'weap-macrocannon-mars', distanceVU: 4 });
+  const cloud = toHit({
+    ballisticSkill: 40, weaponId: 'weap-macrocannon-mars', distanceVU: 4,
+    extras: [{ label: 'Dust Cloud (6 VU)', value: -10 }, { label: 'ignored', value: 0 }]
+  });
+  assert.equal(cloud.target, plain.target - 10);
+  assert.ok(cloud.parts.some((p) => p.label === 'Dust Cloud (6 VU)' && p.value === -10));
+  assert.ok(!cloud.parts.some((p) => p.label === 'ignored'), 'a zero is not a modifier');
+  assert.equal(toHit({ ballisticSkill: 40, distanceVU: 4, weaponRange: 6, extras: 'junk' }).target, 40, 'junk extras are ignored');
+}
+
 assert.equal(lockBonus(3), 15);
 // A weapon with no range is not a weapon at point-blank: it cannot fire.
 assert.equal(rangeBand(0, 0), 'out');

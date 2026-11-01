@@ -592,18 +592,27 @@ export default function BattleMap({
      live map for play (as Publish for play does: fog on, contacts hidden),
      or, while a deck is being designed, switching to that deck. */
   const [loadId, setLoadId] = useState('');
-  const loadChosenDeck = () => {
+  /* A saved deck's map may still be on its way (a signed-in library holds an
+     index, not maps), so onLoadDeck is async and says what it did: 'replaced'
+     the live map, 'opened' the deck for designing instead, or false if it
+     could not be had. Only a replaced map has an earlier state to undo to —
+     and it is remembered AFTER the load, from what was on screen before, so a
+     deck that never arrived leaves nothing in the history. */
+  const loadChosenDeck = async () => {
     const deck = decks.find((d) => d.id === loadId);
     if (!deck || !onLoadDeck) return;
     const name = deck.name || 'Untitled deck';
     const occupied = Object.keys(mapRef.current.floor || {}).length > 0;
     if (occupied && !(win || window).confirm(
       `Replace the map on screen with \u201c${name}\u201d? Undo (Cmd/Ctrl+Z) brings the current one back.`)) return;
-    remember(mapRef.current);
+    const before = mapRef.current;
+    setDeckNote(`Opening \u201c${name}\u201d\u2026`);
+    const result = await onLoadDeck(deck);
+    if (!result) { setDeckNote(`Could not open \u201c${name}\u201d.`); return; }
+    if (result === 'replaced') remember(before);
     gestureRef.current = false;
     originRef.current = null; measureRef.current = null;
     setOrigin(null); setAim(null); setMeasureFrom(null); setMeasureTo(null);
-    onLoadDeck(deck);
     setLoadId('');
     setDeckNote(`Loaded \u201c${name}\u201d.`);
   };

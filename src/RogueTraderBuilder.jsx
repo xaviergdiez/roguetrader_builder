@@ -1,15 +1,22 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import BattleMap from './BattleMap.jsx';
+import VoidPanel from './VoidPanel.jsx';
+import VoidMap from './VoidMap.jsx';
 import { shrinkToDataUrl } from './imageshrink.js';
 import {
   readLocal as readLocalGrounds, writeLocal as writeLocalGrounds,
   cloudList as groundsList, cloudGet as groundGet, cloudPut as groundPut,
   takeLegacy as takeLegacyGrounds
 } from './grounds.js';
+import {
+  readLocal as readLocalDecks, writeLocal as writeLocalDecks,
+  cloudList as decksList, cloudGet as deckGet, cloudPut as deckPut, cloudDelete as deckDelete,
+  takeLegacy as takeLegacyDecks, deckSize
+} from './decks.js';
 import MapWindow from './MapWindow.jsx';
 import {
-  readMap as readBattleMap, readMapLibrary, newBattleMap, publishMap,
+  readMap as readBattleMap, newBattleMap, publishMap,
   readCustomTheme, readSavedMap, packCombat, combatSansMap
 } from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId, sameNamed,
@@ -76,6 +83,9 @@ import {
   , orderById, BREAK_TRIGGERS, breakTest
 } from './npcgen.js';
 import { rollSystem, describeSystem, describePlanet } from './stargen.js';
+import {
+  combatForBridge, buildScene as buildVoidScene, placeShips as placeVoidShips
+} from './voidmap.js';
 import {
   TYPES as BESTIARY_TYPES, searchBestiary, citation, indexToNpc
 } from './bestiaryindex.js';
@@ -1940,6 +1950,77 @@ const CSS = `
 .rt-bm-group:last-of-type{border-right:0;}
 .rt-bm-toolname{display:inline-flex;align-items:center;gap:6px;font-family:var(--display);
   font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass-lit);}
+/* ---- the void chart ---- */
+.rt-vm{display:flex;flex-direction:column;gap:6px;}
+.rt-vm.full{position:fixed;inset:0;z-index:50;background:var(--void);padding:8px;}
+.rt-vm-bar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
+.rt-vm-sep{width:1px;height:22px;background:var(--brass-dim);margin:0 4px;}
+.rt-vm-scale{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dim);}
+.rt-vm-body{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;}
+.rt-vm-stage{position:relative;flex:1 1 560px;min-width:300px;height:min(66vh,680px);
+  min-height:360px;background:#03050a;border:1px solid var(--brass-dim);overflow:hidden;}
+.rt-vm.full .rt-vm-stage{height:calc(100vh - 62px);}
+.rt-vm-canvas{position:absolute;left:0;top:0;touch-action:none;outline:none;display:block;}
+.rt-vm-canvas:focus-visible{box-shadow:inset 0 0 0 2px var(--gold);}
+.rt-vm-badges{position:absolute;left:8px;bottom:8px;display:flex;gap:4px;flex-wrap:wrap;
+  pointer-events:none;max-width:70%;}
+.rt-vm-badge{font-family:var(--mono);font-size:10px;letter-spacing:.04em;padding:2px 6px;
+  background:rgba(8,14,12,.78);border:1px solid var(--brass-dim);color:var(--dim);}
+.rt-vm-badge.warn{color:#f3c97a;border-color:#8a6a2c;}
+.rt-vm-live{position:absolute;right:8px;top:8px;padding:5px 8px;font-family:var(--mono);
+  font-size:11px;background:rgba(8,14,12,.88);border:1px solid var(--brass);color:var(--bone);
+  pointer-events:none;}
+.rt-vm-side{flex:0 1 300px;min-width:240px;display:flex;flex-direction:column;gap:8px;
+  height:min(66vh,680px);overflow-y:auto;}
+.rt-vm.full .rt-vm-side{height:calc(100vh - 62px);}
+.rt-vm-card{padding:8px 10px;background:var(--panel);border:1px solid var(--brass-dim);}
+.rt-vm-h{font-family:var(--display);font-size:13px;letter-spacing:.08em;color:var(--bone);}
+.rt-vm-sub{font-size:11px;color:var(--dim);margin:2px 0 4px;}
+.rt-vm-p{font-size:12px;margin:4px 0;line-height:1.4;}
+.rt-vm-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0;}
+.rt-vm-grid label,.rt-vm-wide{display:flex;flex-direction:column;gap:2px;font-family:var(--mono);
+  font-size:10px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase;}
+.rt-vm-grid .rt-vm-wide{grid-column:1 / -1;}
+.rt-vm-wide{margin:4px 0;}
+.rt-vm-num{width:100%;}
+.rt-vm-grid .rt-field,.rt-vm-grid .rt-sel,.rt-vm-wide .rt-field,.rt-vm-wide .rt-sel{font-size:13px;padding:4px 6px;min-height:0;}
+.rt-vm-row{display:flex;gap:4px;grid-column:1 / -1;}
+.rt-vm-shots{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;}
+.rt-vm-shot{display:grid;grid-template-columns:1fr auto;gap:0 8px;width:100%;text-align:left;
+  padding:4px 7px;background:var(--well);border:1px solid var(--brass-dim);color:var(--text);
+  cursor:pointer;font:inherit;font-size:12px;}
+.rt-vm-shot:hover{border-color:var(--brass-lit);}
+.rt-vm-shot.on{border-color:var(--gold);background:var(--panel-lit);}
+.rt-vm-shot.bad .rt-vm-note{color:#e58a7a;}
+.rt-vm-dist{font-family:var(--mono);font-size:11px;color:var(--gold-lit);}
+.rt-vm-note{grid-column:1 / -1;font-size:10.5px;color:var(--dim);}
+.rt-vm-shotcard{margin-top:8px;padding:6px 8px;background:var(--well);border:1px solid var(--gold);
+  font-size:12px;display:flex;flex-direction:column;gap:2px;}
+.rt-vm-shotcard .bad{color:#e58a7a;}
+.rt-vm-shotcard button{margin-top:4px;align-self:flex-start;}
+.rt-vm-add{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.rt-vm-bears{list-style:none;margin:4px 0 2px;padding:0;display:flex;flex-direction:column;gap:2px;}
+.rt-vm-bears button{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;
+  padding:3px 6px;background:var(--panel);border:1px solid var(--brass-dim);color:var(--text);
+  cursor:pointer;font:inherit;font-size:11.5px;}
+.rt-vm-bears button.ok span:last-child{color:var(--green);}
+.rt-vm-bears button.no span:last-child{color:#e58a7a;}
+.rt-vm-bears button.on{border-color:var(--gold);background:var(--panel-lit);}
+.rt-vm-arcs{margin-top:8px;display:flex;flex-direction:column;gap:4px;}
+.rt-vm-arcrow{display:grid;grid-template-columns:78px 1fr 1fr;gap:6px;align-items:end;
+  font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.04em;}
+.rt-vm-arcrow label{display:flex;flex-direction:column;gap:2px;color:var(--dim);}
+.rt-vm-arcrow .rt-field{font-size:13px;padding:3px 6px;min-height:0;}
+.rt-vm-setup{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
+.rt-vm-elements{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px;}
+.rt-vm-zone{font-family:var(--display);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--brass-lit);margin-top:4px;grid-column:1 / -1;}
+.rt-vm-chip{display:flex;align-items:center;gap:6px;padding:4px 8px;font-size:12px;cursor:pointer;
+  background:var(--well);border:1px solid var(--brass-dim);}
+.rt-vm-chip.on{border-color:var(--brass-lit);background:var(--panel-lit);}
+.rt-vm-chip input{margin:0;}
+.rt-vm-from{font-family:var(--mono);font-size:11px;color:var(--gold-lit);background:var(--well);
+  border:1px solid var(--brass-dim);padding:4px 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
 /* The grounds a procedural terrain may use. */
 .rt-bm-palette{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px;}
 .rt-bm-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px 3px 6px;
@@ -2831,6 +2912,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // that closing the dashboard mid-encounter does not shut the map with it.
   const [mapWindow, setMapWindow] = useState(false);
   const [mapErr, setMapErr] = useState('');
+  // The void chart's window, owned here for the same reason. voidShot is a
+  // shot lined up on the chart waiting to be read by the gunnery panel: it
+  // lives here so the chart can be in its own window while the panel is not.
+  const [voidWindow, setVoidWindow] = useState(false);
+  const [voidWindowErr, setVoidWindowErr] = useState('');
+  const [voidShot, setVoidShot] = useState(null);
 
   /* ---- generated grounds: their own store, not the homebrew library ----
      A ground carries its floor as a data URL. Signed in, the index comes
@@ -2919,29 +3006,164 @@ export default function RogueTraderBuilder({ me, cloud }) {
     } catch (e) { setGroundErr(e.message); }
   };
 
+  /* ---- saved decks: their own store, not the homebrew library ----
+     A deck is a record per square, and a big one — up to 500 x 500 — took a
+     large part of the homebrew library's single 900KB budget on its own. Each
+     deck now has a record of its own, like a ground's floor. Signed in, the
+     index comes back with a name and a size per deck and no maps, and a deck's
+     map is fetched when it is opened or loaded onto the map; signed out the
+     browser holds them whole.
+
+     An entry in `decks` is { id, name, cols?, rows? } until its map is loaded,
+     then also { map }. `dirty` means the map changed and has not been saved;
+     `renamed` that only the name did. */
+  const [decks, setDecks] = useState([]);
+  const [decksLoaded, setDecksLoaded] = useState(false);
+  const [deckErr, setDeckErr] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const list = cloud ? await decksList() : readLocalDecks().map(readSavedMap);
+        if (live) { setDecks(list); setDecksLoaded(true); }
+      } catch (e) {
+        if (live) { setDecks(readLocalDecks().map(readSavedMap)); setDeckErr(e.message); setDecksLoaded(true); }
+      }
+    })();
+    return () => { live = false; };
+  }, [cloud]);
+
+  // Decks lived in the homebrew library until now. Move them, never drop
+  // them, and write the library back only for those that are safely stored:
+  // one that could not be moved stays where it was.
+  useEffect(() => {
+    if (!homebrewLoaded || !decksLoaded) return;
+    const { legacy } = takeLegacyDecks(homebrew);
+    if (!legacy.length) return;
+    (async () => {
+      const moved = [];
+      for (const raw of legacy) {
+        const d = readSavedMap(raw);
+        if (decks.some((x) => x.id === d.id)) { moved.push({ id: d.id, already: true }); continue; }
+        try {
+          if (cloud) await deckPut(d);
+          moved.push(d);
+        } catch (e) { setDeckErr(e.message); }
+      }
+      if (!moved.length) return;
+      const fresh = moved.filter((d) => !d.already);
+      if (!cloud) writeLocalDecks([...decks.filter((d) => d.map), ...fresh]);
+      setDecks((prev) => [...prev, ...fresh.filter((d) => !prev.some((x) => x.id === d.id))]);
+      const gone = new Set(moved.map((d) => d.id));
+      setHomebrew((h) => ({ ...(h || {}), battlemaps: ((h && h.battlemaps) || []).filter((d) => !(d && gone.has(d.id))) }));
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homebrewLoaded, decksLoaded]);
+
+  /* Saving. A deck whose map changed is written a moment after the last edit,
+     one at a time; a renamed one sends only its name. A write that fails
+     leaves the deck marked, so the next change tries again, and says why. What
+     is cleared afterwards is only what was sent: if the deck changed again in
+     the meantime it is still marked. */
+  useEffect(() => {
+    if (!decksLoaded) return undefined;
+    const pending = decks.filter((d) => (d.dirty && d.map) || d.renamed);
+    if (!pending.length) return undefined;
+    const t = setTimeout(async () => {
+      if (!cloud) {
+        if (writeLocalDecks(decks)) {
+          setDeckErr('');
+          setDecks((prev) => prev.map((d) => (d.dirty || d.renamed ? { ...d, dirty: false, renamed: false } : d)));
+        } else setDeckErr('Could not save the decks \u2014 browser storage is full.');
+        return;
+      }
+      for (const d of pending) {
+        try {
+          const meta = await deckPut(d.dirty ? { id: d.id, name: d.name, map: d.map } : { id: d.id, name: d.name });
+          setDeckErr('');
+          setDecks((prev) => prev.map((x) => {
+            if (x.id !== d.id) return x;
+            const same = x.map === d.map && x.name === d.name;
+            return { ...x, cols: meta.cols || x.cols, rows: meta.rows || x.rows, bytes: meta.bytes || x.bytes,
+              dirty: same ? false : x.dirty, renamed: same ? false : x.renamed };
+          }));
+        } catch (e) { setDeckErr(e.message); }
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [decks, decksLoaded, cloud]);
+
+  /* A deck with its map, fetched the first time it is wanted and kept. Null
+     when it cannot be had, with the reason in deckErr. */
+  const fetchDeck = async (id) => {
+    const have = decks.find((d) => d.id === id);
+    if (!have) return null;
+    if (have.map || !cloud) return have.map ? { ...have, map: readBattleMap(have.map) } : null;
+    try {
+      const full = await deckGet(id);
+      // Unpacked once, here, and kept that way: left packed it would be
+      // unpacked again on every change to any deck.
+      const map = readBattleMap(full.map);
+      setDecks((prev) => prev.map((d) => (d.id === id && !d.map ? { ...d, map } : d)));
+      setDeckErr('');
+      return { ...have, map };
+    } catch (e) { setDeckErr(e.message); return null; }
+  };
+  // Picks a deck to design (null picks none). The map is in hand before the
+  // view changes, so what the map shows is never a deck that is still on its
+  // way.
+  const openDeck = async (id) => {
+    if (!id) { setDeckId(null); return null; }
+    const full = await fetchDeck(id);
+    if (full) setDeckId(id);
+    return full;
+  };
+  const createDeck = () => {
+    const made = newBattleMap('Deck ' + (decks.length + 1));
+    setDecks((prev) => [...prev, { ...made, dirty: true }]);
+    setDeckId(made.id);
+    return made;
+  };
+  const renameDeck = (id, name) =>
+    setDecks((prev) => prev.map((d) => (d.id === id ? { ...d, name, renamed: true } : d)));
+  const deleteDeck = async (id) => {
+    if (cloud) {
+      try { await deckDelete(id); } catch (e) { setDeckErr(e.message); return; }
+    }
+    setDecks((prev) => {
+      const next = prev.filter((d) => d.id !== id);
+      if (!cloud) writeLocalDecks(next);
+      return next;
+    });
+    setDeckId((cur) => (cur === id ? null : cur));
+  };
+
   /* Keeps what was built in the map's own window. The target comes from the
      caller rather than being matched on name: an id writes over that deck, no
      id makes a new one, and nothing is inferred. */
   const saveLiveDeck = ({ id, name, map }) => {
-    const list = readMapLibrary(homebrew && homebrew.battlemaps);
     if (id) {
-      const target = list.find((d) => d.id === id);
+      const target = decks.find((d) => d.id === id);
       if (!target) return null;
-      const next = list.map((d) => (d.id === id ? { ...d, map } : d));
-      setHomebrew({ ...(homebrew || {}), battlemaps: next });
+      setDecks((prev) => prev.map((d) => (d.id === id ? { ...d, map, dirty: true } : d)));
       return { ...target, map };
     }
     const made = readSavedMap({ name: String(name || '').trim() || 'Saved deck', map });
-    setHomebrew({ ...(homebrew || {}), battlemaps: [...list, made] });
+    setDecks((prev) => [...prev, { ...made, dirty: true }]);
     return made;
   };
   /* Bringing a saved deck onto the map from the window. For play it goes the
      way Publish for play does (fog on, nothing explored, every contact
      hidden), so the party is never handed a floorplan by a load. While a deck
-     is being designed it simply opens that deck instead. */
-  const loadDeckOntoMap = (deck) => {
-    if (designing) { setDeckId(deck.id); return; }
-    setActiveMap(publishMap(deck));
+     is being designed it simply opens that deck instead. Says which it did,
+     because only a replaced live map has an earlier state worth undoing to. */
+  const loadDeckOntoMap = async (deck) => {
+    const full = deck.map ? deck : await fetchDeck(deck.id);
+    if (!full) return false;
+    if (designing) { setDeckId(full.id); return 'opened'; }
+    setActiveMap(publishMap(full));
+    return 'replaced';
   };
   const [brewOpen, setBrewOpen] = useState(false);
   const [bridgeOpen, setBridgeOpen] = useState(false);
@@ -2972,6 +3194,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
   }, [bridgeCode]);
   const [fleet, setFleet] = useState([]);          // the GM's NPC ships
   const [combat, setCombat] = useState(EMPTY_COMBAT);
+  const voidRoster = useMemo(
+    () => (gmOpen || voidWindow ? buildVoidRoster({ fleet, combat, blueprint, homebrew }) : []),
+    [gmOpen, voidWindow, fleet, combat, blueprint, homebrew]
+  );
 
   /* THE MAP BOTH PLACES ARE LOOKING AT.
 
@@ -2987,11 +3213,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // unpacking it on every render of this component would be most of what it
   // did.
   const decksForMap = useMemo(
-    () => readMapLibrary(homebrew && homebrew.battlemaps), [homebrew && homebrew.battlemaps]);
+    () => decks.map((d) => (d.map ? { ...d, map: readBattleMap(d.map) } : d)), [decks]);
   const [deckId, setDeckId] = useState(null);
   const [mapView, setMapView] = useState('design');
   const activeDeck = decksForMap.find((d) => d.id === deckId) || null;
-  const designing = mapView === 'design' && activeDeck;
+  // Only a deck whose map is in hand can be designed.
+  const designing = mapView === 'design' && activeDeck && activeDeck.map;
   const liveMapRaw = (combat && combat.ground && combat.ground.map) || null;
   const liveMap = useMemo(() => readBattleMap(liveMapRaw), [liveMapRaw]);
   const activeMap = designing ? activeDeck.map : liveMap;
@@ -2999,10 +3226,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const activeMapKey = designing ? activeDeck.id : 'live';
   const setActiveMap = (next) => {
     if (designing) {
-      setHomebrew({
-        ...(homebrew || {}),
-        battlemaps: decksForMap.map((d) => (d.id === activeDeck.id ? { ...d, map: next } : d))
-      });
+      setDecks((prev) => prev.map((d) => (d.id === activeDeck.id ? { ...d, map: next, dirty: true } : d)));
       return;
     }
     setCombat({
@@ -3861,9 +4085,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
           homebrew={homebrew} setHomebrew={setHomebrew}
           mapWindow={mapWindow} setMapWindow={setMapWindow}
           mapErr={mapErr} setMapErr={setMapErr}
+          voidRoster={voidRoster} voidWindow={voidWindow} setVoidWindow={setVoidWindow}
+          voidWindowErr={voidWindowErr} setVoidWindowErr={setVoidWindowErr}
+          voidShot={voidShot} setVoidShot={setVoidShot}
           grounds={grounds} onSaveGround={saveGroundToLibrary}
           onNeedGroundTexture={loadGroundTexture} groundErr={groundErr}
-          deckId={deckId} setDeckId={setDeckId} mapView={mapView} setMapView={setMapView}
+          decks={decksForMap} deckErr={deckErr} deckId={deckId} openDeck={openDeck}
+          createDeck={createDeck} renameDeck={renameDeck} deleteDeck={deleteDeck}
+          mapView={mapView} setMapView={setMapView}
           activeMap={activeMap} setActiveMap={setActiveMap} activeMapKey={activeMapKey}
           onClose={() => setGmOpen(false)}
         />
@@ -3903,6 +4132,30 @@ export default function RogueTraderBuilder({ me, cloud }) {
               decks={decksForMap}
               onSaveDeck={saveLiveDeck}
               onLoadDeck={loadDeckOntoMap}
+            />
+          )}
+        </MapWindow>
+      )}
+
+      {voidWindow && combat.void && combat.void.map && (
+        <MapWindow
+          name="rt-voidmap"
+          title="Void chart"
+          onClose={(why) => {
+            setVoidWindow(false);
+            if (why === 'blocked') {
+              setVoidWindowErr('The browser blocked the pop-up. Allow pop-ups for this site, then try again.');
+            }
+          }}
+        >
+          {(win) => (
+            <VoidMap
+              map={combat.void.map}
+              onChange={(next) => setCombat((c) => ({ ...c, void: { ...(c.void || {}), map: next } }))}
+              fleet={voidRoster}
+              win={win}
+              historyKey={`${combat.void.map.seed}|${combat.void.map.cols}x${combat.void.map.rows}`}
+              onUseShot={(shot) => setVoidShot({ ...shot, at: Date.now() })}
             />
           )}
         </MapWindow>
@@ -6709,7 +6962,7 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
   const push = () => run(async () => {
     const r = await writeBridge({
       code,
-      doc: { blueprint, fleet, combat: packCombat(combat) },
+      doc: { blueprint, fleet, combat: combatForBridge(combat) },
       vitals: combat.playerVitals || newVitals(blueprint),
       log: 'The GM updated the bridge.'
     });
@@ -7861,6 +8114,17 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
             </>
           )}
 
+          {/* ---- the void chart ----
+              What the table may see of it: the server has already dropped
+              anything hidden and anonymised anything that is only a contact. */}
+          {ship && ship.combat && ship.combat.void && ship.combat.void.map && (
+            <>
+              <div className="rt-conds-h">Void chart</div>
+              <VoidMap map={ship.combat.void.map} onChange={() => {}} readOnly fleet={[]}
+                historyKey="table" />
+            </>
+          )}
+
           {/* ---- a private word from the GM ----
               Only what is addressed to a character this account holds ever
               reaches here: the server filters every copy. */}
@@ -8052,6 +8316,46 @@ function shipProfile(ship, blueprint, custom, context = {}) {
   };
 }
 
+/* What the void chart needs to know about each ship: its name and class, its
+   Speed, and how far each weapon reaches. The same profile the gunnery panel
+   reads, so the rings on the chart and the range box cannot disagree. Computed
+   up here rather than in the GM panel so the chart's own window, which outlives
+   that panel, has it too. */
+function buildVoidRoster({ fleet, combat, blueprint, homebrew }) {
+  try {
+    const usable = usableCustom(homebrew);
+    const bp = { ...blueprint, custom: usable };
+    const onEndeavour = readEndeavours(homebrew && homebrew.endeavours).some((e) => e.status === 'active');
+    const player = { id: 'player', player: true, vitals: (combat && combat.playerVitals) || newVitals(blueprint) };
+    return [player, ...(fleet || [])].map((s) => {
+      const p = shipProfile(s, bp, usable, { inEndeavour: onEndeavour });
+      if (!p) return null;
+      // One entry per MOUNT, not per kind of gun: two macrocannon batteries, one
+      // port and one starboard, fire into different arcs. The player's blueprint
+      // says which mount each weapon is in. An NPC carries a bare list, so its
+      // weapons are taken to sit in the hull's mounts in order.
+      const hull = hullById(s.player ? blueprint.hullId : s.hullId, s.player ? bp : usable);
+      const mounted = s.player
+        ? (blueprint.weapons || []).map((w) => ({ id: w.componentId, slot: w.slot || null }))
+        : (s.weapons || []).map((id, i) => ({
+          id, slot: hull && hull.slots && hull.slots.length ? hull.slots[i % hull.slots.length] : null
+        }));
+      const weapons = [];
+      for (const m of mounted) {
+        const c = componentById(m.id, usable);
+        if (!c || !Number.isFinite(c.range)) continue;
+        weapons.push({ id: m.id, name: c.name, range: c.range, slot: m.slot });
+      }
+      return {
+        id: s.id, name: p.name, side: s.player ? 'player' : 'enemy', cls: p.cls,
+        speed: p.speed, detection: p.detection, weapons
+      };
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 // A number per distinct map object, so two states can be compared for "is the
 // map the same one" without reading it.
 const MAP_STAMPS = new WeakMap();
@@ -8062,10 +8366,17 @@ function mapStamp(map) {
   return MAP_STAMPS.get(map);
 }
 
+// A deck's size for the picker: from its map when that is loaded, from the
+// index when it is not.
+const deckSizeOf = (d) => (d && d.map ? `${d.map.cols}\u00d7${d.map.rows}` : deckSize(d));
+
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
+  voidRoster = [], voidWindow = false, setVoidWindow = () => {},
+  voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {},
   grounds, onSaveGround, onNeedGroundTexture, groundErr,
-  deckId, setDeckId, mapView, setMapView, activeMap, setActiveMap, activeMapKey, onClose }) {
+  decks, deckErr, deckId, openDeck, createDeck, renameDeck, deleteDeck,
+  mapView, setMapView, activeMap, setActiveMap, activeMapKey, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -8085,8 +8396,12 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const [eventAmount, setEventAmount] = useState(5);
   const [gmTab, setGmTab] = useState('fleet');
   // The last rolled star system. Local to this dashboard: it is reference
-  // the GM reads out, not state the table shares.
-  const [system, setSystem] = useState(null);
+  // the GM reads out, not state the table shares. A system a chart was built
+  // from is kept with the combat state (never sent to the shared ship), so
+  // it comes back with the character.
+  const [system, setSystem] = useState((combat.void && combat.void.system) || null);
+  // A shot lined up on the void chart, as the gunnery panel last received it.
+  const [fromChart, setFromChart] = useState(null);
 
   /* ---- the encounter library ----
      Stored in the homebrew library (see encounters.js for why), which the
@@ -8152,6 +8467,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const GM_TABS = [
     { id: 'fleet', label: 'Fleet', count: fleet.length },
     { id: 'void', label: 'Void combat', count: 0 },
+    { id: 'voidmap', label: 'Void map', count: combat.void && combat.void.map ? 1 : 0 },
     { id: 'events', label: 'Events', count: 0 },
     { id: 'encounters', label: 'Encounters', count: encounters.length },
     { id: 'endeavours', label: 'Endeavours', count: endeavours.length },
@@ -8172,10 +8488,6 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   });
   // The window itself is owned by the component above, so neither switching
   // tabs nor closing this dashboard shuts the map the table is playing on.
-  const decks = useMemo(
-    () => readMapLibrary(homebrew && homebrew.battlemaps), [homebrew && homebrew.battlemaps]);
-  const saveDecks = (list) => setHomebrew({ ...(homebrew || {}), battlemaps: list });
-  const putDeck = (d) => saveDecks(decks.map((x) => (x.id === d.id ? d : x)));
   const deck = decks.find((d) => d.id === deckId) || null;
 
   const addHostile = (npc) => {
@@ -8228,6 +8540,30 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     }
   };
   const [eventShip, setEventShip] = useState('player');
+
+  useEffect(() => {
+    if (!voidShot) return;
+    setAttackerId(voidShot.attackerId);
+    setTargetId(voidShot.targetId);
+    setDistance(voidShot.distance);
+    if (voidShot.weaponId) setWeaponId(voidShot.weaponId);
+    setFromChart({
+      attackerId: voidShot.attackerId, targetId: voidShot.targetId, distance: voidShot.distance,
+      silhouetted: voidShot.silhouetted, silhouette: voidShot.silhouette, parts: voidShot.parts || []
+    });
+    setGmTab('void');
+    setVoidShot(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voidShot]);
+
+  // One element of the system rolled on the Systems tab, charted as it stands.
+  const chartIt = (zoneId, index) => {
+    if (!system) return;
+    let m = buildVoidScene(system, [{ zoneId, index }], { size: 'standard' });
+    m = placeVoidShips(m, voidRoster);
+    setCombat((c) => ({ ...c, void: { ...(c.void || {}), system, map: m } }));
+    setGmTab('voidmap');
+  };
 
   // The player's ship is always in the fleet, derived rather than stored, so
   // it cannot drift from the blueprint the player is editing.
@@ -8286,7 +8622,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     const t = setTimeout(() => {
       writeBridge({
         code: bridgeCode,
-        doc: { fleet, combat: packCombat(combat) },
+        doc: { fleet, combat: combatForBridge(combat) },
         vitals: combat.playerVitals || newVitals(blueprint),
         log: logRef.current
       }).then((r) => {
@@ -8376,6 +8712,12 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   const targetP = targetShip ? profileOf(targetShip) : null;
   const weapon = componentById(weaponId, usable);
 
+  // What the chart told the gunnery panel, honoured only while the panel still
+  // shows the same shot: change the attacker, target or distance by hand and it
+  // is no longer the chart's number.
+  const chartShot = fromChart && fromChart.attackerId === attackerId
+    && fromChart.targetId === targetId && fromChart.distance === distance ? fromChart : null;
+
   const hit = targetP && weapon ? toHit({
     ballisticSkill: bs,
     weaponId,
@@ -8387,7 +8729,9 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     lockDoS,
     machineSpiritDoS: spiritDoS,
     evadingDoS: targetShip.evadingDoS,
-    crippled: (targetShip.vitals.hullIntegrity || 0) <= 0
+    crippled: (targetShip.vitals.hullIntegrity || 0) <= 0,
+    silhouetted: Boolean(chartShot && chartShot.silhouetted),
+    extras: chartShot ? chartShot.parts : []
   }) : null;
 
   const fire = () => {
@@ -8643,6 +8987,14 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         </select>
       </label>
 
+      {chartShot && (
+        <div className="rt-vm-from">
+          <span>From the void chart: {chartShot.distance} VU</span>
+          {chartShot.parts.map((pt) => <span key={pt.label}>{pt.label} {pt.value}</span>)}
+          {chartShot.silhouetted && <span>Silhouetted against {chartShot.silhouette} +10</span>}
+          <button type="button" className="rt-btn ghost" onClick={() => setFromChart(null)}>Clear</button>
+        </div>
+      )}
       <div className="rt-gmmods">
         <label><span className="rt-der-k">Distance VU</span>{num(distance, setDistance)}</label>
         <label><span className="rt-der-k">BS / crew</span>{num(bs, setBs, { max: 100 })}</label>
@@ -8661,6 +9013,17 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         <button className="rt-btn ghost" disabled={!targetP} onClick={rollCritical}>Roll critical</button>
       </div>
 
+      </>)}
+      {gmTab === 'voidmap' && (<>
+        <VoidPanel
+          voidState={combat.void}
+          onVoidState={(next) => setCombat((c) => ({ ...c, void: next }))}
+          roster={voidRoster}
+          system={system} setSystem={setSystem}
+          windowOpen={voidWindow} windowErr={voidWindowErr}
+          onWindow={() => { setVoidWindowErr(''); setVoidWindow(true); }}
+          onUseShot={(shot) => setVoidShot({ ...shot, at: Date.now() })}
+        />
       </>)}
       {gmTab === 'events' && (<>
       {/* ---- events ---- */}
@@ -9216,6 +9579,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         </div>
         {mapErr ? <p className="rt-warn">{mapErr}</p> : null}
         {groundErr ? <p className="rt-warn">{groundErr}</p> : null}
+        {deckErr ? <p className="rt-warn">{deckErr}</p> : null}
 
         {/* A deck is built between sessions and played later, so the library
             and the live map are two different things: designing is done with
@@ -9230,28 +9594,25 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
             onClick={() => setMapView('live')}>In play</button>
           {mapView === 'design' ? (<>
             <select className="rt-sel" value={deckId || ''}
-              onChange={(e) => setDeckId(e.target.value || null)}>
+              onChange={(e) => openDeck(e.target.value || null)}>
               <option value="">{'\u2014 pick a deck \u2014'}</option>
               {decks.map((d) => (
-                <option key={d.id} value={d.id}>{d.name || 'Untitled deck'}</option>
+                <option key={d.id} value={d.id}>
+                  {(d.name || 'Untitled deck') + (deckSizeOf(d) ? ` (${deckSizeOf(d)})` : '')}
+                </option>
               ))}
             </select>
-            <button type="button" className="rt-btn" onClick={() => {
-              const d = newBattleMap('Deck ' + (decks.length + 1));
-              saveDecks([...decks, d]);
-              setDeckId(d.id);
-            }}>New deck</button>
+            <button type="button" className="rt-btn" onClick={createDeck}>New deck</button>
             {deck && (<>
               <input className="rt-field" value={deck.name}
                 placeholder="Name this deck"
-                onChange={(e) => putDeck({ ...deck, name: e.target.value })} />
-              <button type="button" className="rt-btn" onClick={() => {
+                onChange={(e) => renameDeck(deck.id, e.target.value)} />
+              <button type="button" className="rt-btn" disabled={!deck.map} onClick={() => {
                 setBattleMap(publishMap(deck));
                 setMapView('live');
               }}>Publish for play</button>
               <button type="button" className="rt-btn ghost" onClick={() => {
-                saveDecks(decks.filter((d) => d.id !== deck.id));
-                setDeckId(null);
+                if (window.confirm(`Delete \u201c${deck.name || 'Untitled deck'}\u201d? This cannot be undone.`)) deleteDeck(deck.id);
               }}>Delete</button>
             </>)}
           </>) : (
@@ -9343,6 +9704,11 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                         {e.intensity > 1 ? ' \u00D7' + e.intensity : ''}
                         {e.homeworld ? ' \u2014 homeworld' : ''}
                       </span>
+                      {!['radiation_bursts', 'solar_flares'].includes(e.id) && (
+                        <button type="button" className="rt-btn ghost" style={{ marginLeft: 8 }}
+                          title="Build a void chart around this and put the fleet on it"
+                          onClick={() => chartIt(z.id, i)}>Chart it</button>
+                      )}
                       {e.kind === 'site' && e.site && (
                         <>
                           <span className="rt-entry-c">

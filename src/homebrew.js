@@ -19,7 +19,8 @@ export const HOMEBREW_KEY = 'rt:homebrew';
 // authored by one account, wanted on every device — and the route's own
 // entry-count and byte guards cover it unchanged. See encounters.js.
 // `battlemaps` are saved decks and `mapgrounds` are generated floors (see
-// src/battlemap.js). Both are the GM's own library in the same sense, and
+// src/battlemap.js). Both have their own stores now (decks.js, grounds.js) and
+// are moved out of here when found; the keys stay so an old library still reads. Both are the GM's own library in the same sense, and
 // both were being DROPPED here: normalise rebuilds the object from a fixed
 // list of keys, so anything not named was silently discarded on every read
 // and every write. A ground saved from the map survived in React state until

@@ -27,6 +27,7 @@
    to-hit roll. Before this, that number was typed in by hand and guessed. */
 
 import { rangeBand, RANGE_MODIFIERS, parseWeaponStats } from './groundcombat.js';
+import { spriteRole } from './spritesheet.js';
 
 /* ------------------------------ themes ------------------------------ */
 
@@ -195,6 +196,16 @@ export function readCustomTheme(x) {
     // What it was asked for, kept so it can be generated again or adjusted.
     prompt: String(src.prompt || '').slice(0, 800),
     texture,
+    /* The ground's sixteen props, as one 4x4 sheet, already keyed to
+       transparency by the browser that made it. A string when this ground has
+       props and null when it has none, and null is the ordinary case: every
+       ground saved before props existed has none, and uploading a floor does
+       not generate any. The index entry carries a boolean instead (see
+       api/grounds.js) so the picker can say which grounds are dressed without
+       hauling the sheets about. */
+    sprites: typeof src.sprites === 'string'
+      && /^data:image\/(png|jpeg|webp);base64,/.test(src.sprites)
+      && src.sprites.length <= MAX_CUSTOM_SPRITES ? src.sprites : null,
     custom: true,
     grid: col(src.grid, n.grid),
     accent: col(src.accent, n.accent),
@@ -316,6 +327,10 @@ export const EMPTY_MAP = {
 // ~1.5MB of base64, which is a 768px JPEG with room to spare. Past this a
 // generated ground is costing more to load than the deck it decorates.
 export const MAX_CUSTOM_TEXTURE = 1_500_000;
+// A prop sheet is sixteen tokens in one 1024px image, and mostly transparent,
+// which WebP packs hard. Its own ceiling rather than the floor's: the two are
+// stored apart and a sheet going over should not cost a ground its floor.
+export const MAX_CUSTOM_SPRITES = 1_500_000;
 
 /* The largest grid a deck may be.
 
@@ -403,17 +418,80 @@ export function readDoor(v) {
    railing is a thing you crouch behind and shoot over, and treating them
    alike would either seal a gantry or make a hold transparent. `ap` is the
    Armour Points the cover adds against a shot that crosses it. */
+/* `directional` is cover that RUNS one way across its square rather than
+   filling it: a railing has a length and two sides, and the GM says which way
+   it lies. The other three are bulk — a crate stack occupies its square from
+   every approach — so they have no angle to choose, do not record one, and
+   are scattered by position instead (see spriteTurn in spritesheet.js, whose
+   `turn` flag is the same fact seen from the art's side: a picture that may
+   be freely turned is a picture with no front). */
 export const COVER_TYPES = [
-  { id: 'low', name: 'Low barrier or railing', ap: 4, blocksSight: false,
+  { id: 'low', name: 'Low barrier or railing', ap: 4, blocksSight: false, directional: true,
     note: 'Crouch behind it and shoot over it.' },
-  { id: 'crates', name: 'Cargo crates', ap: 8, blocksSight: true,
+  { id: 'crates', name: 'Cargo crates', ap: 8, blocksSight: true, directional: false,
     note: 'Stacked high enough to hide behind.' },
-  { id: 'machinery', name: 'Machinery or plating', ap: 12, blocksSight: true,
+  { id: 'machinery', name: 'Machinery or plating', ap: 12, blocksSight: true, directional: false,
     note: 'Pipework, cogitator banks, loose hull plate.' },
-  { id: 'pillar', name: 'Structural pillar', ap: 16, blocksSight: true,
+  { id: 'pillar', name: 'Structural pillar', ap: 16, blocksSight: true, directional: false,
     note: 'Part of the ship. It does not move and it does not break.' }
 ];
 export const coverById = (id) => COVER_TYPES.find((c) => c.id === id) || null;
+
+/* WHICH WAY THE COVER LIES.
+
+   A railing has a direction. It runs along one edge of a square and you
+   crouch on one side of it, and the art for it — a barrier, a low wall —
+   is drawn running left to right. Laid down the length of a corridor that
+   runs north, every one of them is across the corridor rather than along it,
+   which is not what the GM drew and not what the table will read.
+
+   So a barrier is stored as one of TWO states: 0 lying across its square as
+   the art is drawn, 1 standing up it, which is the same picture turned a
+   quarter. Two and not four quarter turns, because a barrier turned a half
+   turn is the same barrier seen from the other side — the GM is choosing
+   between — and |, and a control offering four of them would offer two pairs
+   of identical pictures.
+
+   A cover square was once the bare type id, and still reads as one: every
+   deck saved before this opens with its crates where they were. It is also
+   WRITTEN as one unless it is turned — writeCover gives back the plain string
+   for turn 0 — so a deck of a thousand untouched crates stores exactly what
+   it stored before rather than a thousand little objects.
+
+   Only DIRECTIONAL cover keeps an angle, and both of these enforce that
+   rather than leaving it to the callers. A crate stack has no front, so
+   recording which way round it is would be a fiction — and an expensive one:
+   turning a deck of five hundred crates would turn five hundred bare strings
+   into five hundred little records to say nothing at all. */
+// 0 across, 1 standing up. Anything else folds into one of the two, so a
+// deck turned twice or a hand-edited record cannot hold a third state.
+const lie = (v) => {
+  const t = Math.round(Number(v));
+  return Number.isFinite(t) ? ((t % 2) + 2) % 2 : 0;
+};
+
+export function readCover(v) {
+  const raw = typeof v === 'string' ? { id: v, turn: 0 }
+    : (v && typeof v === 'object' ? v : null);
+  const type = raw && coverById(raw.id);
+  if (!type) return null;
+  return { id: raw.id, turn: type.directional ? lie(raw.turn) : 0 };
+}
+
+export const writeCover = (id, turn = 0) => {
+  const type = coverById(id);
+  if (!type || !type.directional) return id;
+  return lie(turn) ? { id, turn: 1 } : id;
+};
+
+
+// The cover type on a square, whichever form the square is stored in. Most
+// callers want the type and not the angle: it is the type that blocks sight
+// and prices the Armour Points.
+export const coverAt = (v) => {
+  const rec = readCover(v);
+  return rec ? coverById(rec.id) : null;
+};
 
 /* ---------------------------- hazards ----------------------------
    A square that is dangerous to stand in. These block nothing and stop
@@ -637,7 +715,13 @@ export function readMap(m) {
   });
   const cover = layer(src.cover, (raw) => {
     const out = {};
-    for (const [k, v] of Object.entries(raw)) if (parseKey(k) && coverById(v)) out[k] = v;
+    for (const [k, v] of Object.entries(raw)) {
+      // Canonical, not normalised: a turned square keeps its object and an
+      // untouched one keeps its bare string, so reading a map and writing it
+      // back does not inflate every crate on the deck into a record.
+      const c = readCover(v);
+      if (parseKey(k) && c) out[k] = writeCover(c.id, c.turn);
+    }
     return out;
   });
   const hazards = layer(src.hazards, (raw) => {
@@ -738,6 +822,40 @@ export function groundsUsed(map) {
     if (!m.floor || m.floor[k]) add(m.ground[k]);
   }
   return out;
+}
+
+/* Which prop pictures a deck needs, as "<ground>/<role>" strings.
+
+   Worked out from what is actually ON the deck rather than loaded wholesale:
+   each ground has sixteen tokens weighing about half a megabyte together, and
+   a deck with two doors and no cover has no business fetching the crates, the
+   fire and the foliage. The ground is per square, so a crate standing on a
+   square painted with ice is an ICE crate — the props follow the floor they
+   are standing on, which is the whole point of having a set per ground.
+
+   Expects a map already through readMap. Returns a sorted array so callers can
+   join it into a cache key and compare two of them cheaply. */
+export function tokensNeeded(map) {
+  const m = map && typeof map === 'object' ? map : EMPTY_MAP;
+  const base = typeof m.theme === 'string' ? m.theme : DEFAULT_THEME;
+  const out = new Set();
+  const want = (k, kind, id, state) => {
+    const at = parseKey(k);
+    if (!at) return;
+    const role = spriteRole(kind, id, state, at);
+    if (!role) return;
+    out.add(((m.ground || {})[k] || base) + '/' + role);
+  };
+  for (const [k, v] of Object.entries(m.doors || {})) {
+    if (v) want(k, 'door', v.kind, v.state);
+  }
+  for (const [k, v] of Object.entries(m.cover || {})) {
+    const c = readCover(v);
+    if (c) want(k, 'cover', c.id);
+  }
+  for (const [k, v] of Object.entries(m.hazards || {})) want(k, 'hazard', v);
+  for (const [k, v] of Object.entries(m.obscuring || {})) want(k, 'obscure', v);
+  return [...out].sort();
 }
 
 /* --------------------------- projector calibration ---------------------------
@@ -1234,7 +1352,19 @@ function turnContent(m, t) {
   const vp = m.viewpoint ? at(m.viewpoint.x, m.viewpoint.y) : null;
   return {
     ...m,
-    floor: move(m.floor), cover: move(m.cover), hazards: move(m.hazards),
+    floor: move(m.floor),
+    /* Cover turns WITH the deck. A barrier laid across a corridor has to stay
+       across it after the deck is turned a quarter, and it is the only thing
+       on the map that both has a direction and is stored per square — the
+       walls are derived from the floor, and the props that have no front do
+       not care. Without this, turning a deck left every railing on it facing
+       the way it faced before, at right angles to the corridor it was drawn
+       along. */
+    cover: move(m.cover, (v) => {
+      const c = readCover(v);
+      return c ? writeCover(c.id, c.turn + t) : v;
+    }),
+    hazards: move(m.hazards),
     obscuring: move(m.obscuring), ground: move(m.ground), explored: move(m.explored),
     doors: move(m.doors, (d) => ({ ...d })),
     markers: move(m.markers, (v) => ({ ...v })),
@@ -1383,7 +1513,7 @@ function walkLine(m, from, to, { sight = true } = {}) {
     }
     // Cover that stands head-high stops the lane; a railing does not, which
     // is the whole point of keeping the two apart.
-    const cov = coverById(m.cover[k]);
+    const cov = coverAt(m.cover[k]);
     if (cov && cov.blocksSight) return { x, y, reason: 'cover', cover: cov.id };
     // Void only blocks on a map that has a deck painted at all; an unbuilt
     // map is open ground, not a solid block of rock.
@@ -1529,7 +1659,7 @@ export function coverBetween(map, from, to) {
   const steps = Math.ceil(distanceSquares(from, to) * 2);
   let best = null;
   const consider = (x, y) => {
-    const c = coverById(m.cover[cellKey(x, y)]);
+    const c = coverAt(m.cover[cellKey(x, y)]);
     if (c && (!best || c.ap > best.ap)) best = c;
   };
   for (let i = 1; i <= steps; i++) {

@@ -52,17 +52,29 @@ async function callApi(suffix = '', opts) {
   return res.json();
 }
 
+/* Everything out of this store is one of the GM's own grounds, so it is
+   marked as such on the way in.
+
+   The server has no reason to say so — it only ever holds the GM's grounds —
+   but the renderer tells a saved ground from a built-in one by this flag, and
+   without it a ground came back from the index as neither: it appeared in the
+   picker and was then never asked for its floor or its props, because the
+   code that fetches those skips anything that is not custom. It only showed
+   after a reload, since a ground saved in THIS session still had its floor in
+   memory. */
+const mine = (g) => ({ ...g, custom: true });
+
 // The index: every ground's name and numbers, no floors.
-export const cloudList = async () => (await callApi()).grounds || [];
+export const cloudList = async () => ((await callApi()).grounds || []).map(mine);
 
 // One ground, floor included.
-export const cloudGet = (id) => callApi(`?g=${encodeURIComponent(id)}`);
+export const cloudGet = async (id) => mine(await callApi(`?g=${encodeURIComponent(id)}`));
 
-export const cloudPut = (ground) =>
-  callApi(`?g=${encodeURIComponent(ground.id)}`, {
+export const cloudPut = async (ground) =>
+  mine(await callApi(`?g=${encodeURIComponent(ground.id)}`, {
     method: 'PUT',
     body: JSON.stringify(ground)
-  });
+  }));
 
 export const cloudDelete = (id) =>
   callApi(`?g=${encodeURIComponent(id)}`, { method: 'DELETE' });

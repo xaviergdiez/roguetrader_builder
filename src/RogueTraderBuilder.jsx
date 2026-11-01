@@ -1935,7 +1935,7 @@ const CSS = `
 .rt-bm-peek:hover,.rt-bm-peek:focus{opacity:1;}
 /* ---- the toolbar's icon buttons ---- */
 .rt-ico{display:block;flex:0 0 auto;}
-.rt-ico-btn{cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
+.rt-ico-btn{position:relative;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;
   width:34px;height:34px;padding:0;color:var(--gold-lit);border:1px solid var(--brass-dim);
   background:linear-gradient(180deg,var(--panel-lit),var(--panel));
   transition:color .14s,border-color .14s,filter .14s;}
@@ -1944,6 +1944,30 @@ const CSS = `
 .rt-ico-btn:disabled{opacity:.3;cursor:default;}
 .rt-ico-btn:focus-visible{outline:none;box-shadow:inset 0 0 0 2px var(--gold);}
 .rt-ico-text{width:auto;min-width:50px;padding:0 6px;font-family:var(--mono);font-size:11px;letter-spacing:.04em;}
+/* The icon's name under the pointer. Hidden with visibility rather than
+   display so it keeps a box the button can measure before anyone sees it;
+   --tip-shift is how far it had to move to stay inside the window. */
+.rt-ico-tip{position:absolute;top:calc(100% + 6px);left:50%;
+  transform:translateX(calc(-50% + var(--tip-shift,0px)));
+  z-index:30;width:max-content;max-width:220px;padding:4px 7px;
+  font-family:var(--mono);font-size:10.5px;line-height:1.35;letter-spacing:.03em;
+  text-transform:none;text-align:center;white-space:normal;color:var(--bone);
+  background:var(--ink);border:1px solid var(--brass);
+  box-shadow:0 4px 10px rgba(0,0,0,.55);
+  opacity:0;visibility:hidden;pointer-events:none;transition:opacity .12s;}
+.rt-ico-btn:hover .rt-ico-tip,
+.rt-ico-btn:focus-visible .rt-ico-tip{opacity:1;visibility:visible;}
+/* A greyed icon is the one most worth naming — "why can I not press this?" —
+   and the browser's own tooltip never answers, because a disabled control
+   gets no mouse events. The style engine still paints :hover, so the name
+   appears; the script that keeps a tooltip inside the window does NOT run,
+   so these hang off the button's left edge rather than its middle, which is
+   where there is room for them to open. */
+.rt-ico-btn:disabled .rt-ico-tip{left:0;transform:none;}
+/* Except in the right-click menu, which scrolls: a tooltip hanging below its
+   button would be clipped by the menu's own edge, so those icons keep the
+   browser's own tooltip. */
+.rt-bm-menu .rt-ico-tip{display:none;}
 .rt-bm-top{row-gap:6px;}
 .rt-bm-group{display:flex;flex-wrap:wrap;gap:3px;align-items:center;padding-right:8px;
   border-right:1px solid var(--brass-dim);}
@@ -2021,6 +2045,42 @@ const CSS = `
 .rt-vm-chip input{margin:0;}
 .rt-vm-from{font-family:var(--mono);font-size:11px;color:var(--gold-lit);background:var(--well);
   border:1px solid var(--brass-dim);padding:4px 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+/* The map asking before it destroys something.
+
+   Fixed to the viewport rather than absolute inside the map, because the map
+   may be scrolled a long way down a 500-square deck and a question that
+   appears at the deck's origin is a question nobody is looking at. Fixed also
+   survives full screen, which is where this has to work: the alternative was
+   a browser dialog, and in the popped-out window that opened on the window
+   BEHIND the map, where it could not be seen or clicked. */
+.rt-bm-askwrap{position:fixed;inset:0;z-index:80;display:flex;align-items:center;
+  justify-content:center;padding:16px;background:rgba(3,5,4,.72);}
+.rt-bm-ask{width:min(440px,100%);padding:16px 18px;background:var(--panel);
+  border:1px solid var(--brass);box-shadow:0 18px 50px rgba(0,0,0,.7);}
+.rt-bm-ask h4{margin:0 0 8px;font-family:var(--display);font-size:14px;
+  letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lit);}
+.rt-bm-ask p{margin:0 0 14px;font-size:13px;line-height:1.5;color:var(--text);}
+.rt-bm-askrow{display:flex;gap:8px;justify-content:flex-end;}
+
+/* A generated ground's sixteen props, shown as the sheet cut into squares.
+   Each cell is the whole sheet behind a window 1/4 of its width, moved to that
+   cell's corner — four across, so the step is 100/(4-1) per cell. A chequer
+   behind them, because the tokens are transparent and half of them are pale:
+   on a flat dark panel an ice barrier is invisible and reads as a failed
+   generation.
+
+   The chequer is on the CONTAINER, not the cells: each cell's own background
+   is the sheet, set inline, and an inline background-image would paint over a
+   chequer declared on the same element. */
+.rt-bm-sheet{display:grid;grid-template-columns:repeat(8,1fr);gap:3px;margin:0 0 8px;
+  padding:3px;background-color:#191919;
+  background-image:linear-gradient(45deg,#262626 25%,transparent 25%,transparent 75%,#262626 75%),
+    linear-gradient(45deg,#262626 25%,transparent 25%,transparent 75%,#262626 75%);
+  background-size:12px 12px;background-position:0 0,6px 6px;
+  border:1px solid var(--brass-dim);}
+.rt-bm-sheet i{display:block;aspect-ratio:1;background-size:400% 400%;
+  background-repeat:no-repeat;}
+
 /* The grounds a procedural terrain may use. */
 .rt-bm-palette{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px;}
 .rt-bm-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px 3px 6px;
@@ -2959,7 +3019,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       }
       if (!moved.length) return;
       if (!cloud) writeLocalGrounds([...readLocalGrounds(), ...moved]);
-      setGrounds((prev) => [...prev, ...moved.map(({ texture, ...meta }) => (cloud ? meta : { texture, ...meta }))]);
+      setGrounds((prev) => [...prev, ...moved.map(({ texture, ...meta }) => (cloud ? { ...meta, custom: true } : { texture, ...meta }))]);
       setHomebrew(cleaned);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2974,10 +3034,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
     try {
       if (cloud) {
         const meta = await groundPut(ready);
-        // Held with its floor so the deck it was just applied to can draw it
-        // without a round trip back for what we already have.
+        // Held with its floor and its props so the deck it was just applied
+        // to can draw it without a round trip back for what we already have.
         setGrounds((prev) => [...prev.filter((g) => g.id !== meta.id),
-          { ...meta, texture: ready.texture }]);
+          { ...meta, texture: ready.texture, sprites: ready.sprites || null }]);
       } else {
         const next = [...readLocalGrounds().filter((g) => g.id !== ready.id), ready];
         if (!writeLocalGrounds(next)) {
@@ -3001,7 +3061,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
     try {
       const full = await groundGet(id);
       if (full && full.texture) {
-        setGrounds((prev) => prev.map((g) => (g.id === id ? { ...g, texture: full.texture } : g)));
+        // The props come back in the same answer when the ground has any, so
+        // a dressed ground is drawn complete rather than appearing and then
+        // sprouting its doors a moment later.
+        setGrounds((prev) => prev.map((g) => (g.id === id
+          ? { ...g, texture: full.texture, sprites: full.sprites || null }
+          : g)));
       }
     } catch (e) { setGroundErr(e.message); }
   };
@@ -3129,7 +3194,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
     setDecks((prev) => prev.map((d) => (d.id === id ? { ...d, name, renamed: true } : d)));
   const deleteDeck = async (id) => {
     if (cloud) {
-      try { await deckDelete(id); } catch (e) { setDeckErr(e.message); return; }
+      try { await deckDelete(id); } catch (e) { setDeckErr(e.message); return false; }
     }
     setDecks((prev) => {
       const next = prev.filter((d) => d.id !== id);
@@ -3137,6 +3202,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       return next;
     });
     setDeckId((cur) => (cur === id ? null : cur));
+    return true;
   };
 
   /* Keeps what was built in the map's own window. The target comes from the
@@ -3238,6 +3304,13 @@ export default function RogueTraderBuilder({ me, cloud }) {
       }
     });
   };
+  /* Throwing a deck out of the library, from the map's own window. The window
+     is often the only thing open during a session, so the library it can add
+     to has to be one it can also tidy. The caller has already asked. */
+  const deleteSavedDeck = (deck) => deleteDeck(deck.id);
+  // (deleteDeck sends the selection back to no deck when it is the one being
+  // designed, so the editor is never left pointed at a deck that is gone. The
+  // drawing on screen is untouched either way. It says whether it worked.)
 
   const [xp, setXp] = useState(5000);              // a starting Explorer's budget
   const [fateRoll, setFateRoll] = useState(null);
@@ -4132,6 +4205,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               decks={decksForMap}
               onSaveDeck={saveLiveDeck}
               onLoadDeck={loadDeckOntoMap}
+              onDeleteDeck={deleteSavedDeck}
             />
           )}
         </MapWindow>
@@ -9611,9 +9685,16 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                 setBattleMap(publishMap(deck));
                 setMapView('live');
               }}>Publish for play</button>
+              {/* Asks first: this is a whole deck's drawing, there is no undo
+                  for the library, and the button sits one square away from
+                  Publish for play. */}
               <button type="button" className="rt-btn ghost" onClick={() => {
-                if (window.confirm(`Delete \u201c${deck.name || 'Untitled deck'}\u201d? This cannot be undone.`)) deleteDeck(deck.id);
-              }}>Delete</button>
+                const name = deck.name || 'Untitled deck';
+                if (!window.confirm(
+                  `Delete the saved deck \u201c${name}\u201d? This cannot be undone.`)) return;
+                deleteDeck(deck.id);
+              }}
+                title="Remove this deck from your library for good">Delete deck</button>
             </>)}
           </>) : (
             <span className="rt-bm-hint">

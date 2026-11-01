@@ -30,7 +30,7 @@
 import {
   readMap, parseKey, keepClean, COVER_TYPES, HAZARD_TYPES, OBSCURING
 } from './battlemap.js';
-import { makeRng, newSeed } from './mapgen.js';
+import { makeRng, newSeed, generateDeck } from './mapgen.js';
 
 /* How big a patch of one ground tends to be, in squares across. */
 export const TERRAIN_SIZES = [
@@ -255,7 +255,7 @@ const weightedPick = (rng, weights) => {
    palette   the ids the GM ticked
    prompt    what they wrote
    seed, size ('auto' | 'small' | 'medium' | 'large'), scope (see above) */
-export function generateTerrain({ map, grounds = [], palette = [], prompt = '', seed, size = 'auto', scope = 'deck' } = {}) {
+export function generateTerrain({ map, grounds = [], palette = [], prompt = '', seed, size = 'auto', scope = 'deck', style = 'decks' } = {}) {
   const m = readMap(map);
   const s = seed == null || seed === '' ? newSeed() : seed;
   const rng = makeRng(s);
@@ -275,20 +275,38 @@ export function generateTerrain({ map, grounds = [], palette = [], prompt = '', 
   // Where it goes.
   const W = m.cols, H = m.rows;
   const hasFloor = Object.keys(m.floor).length > 0;
-  const lay = scope === 'grid' || !hasFloor;
+
+  /* A BLANK DECK USED TO COME BACK AS A SOLID RECTANGLE.
+
+     With nothing painted there was nothing to paint ON, so this laid deck
+     across every square of the grid and dressed it — which is terrain, but it
+     is not a MAP: no rooms, no corridors, no doors, nothing to fight over.
+     One press of Generate terrain produced a filled box.
+
+     So a blank deck gets a layout first, from the same binary partition the
+     Deck panel uses, and the terrain is painted onto THAT. The regions, the
+     roughened seams, the river and the sowing all work exactly as before;
+     they are simply laid over rooms and corridors instead of over a slab.
+
+     "The whole grid" still fills everything, because that is what it says and
+     it is how a landscape with no structure at all is made. */
+  const built = !hasFloor && scope !== 'grid'
+    ? generateDeck({ cols: W, rows: H, style, seed: s })
+    : null;
+  const base = built ? built.floor : m.floor;
+  const lay = scope === 'grid';
   const wants = lay ? () => true
-    : scope === 'free' ? (k) => Boolean(m.floor[k]) && !m.ground[k]
-      : (k) => Boolean(m.floor[k]);
+    : (k) => Boolean(base[k]) && (scope !== 'free' || !m.ground[k]);
   let box = { x0: 0, y0: 0, x1: W - 1, y1: H - 1 };
   if (!lay) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const k of Object.keys(m.floor)) {
+    for (const k of Object.keys(base)) {
       const p = parseKey(k);
       if (!p || !wants(k)) continue;
       if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x;
       if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
     }
-    if (!Number.isFinite(x0)) return { empty: true, seed: s, notes: read.notes, floor: m.floor, ground: m.ground, obscuring: m.obscuring, cover: m.cover, hazards: m.hazards, laid: false };
+    if (!Number.isFinite(x0)) return { empty: true, seed: s, notes: read.notes, floor: m.floor, doors: m.doors, ground: m.ground, obscuring: m.obscuring, cover: m.cover, hazards: m.hazards, laid: false, built: false };
     box = { x0, y0, x1, y1 };
   }
 
@@ -359,7 +377,7 @@ export function generateTerrain({ map, grounds = [], palette = [], prompt = '', 
 
   // The layers, merged over what was there.
   const ground = { ...m.ground };
-  const floor = lay ? { ...m.floor } : null;
+  const floor = lay ? { ...m.floor } : built ? { ...built.floor } : null;
   const cells = [];                 // [x, y] of every square in play, for the sowing below
   for (let y = box.y0; y <= box.y1; y++) {
     for (let x = box.x0; x <= box.x1; x++) {
@@ -440,9 +458,16 @@ export function generateTerrain({ map, grounds = [], palette = [], prompt = '', 
   }
 
   return {
-    seed: s, empty: false, laid: Boolean(floor),
+    seed: s, empty: false, laid: Boolean(floor), built: Boolean(built),
     ground: keepClean(m.ground, ground),
     floor: floor ? keepClean(m.floor, floor) : m.floor,
+    // The doors of the layout this built, if it built one. A deck's doors are
+    // part of its structure, not its terrain, so they only ever come from here
+    // when there was no structure to begin with.
+    doors: built ? built.doors : m.doors,
+    // A COUNT, not the rooms themselves: generateDeck hands back the room
+    // boxes and only the number of them is wanted here.
+    rooms: built && Array.isArray(built.rooms) ? built.rooms.length : 0,
     obscuring: keepClean(m.obscuring, obscuring),
     cover: keepClean(m.cover, cover),
     hazards: keepClean(m.hazards, hazards),

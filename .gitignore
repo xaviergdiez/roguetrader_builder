@@ -8,3 +8,11 @@ dist
 # scripts/audit-parse.mjs compiles the .jsx here to read SHEET_CATALOG and
 # deletes it again; ignored so a crashed run cannot leave one committable.
 src/.audit-*.mjs
+
+# The master sprite sheets: nine 2048px JPEGs, 29MB, and the only thing that
+# reads them is tools/slice-sprites.mjs on a desktop. Their OUTPUT —
+# public/maps/tokens — is committed, because that is what the app serves.
+# Untracked rather than committed to keep a 5MB repo from becoming a 35MB one;
+# they are irreplaceable source art, so keep a copy somewhere that is backed
+# up. Drop this rule if you would rather the repo held them.
+art/sprites/

@@ -14,7 +14,8 @@ import {
   fitGrid, MAX_CUSTOM_TEXTURE, brushCells, MAX_GRID, MIN_GRID,
   clampZoom, MIN_ZOOM, MAX_ZOOM,
   themeNumbersFor, BRIGHT_FLOOR, readCustomTheme, readThemeLibrary, resolveTheme,
-  textureAdvice, SQUARE_TOLERANCE, expandMap, expandPlan, groundsUsed,
+  textureAdvice, SQUARE_TOLERANCE, expandMap, expandPlan, groundsUsed, tokensNeeded,
+  readCover, writeCover,
   TILE_CATALOG, tileById, TILE_CATEGORIES, stampCells, paintCells, isFloor,
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
@@ -1600,6 +1601,131 @@ import { GEAR } from './gear.js';
     assert.deepEqual(groundsUsed(EMPTY_MAP), [EMPTY_MAP.theme]);
   }
 
+  /* ---- which way a barrier lies ----
+
+     A railing runs across its square and has a side you crouch on, so the GM
+     chooses its angle. Everything else is bulk and has none — and that is
+     enforced here rather than at the call sites, because a crate that could
+     hold an angle would mean turning a deck rewrote five hundred bare strings
+     into five hundred records saying nothing. */
+  {
+    // Read either way round, as a door is.
+    assert.deepEqual(readCover('low'), { id: 'low', turn: 0 }, 'the old bare string');
+    assert.deepEqual(readCover({ id: 'low', turn: 1 }), { id: 'low', turn: 1 }, 'and the record');
+    assert.equal(readCover('nonsense'), null, 'junk is not cover');
+    assert.equal(readCover(null), null);
+    assert.equal(readCover({ id: 'nope', turn: 1 }), null);
+    // Two states and only two: a barrier is \u2014 or |, so anything else folds
+    // into one of them rather than becoming a third thing the art cannot draw.
+    assert.deepEqual(readCover({ id: 'low', turn: 7 }), { id: 'low', turn: 1 }, 'odd is standing');
+    assert.deepEqual(readCover({ id: 'low', turn: 2 }), { id: 'low', turn: 0 }, 'even is across');
+    assert.deepEqual(readCover({ id: 'low', turn: -1 }), { id: 'low', turn: 1 }, 'and negatives fold too');
+    assert.deepEqual(readCover({ id: 'low', turn: 'x' }), { id: 'low', turn: 0 }, 'junk turn is none');
+    // Bulk cover never carries one, however it is asked to.
+    assert.deepEqual(readCover({ id: 'crates', turn: 1 }), { id: 'crates', turn: 0 },
+      'a crate stack has no front');
+
+    // Written compactly: a plain string unless it is actually turned.
+    assert.equal(writeCover('low', 0), 'low', 'an untouched barrier stores as it always did');
+    assert.deepEqual(writeCover('low', 1), { id: 'low', turn: 1 });
+    assert.equal(writeCover('crates', 1), 'crates', 'and bulk cover never stores an angle');
+    assert.equal(writeCover('low', 2), 'low', 'turning it twice is not turning it');
+    assert.equal(writeCover('nonsense', 1), 'nonsense', 'an unknown type is handed back as given');
+
+    // Round trips through readMap, in both forms, and canonically: reading a
+    // map and writing it back must not change what is stored.
+    const laid = readMap({
+      cols: 8, rows: 8,
+      cover: { '1,1': 'low', '2,1': { id: 'low', turn: 1 }, '3,1': 'crates',
+        '4,1': { id: 'crates', turn: 1 }, '5,1': { id: 'low', turn: 9 }, 'x,y': 'low' }
+    });
+    assert.equal(laid.cover['1,1'], 'low');
+    assert.deepEqual(laid.cover['2,1'], { id: 'low', turn: 1 });
+    assert.equal(laid.cover['3,1'], 'crates');
+    assert.equal(laid.cover['4,1'], 'crates', 'a turned crate is stored flat');
+    assert.deepEqual(laid.cover['5,1'], { id: 'low', turn: 1 }, 'and an out-of-range turn folds');
+    assert.ok(!('x,y' in laid.cover), 'a bad key is dropped');
+    assert.deepEqual(readMap(laid).cover, laid.cover, 'reading it again changes nothing');
+
+    // Sight and Armour Points read either form: a barrier that stopped being
+    // a string must not stop being cover.
+    const sighted = readMap({
+      cols: 8, rows: 8,
+      floor: Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`${i},1`, true])),
+      cover: { '3,1': { id: 'machinery', turn: 0 }, '5,1': { id: 'low', turn: 1 } }
+    });
+    const blocked = lineBlocked(sighted, { x: 0, y: 1 }, { x: 7, y: 1 });
+    assert.ok(blocked && blocked.reason === 'cover',
+      'head-high cover stored as a record still stops the lane');
+    assert.equal(coverBetween(sighted, { x: 4, y: 1 }, { x: 6, y: 1 }).id, 'low',
+      'and a turned railing still gives its Armour Points');
+
+  }
+
+  /* ---- which prop pictures the deck needs ----
+     The point of asking is to fetch only those, so the test that matters is
+     that an empty deck asks for nothing and a dressed one asks for exactly
+     what it is wearing. */
+  {
+    assert.deepEqual(tokensNeeded(readMap({ theme: 'ice' })), [],
+      'a bare deck needs no props');
+    assert.deepEqual(tokensNeeded(null), [], 'and neither does nothing at all');
+
+    const dressed = readMap({
+      theme: 'space_hulk',
+      cols: 10, rows: 10,
+      floor: { '1,1': true, '2,1': true, '3,1': true, '4,1': true, '5,1': true },
+      doors: { '1,1': { kind: 'bulkhead', state: 'closed' }, '2,1': { kind: 'hatch', state: 'open' } },
+      cover: { '3,1': 'crates' },
+      hazards: { '4,1': 'fire', '5,1': 'radiation' },
+      obscuring: { '3,1': 'heavy' }
+    });
+    const want = tokensNeeded(dressed);
+    assert.ok(want.includes('space_hulk/door_closed'), 'the shut bulkhead');
+    assert.ok(want.includes('space_hulk/hatch'), 'the hatch');
+    assert.ok(want.includes('space_hulk/crates'), 'the crates');
+    assert.ok(want.includes('space_hulk/fire'), 'the fire');
+    assert.ok(want.includes('space_hulk/thicket'), 'the dense foliage');
+    // Radiation has no token on the sheets, so nothing is fetched for it and
+    // that square keeps the flat warning wash.
+    assert.ok(!want.some((k) => /radiation/.test(k)), 'nothing is fetched for radiation');
+    assert.equal(want.length, 5, 'and nothing else is fetched: ' + want.join(' '));
+    assert.deepEqual(want, [...want].sort(), 'sorted, so two sets compare as strings');
+
+    /* A prop standing on a painted square uses THAT ground's props — an ice
+       crate on ice, not the deck's crate sitting on snow. */
+    const mixed = readMap({
+      theme: 'space_hulk',
+      cols: 10, rows: 10,
+      floor: { '1,1': true, '2,1': true },
+      ground: { '2,1': 'ice' },
+      cover: { '1,1': 'crates', '2,1': 'crates' }
+    });
+    const both = tokensNeeded(mixed);
+    assert.ok(both.includes('space_hulk/crates') && both.includes('ice/crates'),
+      'the same cover on two grounds is two pictures: ' + both.join(' '));
+    assert.equal(both.length, 2);
+
+    // Forty crates on one ground is still one picture to fetch.
+    const many = readMap({
+      theme: 'ice', cols: 20, rows: 20,
+      cover: Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`${i % 20},${i < 20 ? 0 : 1}`, 'machinery']))
+    });
+    assert.deepEqual(tokensNeeded(many), ['ice/machinery'], 'one file, not forty');
+
+    // Junk in the stores must not become a request for "undefined/undefined".
+    const junk = readMap({
+      theme: 'ice', cols: 8, rows: 8,
+      cover: { 'x,y': 'crates', '1,1': 'nonsense' },
+      hazards: { '2,2': 'nonsense' },
+      doors: { '3,3': { kind: 'bulkhead', state: 'closed' } }
+    });
+    const fromJunk = tokensNeeded(junk);
+    assert.ok(fromJunk.every((k) => /^[a-z_0-9-]+\/[a-z_]+$/.test(k)),
+      'every key is a real ground and a real role: ' + fromJunk.join(' '));
+    assert.ok(fromJunk.includes('ice/door_closed'), 'and the good one still comes through');
+  }
+
   /* ---- it repeats with the deck it is painted on ---- */
   {
     const big = expandMap(m, 20, 20, { mirror: false });
@@ -1647,6 +1773,8 @@ console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   assert.ok(cw.floor['4,4'], '(3,5) -> the middle');
   assert.equal(cw.doors['4,4'].kind, 'hatch', 'a door goes with its square');
   assert.equal(cw.doors['4,4'].state, 'open');
+  // Bulk cover has no way round to keep, so it is still the bare string it
+  // was: turning the deck must not inflate a hold of crates into records.
   assert.equal(cw.cover['5,3'], 'crates');
   assert.equal(cw.hazards['3,6'], 'fire');
   assert.equal(cw.obscuring['4,4'], 'heavy', 'foliage turns with the deck');
@@ -1719,6 +1847,26 @@ console.log('battlemap.check.mjs: rotation passed');
   });
 
   // packed, it is a fraction of the size and comes back exactly
+  /* A turned barrier has to survive storage: cover is a run-length layer, and
+     a record per square is the one value shape the runs had never carried. */
+  {
+    const laid = readMap({
+      cols: 8, rows: 8,
+      cover: { '1,1': 'low', '2,1': { id: 'low', turn: 1 }, '3,1': 'crates' }
+    });
+    assert.deepEqual(readMap(JSON.parse(JSON.stringify(packMap(laid)))).cover, laid.cover,
+      'a barrier keeps its angle through packing');
+    // And at a size that actually packs, which is the path that matters.
+    const many = readMap({
+      cols: 40, rows: 40,
+      cover: Object.fromEntries(Array.from({ length: 200 },
+        (_, i) => [`${i % 40},${Math.floor(i / 40)}`, i % 2 ? { id: 'low', turn: 1 } : 'low']))
+    });
+    const roundTripped = readMap(JSON.parse(JSON.stringify(packMap(many))));
+    assert.deepEqual(roundTripped.cover, many.cover, '200 barriers, half of them turned');
+    assert.ok(packMap(many).cover.rle === 1, 'and that layer really was packed');
+  }
+
   const packed = packMap(m);
   assert.equal(packed.floor.rle, 1, 'a dense layer is packed');
   assert.ok(Array.isArray(packed.floor.runs));

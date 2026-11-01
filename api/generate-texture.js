@@ -14,7 +14,7 @@
 //     shrinks it client-side, as it does for a portrait.
 
 import { requireUser } from "../lib/auth.js";
-import { buildTexturePrompt } from "../lib/mapprompt.js";
+import { buildTexturePrompt, buildSpritesPrompt } from "../lib/mapprompt.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MODEL = "gemini-3.1-flash-image";
@@ -59,7 +59,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    const prompt = buildTexturePrompt(req.body || {});
+    /* Two things this endpoint makes, from the same description: the floor,
+       and the sixteen props that stand on it. One endpoint rather than two
+       because this project is on a plan that allows twelve serverless
+       functions and is using eight; the shape of the call is identical and
+       only the wrapper around the description differs. */
+    const body = req.body || {};
+    const prompt = body.kind === "sprites"
+      ? buildSpritesPrompt(body)
+      : buildTexturePrompt(body);
     const { buf, mime } = await callGeminiImage(prompt, apiKey.trim());
     res.setHeader("Content-Type", mime);
     res.setHeader("X-Prompt", encodeURIComponent(prompt.slice(0, 900)));

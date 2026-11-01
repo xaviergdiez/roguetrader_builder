@@ -205,7 +205,14 @@ export const GEAR = {
   'las-cutter': { avail: 'Average', kind: 'Melee', stats: '1d10+5 E · Pen 4 · Unwieldy', desc: 'A heavy industrial cutting tool, slow but capable of parting armour plate — and, in a pinch, an improvised weapon.' },
   'magnoculars': { avail: 'Average', desc: 'High-powered optics with range-finding readouts, good for scouting a target at distance.' },
   'photo-visor': { avail: 'Scarce', desc: 'Advanced low-light opticals that erase the penalties of fighting in darkness.' },
-  'stimm': { avail: 'Rare', desc: 'A combat stimulant. Masks Fatigue, Stun and injury for a short, violent while — with a debt of Fatigue due when it wears off.' }
+  'stimm': { avail: 'Rare', desc: 'A combat stimulant. Masks Fatigue, Stun and injury for a short, violent while — with a debt of Fatigue due when it wears off.' },
+
+  /* ---- issued kit that had no entry, so it showed as a bare name ----
+     No stats are invented for these. Where the book gives a number the GM
+     sets it at the table, and the description says so. */
+  'fine mesh robes': { avail: 'Scarce', desc: 'Robes of fine woven mesh, worn for display first. Whether they turn a blade is for the GM to say; they carry no Armour Points here.' },
+  'power blade': { avail: 'Near Unique', kind: 'Melee', desc: 'A Drukhari blade sheathed in a disruption field, the same principle as a power sword, cut to a crueller edge. Its profile is the GM\u2019s to set.' },
+  'shamanic gubbinz and trophies': { avail: 'Average', desc: 'The bones, feathers and fetishes a Kroot shaper carries, each one a reminder of something eaten. Dress and ritual, not a weapon.' }
 };
 
 export const QUALITY_RE = /^(poor|common|good|best)\s+/i;
@@ -213,11 +220,19 @@ export const QUALITY_RE = /^(poor|common|good|best)\s+/i;
 /* "Best laspistol or good hand cannon; micro-bead, void suit." ->
    [['Best laspistol','good hand cannon'], ['micro-bead'], ['void suit']] */
 export function parseGear(str) {
-  return String(str)
+  /* A bracket can hold commas, a semicolon or a full stop of its own: "Heavy
+     Leather Armour (AP 3 body, legs)". Split on those and the armour became
+     "Heavy Leather Armour (AP 3 body" and "legs)", neither of which is in the
+     catalogue, so the piece lost its description and its AP. They are hidden
+     inside brackets while the string is cut up and put back after. */
+  const hidden = String(str).replace(/\([^)]*\)/g, (m) => m
+    .replace(/,/g, '\u0001').replace(/;/g, '\u0002').replace(/\.(\s)/g, '\u0003$1'));
+  const shown = (s) => s.replace(/\u0001/g, ',').replace(/\u0002/g, ';').replace(/\u0003/g, '.');
+  return hidden
     .replace(/\.\s*$/, '')
     .split(/[;.]\s+/)
     .flatMap((chunk) => chunk.split(/,\s*/))
-    .map((s) => s.trim())
+    .map((s) => shown(s).trim())
     .filter(Boolean)
     .map((s) => s.split(/\s+or\s+/i).map((x) => x.trim()).filter(Boolean));
 }
@@ -246,7 +261,9 @@ export function gearInfo(label) {
     .replace(/^(?:a|an)\s+/, '')
     .replace(/^two sets of\s+/, '')
     .replace(/^two\s+/, '')
-    .replace(/^begins play owning one\s+/, '');
+    .replace(/^begins play owning one\s+/, '')
+    .replace(/^\d+d\d+\s+/, '')       // "1d5 stikkbombs"
+    .replace(/^\d+\s+/, '');           // "3 frag grenades"
   const quality = (counted.match(QUALITY_RE) || [])[1];
   let base = counted
     .replace(QUALITY_RE, '')

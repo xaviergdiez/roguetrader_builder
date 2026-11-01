@@ -3,18 +3,24 @@ import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
 import BattleMap from './BattleMap.jsx';
 import VoidPanel from './VoidPanel.jsx';
 import VoidMap from './VoidMap.jsx';
+import MapLibrary from './MapLibrary.jsx';
 import { shrinkToDataUrl } from './imageshrink.js';
 import {
   readLocal as readLocalGrounds, writeLocal as writeLocalGrounds,
-  cloudList as groundsList, cloudGet as groundGet, cloudPut as groundPut,
+  cloudList as groundsList, cloudGet as groundGet, cloudPut as groundPut, cloudDelete as groundDelete,
   takeLegacy as takeLegacyGrounds
 } from './grounds.js';
+import {
+  makeBundle, bundleText, bundleFileName, groundsForDecks, uniqueName as uniqueMapName
+} from './mapbundle.js';
 import {
   readLocal as readLocalDecks, writeLocal as writeLocalDecks,
   cloudList as decksList, cloudGet as deckGet, cloudPut as deckPut, cloudDelete as deckDelete,
   takeLegacy as takeLegacyDecks, deckSize
 } from './decks.js';
+import { movedIds, markMoved, toMove, describeMove } from './localmove.js';
 import MapWindow from './MapWindow.jsx';
+import CodexDialog from './CodexDialog.jsx';
 import {
   readMap as readBattleMap, newBattleMap, publishMap,
   readCustomTheme, readSavedMap, packCombat, combatSansMap
@@ -1636,6 +1642,51 @@ const CSS = `
 /* The GM dashboard carries rt-ship as well, and the two selectors tie on
    specificity, so this has to come after it to win. */
 .rt-framer.rt-gm{width:min(1120px,94vw);}
+
+/* ---- the Lore tab: rules for the whole table ---- */
+.rt-headbtn.lore{border-color:var(--gold);color:var(--gold-lit);}
+.rt-lorebtn{margin-left:auto;}
+.rt-lorebtn + .rt-close{margin-left:0;}
+.rt-framer.rt-cx{width:min(820px,94vw);}
+.rt-cx .rt-cx-search{margin:2px 0 10px;}
+.rt-cx-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px;}
+.rt-cx-chip{cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+  padding:6px 10px;border:1px solid var(--brass-dim);border-radius:3px;
+  background:transparent;color:var(--dim);}
+.rt-cx-chip:hover{border-color:var(--brass);color:var(--text);}
+.rt-cx-chip.on{border-color:var(--gold);color:var(--gold-lit);}
+.rt-cx-chip i{font-style:normal;opacity:.6;margin-left:6px;}
+.rt-cx-home{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px;margin-bottom:12px;}
+.rt-cx-card{text-align:left;cursor:pointer;padding:11px 12px;border:1px solid var(--brass-dim);
+  border-radius:3px;background:rgba(255,255,255,.02);color:var(--text);}
+.rt-cx-card:hover{border-color:var(--brass);}
+.rt-cx-card b{display:block;font-family:var(--display);font-size:15px;font-weight:600;
+  color:var(--gold-lit);margin-bottom:3px;}
+.rt-cx-card span{display:block;font-size:13px;line-height:1.45;color:var(--dim);margin-bottom:6px;}
+.rt-cx-card em{font-style:normal;font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--brass);}
+.rt-cx-count{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--brass);margin:0 0 8px;}
+.rt-cx-list{display:grid;gap:8px;margin-bottom:12px;}
+.rt-cx-e{padding:10px 12px;border:1px solid var(--brass-dim);border-radius:3px;
+  background:rgba(255,255,255,.015);}
+.rt-cx-e > summary,.rt-cx-sum{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;}
+.rt-cx-e > summary{cursor:pointer;list-style:none;}
+.rt-cx-e > summary::-webkit-details-marker{display:none;}
+.rt-cx-e > summary::before{content:"▸";color:var(--brass);font-size:11px;}
+.rt-cx-e[open] > summary::before{content:"▾";}
+.rt-cx-t{font-family:var(--display);font-size:15px;font-weight:600;color:var(--gold-lit);}
+.rt-cx-tag{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--brass);}
+.rt-cx-b{margin:5px 0 0;font-size:14.5px;line-height:1.55;}
+.rt-cx-rows{display:grid;grid-template-columns:minmax(90px,max-content) 1fr;gap:4px 14px;
+  margin:8px 0 0;font-size:14px;line-height:1.5;}
+.rt-cx-rows dt{font-family:var(--mono);font-size:12px;color:var(--brass);padding-top:1px;}
+.rt-cx-rows dd{margin:0;}
+.rt-cx-note{margin:4px 0 0;}
+@media (max-width:560px){
+  .rt-cx-rows{grid-template-columns:1fr;gap:0;}
+  .rt-cx-rows dt{margin-top:6px;}
+  .rt-cx-home{grid-template-columns:1fr;}
+}
 .rt-shiprow{display:flex;gap:10px;align-items:flex-end;margin-bottom:12px;}
 /* A trailing action button sizes to its own label, so stacked rows ended at
    different x — "New" is 67px and "Delete" 90px, which staggered the field
@@ -2150,6 +2201,72 @@ const CSS = `
 
 /* The grounds a procedural terrain may use. */
 .rt-bm-palette{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px;}
+/* ---- the Play tab ---- */
+.rt-bm-tabs{padding-right:10px;}
+.rt-bm-tab{min-width:64px;}
+.rt-bm-play{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:12px;margin:2px 0 8px;
+  padding:8px 10px;background:var(--panel);border:1px solid var(--brass-dim);}
+.rt-bm-playcol{min-width:0;}
+.rt-bm-playh{font-family:var(--display);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--brass-lit);margin-bottom:4px;}
+.rt-bm-playh span{font-family:var(--mono);color:var(--dim);margin-left:4px;letter-spacing:0;}
+.rt-bm-doors,.rt-bm-rooms{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;
+  max-height:168px;overflow-y:auto;}
+.rt-bm-door{display:flex;align-items:center;gap:4px;}
+.rt-bm-door.away .rt-bm-find{color:var(--dim);}
+.rt-bm-find{flex:1 1 auto;min-width:0;text-align:left;padding:3px 7px;font:inherit;font-size:12px;cursor:pointer;
+  background:var(--well);color:var(--text);border:1px solid var(--brass-dim);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;}
+.rt-bm-find:hover{border-color:var(--brass-lit);}
+.rt-bm-joins{font-family:var(--mono);font-size:10.5px;color:var(--dim);min-width:34px;text-align:center;}
+.rt-bm-st{padding:3px 7px;font:inherit;font-size:11.5px;cursor:pointer;text-transform:capitalize;
+  background:var(--well);color:var(--dim);border:1px solid var(--brass-dim);}
+.rt-bm-st:hover{border-color:var(--brass-lit);color:var(--text);}
+.rt-bm-st.closed.on{background:#5a2420;color:#ffd9d4;border-color:#e74c3c;}
+.rt-bm-st.open.on{background:#1d4a2e;color:#d4ffe3;border-color:#2ecc71;}
+.rt-bm-st.jammed.on{background:#5a3d14;color:#ffe9c4;border-color:#f39c12;}
+.rt-bm-rooms li{display:flex;align-items:stretch;gap:4px;}
+.rt-bm-rooms .rt-bm-find{flex:0 0 auto;}
+.rt-bm-room{flex:1 1 auto;display:flex;justify-content:space-between;gap:8px;text-align:left;padding:3px 7px;
+  font:inherit;font-size:12px;cursor:pointer;background:var(--well);color:var(--text);
+  border:1px solid var(--brass-dim);}
+.rt-bm-room em{font-style:normal;font-size:10.5px;color:var(--dim);}
+.rt-bm-room.lit{border-color:var(--brass-lit);background:var(--panel-lit);}
+.rt-bm-room.part{border-style:dashed;}
+.rt-bm-flag{width:28px;height:auto;flex:0 0 28px;}
+.rt-bm-flag.on{color:#f3c96e;border-color:#f3c96e;}
+@media (max-width:760px){.rt-bm-play{grid-template-columns:1fr;}}
+/* ---- the map library ---- */
+.rt-ml{display:flex;flex-direction:column;gap:8px;}
+.rt-ml-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.rt-ml-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-right:auto;}
+.rt-ml .rt-ml-filter{width:180px;flex:0 0 180px;padding:6px 9px;font-size:14px;}
+.rt-ml .rt-ml-bar .rt-field{width:230px;flex:0 1 230px;padding:6px 9px;font-size:14px;}
+.rt-ml-bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.rt-ml-ask{padding:8px 10px;background:var(--panel-lit);border:1px solid var(--gold);font-size:13px;
+  display:flex;flex-direction:column;gap:8px;}
+.rt-ml-askrow{display:flex;flex-wrap:wrap;gap:6px;}
+.rt-ml-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));
+  gap:8px;max-height:460px;overflow-y:auto;}
+.rt-ml-row{display:flex;gap:10px;padding:8px;background:var(--well);border:1px solid var(--brass-dim);min-width:0;}
+.rt-ml-row.on{border-color:var(--gold);background:var(--panel-lit);}
+.rt-ml-thumb,.rt-ml-swatch{flex:0 0 104px;width:104px;height:64px;border:1px solid var(--brass-dim);background:#080c0a;
+  background-size:cover;background-position:center;}
+.rt-ml-thumb.empty{display:flex;align-items:center;justify-content:center;font-family:var(--mono);
+  font-size:11px;color:var(--dim);}
+.rt-ml-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:3px;}
+.rt-ml-name{width:100%;padding:2px 4px;font:inherit;font-size:14px;color:var(--bone);background:transparent;
+  border:1px solid transparent;}
+.rt-ml-name:hover{border-color:var(--brass-dim);}
+.rt-ml-name:focus{border-color:var(--gold);background:var(--ink);outline:none;}
+.rt-ml-name.static{padding:2px 4px;}
+.rt-ml-meta{font-family:var(--mono);font-size:10.5px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;padding:0 4px;}
+.rt-ml-acts{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px;}
+.rt-ml-acts .rt-btn{padding:3px 9px;font-size:12px;}
+.rt-ml-plan{padding:10px 12px;background:var(--panel);border:1px solid var(--brass);display:flex;
+  flex-direction:column;gap:6px;font-size:13px;}
+.rt-ml-plist{margin:0;padding-left:18px;font-size:12px;color:var(--text);}
 .rt-bm-chip{display:inline-flex;align-items:center;gap:6px;padding:3px 8px 3px 6px;
   border:1px solid var(--brass-dim);font-size:12px;cursor:pointer;background:var(--well);}
 .rt-bm-chip.on{border-color:var(--brass-lit);background:var(--panel-lit);}
@@ -3056,12 +3173,39 @@ export default function RogueTraderBuilder({ me, cloud }) {
      during a session, and until now its save button was simply dead. */
   const [grounds, setGrounds] = useState([]);
   const [groundErr, setGroundErr] = useState('');
+  /* What a signed-in browser carried up from its own storage, said once. The
+     decks and the grounds are moved by separate effects, so the tally is kept
+     here and the sentence rebuilt from it each time one of them adds to it. */
+  const [moveNote, setMoveNote] = useState('');
+  const moveTally = useRef({ decks: 0, grounds: 0, left: 0 });
+  const owner = me ? (me.uid || me.email || '') : '';
+  const tallyMove = (add) => {
+    const t = moveTally.current;
+    for (const k of Object.keys(add)) t[k] += add[k];
+    setMoveNote(describeMove(t));
+  };
 
   useEffect(() => {
     let live = true;
     (async () => {
       try {
-        const list = cloud ? await groundsList() : readLocalGrounds();
+        let list = cloud ? await groundsList() : readLocalGrounds();
+        /* Floors uploaded or generated while signed out are in this browser
+           only. Send up the ones the account lacks, so they are on the other
+           device too; a floor that will not go (over the account's size
+           limit) stays here and is counted, not dropped. */
+        if (cloud && owner) {
+          const mine = toMove(readLocalGrounds(), list, movedIds('grounds', owner), (g) => Boolean(g.texture));
+          if (mine.length) {
+            const sent = [];
+            for (const g of mine) {
+              try { await groundPut(g); sent.push(g.id); } catch { /* counted below */ }
+            }
+            markMoved('grounds', owner, sent);
+            if (sent.length) list = await groundsList();
+            if (live) tallyMove({ grounds: sent.length, left: mine.length - sent.length });
+          }
+        }
         if (live) setGrounds(list);
       } catch (e) {
         if (live) { setGrounds(readLocalGrounds()); setGroundErr(e.message); }
@@ -3158,7 +3302,20 @@ export default function RogueTraderBuilder({ me, cloud }) {
     let live = true;
     (async () => {
       try {
-        const list = cloud ? await decksList() : readLocalDecks().map(readSavedMap);
+        let list = cloud ? await decksList() : readLocalDecks().map(readSavedMap);
+        // The same for decks drawn while signed out: see the grounds above.
+        if (cloud && owner) {
+          const mine = toMove(readLocalDecks().map(readSavedMap), list, movedIds('decks', owner), (d) => Boolean(d.map));
+          if (mine.length) {
+            const sent = [];
+            for (const d of mine) {
+              try { await deckPut({ id: d.id, name: d.name, map: d.map }); sent.push(d.id); } catch { /* counted below */ }
+            }
+            markMoved('decks', owner, sent);
+            if (sent.length) list = await decksList();
+            if (live) tallyMove({ decks: sent.length, left: mine.length - sent.length });
+          }
+        }
         if (live) { setDecks(list); setDecksLoaded(true); }
       } catch (e) {
         if (live) { setDecks(readLocalDecks().map(readSavedMap)); setDeckErr(e.message); setDecksLoaded(true); }
@@ -3444,6 +3601,113 @@ export default function RogueTraderBuilder({ me, cloud }) {
      is often the only thing open during a session, so the library it can add
      to has to be one it can also tidy. The caller has already asked. */
   const deleteSavedDeck = (deck) => deleteDeck(deck.id);
+
+  /* ---- the map library, for the panel that shows it everywhere ----
+     Decks and environments in one object, handed to the dashboard's Battle map
+     tab and to the map's own window alike, so neither can know something the
+     other does not and a change made in one is there in the other. Everything
+     here goes through the functions above; nothing new is stored. */
+  const fullGround = async (id) => {
+    const g = grounds.find((x) => x.id === id);
+    if (!g) return null;
+    if (g.texture || !cloud) return g.texture ? g : null;
+    try { return await groundGet(id); } catch (e) { setGroundErr(e.message); return null; }
+  };
+  const mapLib = {
+    decks: decksForMap,
+    grounds,
+    currentDeckId: deckId,
+    view: mapView,
+    liveOccupied: Boolean(liveMapRaw) && Object.keys(liveMap.floor || {}).length > 0,
+    error: deckErr || groundErr,
+    // To draw on: the deck is opened on the Build tab's side of the map.
+    open: async (id) => {
+      const full = await openDeck(id);
+      if (full) setMapView('design');
+      return Boolean(full);
+    },
+    // To run: the deck is published onto the table's map and the view follows.
+    play: async (id) => {
+      const full = await fetchDeck(id);
+      if (!full) return false;
+      setCombat((c) => ({
+        ...c,
+        ground: { ...((c && c.ground) || {}), npcs: (c && c.ground && c.ground.npcs) || [], map: publishMap(full) }
+      }));
+      setMapView('live');
+      return true;
+    },
+    create: () => { const made = createDeck(); setMapView('design'); return made; },
+    rename: renameDeck,
+    remove: deleteDeck,
+    saveHere: saveLiveDeck,
+    needDeck: fetchDeck,
+    needTexture: loadGroundTexture,
+    duplicate: async (id) => {
+      const full = await fetchDeck(id);
+      if (!full) return null;
+      const made = readSavedMap({ name: uniqueMapName(`${full.name || 'Untitled deck'} copy`, decks.map((d) => d.name)), map: full.map });
+      setDecks((prev) => [...prev, { ...made, dirty: true }]);
+      return made;
+    },
+    // A file of decks (or all of them) with the environments they are drawn on.
+    // Maps and floors a signed-in library keeps only an index of are fetched
+    // first, one at a time.
+    exportDecks: async (ids) => {
+      const want = ids === 'all' ? decks.map((d) => d.id) : ids;
+      const full = [];
+      for (const id of want) {
+        const d = await fetchDeck(id);
+        if (d) full.push(d);
+      }
+      const wantGrounds = ids === 'all' ? grounds : groundsForDecks(full, grounds);
+      const gs = [];
+      for (const g of wantGrounds) {
+        const f = await fullGround(g.id);
+        if (f) gs.push(f);
+      }
+      const name = ids === 'all' ? 'library' : (full[0] && full[0].name) || 'deck';
+      const bundle = makeBundle({ decks: full, grounds: gs, name });
+      return { text: bundleText(bundle), filename: bundleFileName(name), decks: bundle.decks.length, grounds: bundle.grounds.length };
+    },
+    exportGrounds: async (ids) => {
+      const gs = [];
+      for (const id of ids) {
+        const f = await fullGround(id);
+        if (f) gs.push(f);
+      }
+      const bundle = makeBundle({ grounds: gs, name: (gs[0] && gs[0].name) || 'environment' });
+      return { text: bundleText(bundle), filename: bundleFileName((gs[0] && gs[0].name) || 'environment'), decks: 0, grounds: bundle.grounds.length };
+    },
+    // What an import adds: the environments it lacks (each into the ground
+    // store, as a generated one is), then the decks, marked unsaved so the
+    // normal save writes them.
+    importPlan: async (plan) => {
+      let kept = 0;
+      const failed = [];
+      for (const g of plan.grounds) {
+        const saved = await saveGroundToLibrary(g);
+        if (saved) kept++; else failed.push(g.name);
+      }
+      if (plan.decks.length) setDecks((prev) => [...prev, ...plan.decks.map((d) => ({ ...d, dirty: true }))]);
+      return { decks: plan.decks.length, grounds: kept, failed };
+    },
+    renameGround: async (id, name) => {
+      const g = await fullGround(id);
+      if (!g) return false;
+      return Boolean(await saveGroundToLibrary({ ...g, name }));
+    },
+    removeGround: async (id) => {
+      try {
+        if (cloud) await groundDelete(id);
+        else if (!writeLocalGrounds(readLocalGrounds().filter((g) => g.id !== id))) {
+          throw new Error('Could not delete \u2014 browser storage would not take the change.');
+        }
+      } catch (e) { setGroundErr(e.message); return false; }
+      setGrounds((prev) => prev.filter((g) => g.id !== id));
+      return true;
+    }
+  };
   // (deleteDeck sends the selection back to no deck when it is the one being
   // designed, so the editor is never left pointed at a deck that is gone. The
   // drawing on screen is untouched either way. It says whether it worked.)
@@ -3461,6 +3725,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // no id of its own. Held until the GM says which they meant.
   const [clash, setClash] = useState(null);
   const [rosterOpen, setRosterOpen] = useState(false);
+  // The rules reference, open from the header and from inside the bridge and
+  // the GM dashboard, so a player or a GM never has to close one to read it.
+  const [loreOpen, setLoreOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);   // the phone header panel
   const [psyOpen, setPsyOpen] = useState(false);
@@ -4061,6 +4328,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
           <div id="rt-headnav" className={'rt-head-btns' + (menuOpen ? ' open' : '')}
             onClick={() => setMenuOpen(false)}>
             <button className="rt-headbtn" onClick={() => setRosterOpen(true)}>ROSTER</button>
+            <button className="rt-headbtn lore" onClick={() => setLoreOpen(true)}
+              title="Lore and rules: actions, conditions, critical damage, fear, psychic powers and the ship turn">LORE</button>
             <button className="rt-headbtn ship" onClick={() => setShipOpen(true)}
               title="Voidship blueprint: hull, components, and your station">SHIP</button>
             {/* The door they signed in through, reported by /api/auth/me.
@@ -4262,8 +4531,11 @@ export default function RogueTraderBuilder({ me, cloud }) {
         />
       )}
 
+      {loreOpen && <CodexDialog onClose={() => setLoreOpen(false)} />}
+
       {bridgeOpen && (
         <BridgePanel
+          onLore={() => setLoreOpen(true)}
           code={bridgeCode} setCode={setBridgeCode}
           characterName={name} charId={charId} shipRole={shipRole}
           blueprint={blueprint} fleet={fleet} combat={combat} roster={roster}
@@ -4288,6 +4560,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
       {gmOpen && (
         <GmPanel
+          onLore={() => setLoreOpen(true)}
           fleet={fleet} setFleet={setFleet}
           combat={combat} setCombat={setCombat}
           blueprint={blueprint} bridgeCode={bridgeCode}
@@ -4296,9 +4569,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
           mapErr={mapErr} setMapErr={setMapErr}
           voidRoster={voidRoster} voidWindow={voidWindow} setVoidWindow={setVoidWindow}
           voidWindowErr={voidWindowErr} setVoidWindowErr={setVoidWindowErr}
-          voidShot={voidShot} setVoidShot={setVoidShot} gun={gun} voidLib={voidLib}
+          voidShot={voidShot} setVoidShot={setVoidShot} gun={gun} voidLib={voidLib} mapLib={mapLib}
           grounds={grounds} onSaveGround={saveGroundToLibrary}
-          onNeedGroundTexture={loadGroundTexture} groundErr={groundErr}
+          onNeedGroundTexture={loadGroundTexture} groundErr={groundErr} moveNote={moveNote}
           decks={decksForMap} deckErr={deckErr} deckId={deckId} openDeck={openDeck}
           createDeck={createDeck} renameDeck={renameDeck} deleteDeck={deleteDeck}
           mapView={mapView} setMapView={setMapView}
@@ -4335,6 +4608,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               customThemes={grounds}
               onSaveTheme={saveGroundToLibrary}
               onNeedTexture={loadGroundTexture}
+              library={mapLib}
               /* And a way to keep the work. This window is often the only one
                  open during a session, and until now everything built in it
                  lived on the live map with no road into the library. */
@@ -7045,7 +7319,7 @@ const QUICK_LINES = [
    from a station goes through the same patch call, which the server checks
    against the station's fields. */
 
-function BridgePanel({ code, setCode, characterName, charId, shipRole,
+function BridgePanel({ onLore, code, setCode, characterName, charId, shipRole,
   blueprint, fleet, combat, roster, card, characteristics, charWounds,
   insanity = 0, corruption = 0, onInsanity, onCorruption,
   onDynastyPf, onClose }) {
@@ -7536,6 +7810,8 @@ function BridgePanel({ code, setCode, characterName, charId, shipRole,
       aria-label="The bridge">
       <div className="rt-framer-h">
         <span className="rt-framer-t">The bridge</span>
+        {onLore && <button type="button" className="rt-opt rt-lorebtn" onClick={onLore}
+          title="The rules, without leaving the bridge">Rules</button>}
         <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
       </div>
 
@@ -8877,11 +9153,11 @@ const gunSurface = (g) => ({
   log: g.log.slice(0, 6)
 });
 
-function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
+function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
   voidRoster = [], voidWindow = false, setVoidWindow = () => {},
-  voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {}, gun, voidLib = null,
-  grounds, onSaveGround, onNeedGroundTexture, groundErr,
+  voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {}, gun, voidLib = null, mapLib = null,
+  grounds, onSaveGround, onNeedGroundTexture, groundErr, moveNote,
   decks, deckErr, deckId, openDeck, createDeck, renameDeck, deleteDeck,
   mapView, setMapView, activeMap, setActiveMap, activeMapKey, onClose }) {
   const dialogRef = useRef(null);
@@ -8900,6 +9176,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     attacker, attackerP, targetShip, targetP, weapon, chartShot, hit, canShoot, chartBlocks,
     fire, volley, critOn, rollCritical
   } = gun;
+  // Whether the map library is unfolded on the Battle map tab.
+  const [mapLibOpen, setMapLibOpen] = useState(false);
   const [eventId, setEventId] = useState('macro_strike');
   const [eventAmount, setEventAmount] = useState(5);
   const [gmTab, setGmTab] = useState('fleet');
@@ -9153,6 +9431,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
       aria-label="GM dashboard">
       <div className="rt-framer-h">
         <span className="rt-framer-t">GM dashboard</span>
+        {onLore && <button type="button" className="rt-opt rt-lorebtn" onClick={onLore}
+          title="The rules, without closing the dashboard">Rules</button>}
         <button className="rt-close" onClick={close} aria-label="Close">&times;</button>
       </div>
 
@@ -9894,6 +10174,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
         {mapErr ? <p className="rt-warn">{mapErr}</p> : null}
         {groundErr ? <p className="rt-warn">{groundErr}</p> : null}
         {deckErr ? <p className="rt-warn">{deckErr}</p> : null}
+        {moveNote ? <p className="rt-bm-hint" role="status">{moveNote}</p> : null}
 
         {/* A deck is built between sessions and played later, so the library
             and the live map are two different things: designing is done with
@@ -9906,6 +10187,11 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           <button type="button"
             className={'rt-btn rt-bm-mode' + (mapView === 'live' ? ' on' : '')}
             onClick={() => setMapView('live')}>In play</button>
+          {mapLib && (
+            <button type="button" className={'rt-btn rt-bm-mode' + (mapLibOpen ? ' on' : '')}
+              title="Every saved deck and environment: open, play, rename, copy, delete, save as a file, import"
+              onClick={() => setMapLibOpen((v) => !v)}>Library ({decks.length + grounds.length})</button>
+          )}
           {mapView === 'design' ? (<>
             <select className="rt-sel" value={deckId || ''}
               onChange={(e) => openDeck(e.target.value || null)}>
@@ -9925,6 +10211,11 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
                 setBattleMap(publishMap(deck));
                 setMapView('live');
               }}>Publish for play</button>
+              {deck.map && !deck.map.start && (
+                <span className="rt-bm-hint" title="Choose one with the flag tool, in the map's toolbar">
+                  No starting room chosen: it will open dark.
+                </span>
+              )}
               {/* Asks first: this is a whole deck's drawing, there is no undo
                   for the library, and the button sits one square away from
                   Publish for play. */}
@@ -9939,17 +10230,27 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           </>) : (
             <span className="rt-bm-hint">
               {battleMap.fog
-                ? 'Fog is on. Reveal as the party advances, and sweep with an auspex to ping contacts.'
+                ? 'Fog is on. Click a door to open it and light what it joins, reveal a room by hand with the fog tool, and sweep with an auspex to ping contacts.'
                 : 'No deck published yet \u2014 publish one from Design, or build here directly.'}
             </span>
           )}
         </div>
 
+        {mapLib && (mapLibOpen || (mapView === 'design' && !deck)) && (
+          <div className="rt-bm-gen">
+            <MapLibrary lib={mapLib} liveMap={activeMap}
+              onUseGround={(id) => setActiveMap({ ...activeMap, theme: id, customTexture: null })}
+              onClose={mapLibOpen ? () => setMapLibOpen(false) : null} />
+          </div>
+        )}
+
         {mapView === 'design' && !deck ? (
-          <p className="rt-bm-hint">
-            Pick a deck to work on, or start a new one. Decks live in your own library
-            and nothing in them reaches the table until you publish.
-          </p>
+          !mapLib && (
+            <p className="rt-bm-hint">
+              Pick a deck to work on, or start a new one. Decks live in your own library
+              and nothing in them reaches the table until you publish.
+            </p>
+          )
         ) : mapWindow ? (
           <p className="rt-bm-hint">
             The map is running in a second window so the dashboard and bridge data stay
@@ -9966,6 +10267,7 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
             customThemes={grounds}
             onSaveTheme={onSaveGround}
             onNeedTexture={onNeedGroundTexture}
+            library={mapLib}
           />
         )}
       </>)}

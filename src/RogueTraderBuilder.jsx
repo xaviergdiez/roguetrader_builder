@@ -21,6 +21,7 @@ import {
 import { movedIds, markMoved, toMove, describeMove } from './localmove.js';
 import MapWindow from './MapWindow.jsx';
 import CodexDialog from './CodexDialog.jsx';
+import { armourSummary, parseArmour, soakAt } from './armour.js';
 import {
   readMap as readBattleMap, newBattleMap, publishMap,
   readCustomTheme, readSavedMap, packCombat, combatSansMap
@@ -2725,6 +2726,29 @@ const CSS = `
 .rt-gear{padding-left:0;list-style:none;}
 .rt-gear-g{margin-bottom:2px;}
 .rt-gear-alts{list-style:none;margin:0;padding:0;}
+/* ---- armour points ---- */
+.rt-ap{padding-bottom:8px;}
+.rt-ap .rt-der-k.top{margin-bottom:6px;}
+.rt-ap .rt-move-i .rt-der-v{font-size:20px;}
+.rt-ap .rt-move-i.bare .rt-der-v{opacity:.35;}
+/* A dark card on the parchment, like the Throne ledger beside it: the gold and
+   brass of the numbers are for a dark ground and vanish on paper. */
+.rt-armour{margin:0 0 14px;padding:11px 12px;border:1px solid var(--brass-dim);
+  border-left:2px solid var(--gold);background:rgba(16,12,4,.82);color:var(--text);}
+.rt-armour-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px;}
+.rt-armour-t{font-family:var(--display);font-size:15px;font-weight:600;color:var(--gold-lit);}
+.rt-armour-big{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--brass);text-transform:uppercase;}
+.rt-armour-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:8px;}
+.rt-armour-c{text-align:center;padding:7px 2px;border:1px solid var(--brass-dim);border-radius:3px;}
+.rt-armour-c b{display:block;font-family:var(--display);font-size:22px;line-height:1.1;color:var(--gold-lit);}
+.rt-armour-c.bare b{opacity:.35;}
+.rt-armour-c span{display:block;font-family:var(--mono);font-size:9px;letter-spacing:.08em;color:var(--brass-lit);}
+.rt-armour-c em{display:block;font-style:normal;font-size:10.5px;color:var(--dim);margin-top:2px;}
+.rt-armour-l{list-style:none;margin:0;padding:0;font-size:13.5px;line-height:1.55;color:var(--text);}
+.rt-armour-l li{display:flex;gap:8px;flex-wrap:wrap;}
+.rt-armour-l .spare{color:var(--dim);}
+.rt-armour-n{margin:6px 0 0;font-size:12.5px;line-height:1.5;color:var(--dim);}
+@media (max-width:560px){ .rt-armour-grid{grid-template-columns:repeat(3,1fr);} }
 .rt-gear-s{font-family:var(--mono);font-size:11px;line-height:1.5;
   color:#4a3f28;letter-spacing:.02em;}
 .rt-sect{position:relative;padding:15px 16px;margin-bottom:10px;break-inside:avoid;
@@ -4706,20 +4730,33 @@ function GearItem({ label, onRemove }) {
   const { entry, quality } = gearInfo(label);
   const title = label.charAt(0).toUpperCase() + label.slice(1);
 
+  /* An item the catalogue does not know still opens, the same as every other
+     row, and says so: a bare name with no way to open it looked like a
+     broken row beside the ones that had a description. */
   if (!entry) {
     return (
-      <li className="rt-entry">
-        <span className="rt-entry-t">{title}</span>
+      <li className={'rt-entry' + (open ? ' open' : '')}>
+        <button className="rt-entry-b" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+          <span className="rt-entry-t">{title}</span>
+          <span className="rt-entry-c">Unlisted</span>
+          <span className="rt-entry-x" aria-hidden="true">{open ? '−' : '+'}</span>
+        </button>
         {onRemove && <RemoveBtn label={title} onRemove={onRemove} />}
+        {open && (
+          <div className="rt-entry-d">
+            <p>Not in the gear catalogue, so there is no description or profile for it here. Agree what it does with your GM.</p>
+          </div>
+        )}
       </li>
     );
   }
+  const armourAp = entry.kind === 'Armour' || entry.kind === 'Power Armour' ? parseArmour(entry.stats) : null;
 
   return (
     <li className={'rt-entry' + (open ? ' open' : '')}>
       <button className="rt-entry-b" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <span className="rt-entry-t">{title}</span>
-        {entry.kind && <span className="rt-entry-c">{entry.kind}</span>}
+        {entry.kind && <span className="rt-entry-c">{entry.kind}{armourAp ? ` \u00b7 AP ${armourAp.ap}` : ''}</span>}
         <span className="rt-entry-x" aria-hidden="true">{open ? '−' : '+'}</span>
       </button>
       {onRemove && <RemoveBtn label={title} onRemove={onRemove} />}
@@ -4735,6 +4772,54 @@ function GearItem({ label, onRemove }) {
         </div>
       )}
     </li>
+  );
+}
+
+/* What the character's armour adds up to, location by location, and what a hit
+   has to get through (that, plus Toughness Bonus). Worked out from the gear
+   list as it stands, so dropping a piece or adding one changes it. */
+function ArmourPanel({ armour, tBonus }) {
+  const names = Object.fromEntries(armour.slots.map((s) => [s.id, s.name]));
+  const spare = armour.pieces.filter((p) => !p.counted);
+  return (
+    <div className="rt-armour">
+      <div className="rt-armour-h">
+        <span className="rt-armour-t">Armour</span>
+        <span className="rt-armour-big">
+          {armour.any ? `Body ${armour.bodyAp} AP` : 'None worn'}
+          {tBonus != null ? ` \u00b7 Toughness Bonus ${tBonus} adds to every location` : ''}
+        </span>
+      </div>
+      <div className="rt-armour-grid">
+        {armour.slots.map((s) => (
+          <div key={s.id} className={'rt-armour-c' + (s.ap ? '' : ' bare')} title={s.from.length ? s.from.join(' + ') : 'Nothing covers this location'}>
+            <b>{s.ap}</b>
+            <span>{s.short}</span>
+            {tBonus != null && s.ap ? <em>soak {soakAt(s, tBonus)}</em> : null}
+          </div>
+        ))}
+      </div>
+      {armour.pieces.length > 0 ? (
+        <ul className="rt-armour-l">
+          {armour.pieces.map((p) => (
+            <li key={p.label} className={p.counted ? '' : 'spare'}>
+              <b>{p.label.charAt(0).toUpperCase() + p.label.slice(1)}</b>
+              <span>AP {p.ap}{p.stacks ? ' on top of what is worn' : ''} {'\u00b7'} {p.covers.length === 6 ? 'all locations' : p.covers.map((c) => names[c].toLowerCase()).join(', ')}</span>
+              {!p.counted && <span>{'\u2014'} spare: a better piece covers it</span>}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="rt-armour-n">No armour on the sheet. Armour from the career, from Add, or from Augmetics shows here.</p>
+      )}
+      {spare.length > 0 && (
+        <p className="rt-armour-n">
+          Worn armour does not stack: the best piece counts at each location. Where the gear below offers a
+          choice, drop the one you did not take. If your table lets layers add, add the spare by hand.
+        </p>
+      )}
+      {armour.notes.map((n) => <p key={n} className="rt-armour-n">{n}</p>)}
+    </div>
   );
 }
 
@@ -6586,6 +6671,11 @@ function PrintSheet({ name, career, picked, totals, mods, ws, fate, profit, xp, 
         empty="No traits from this origin path." />
       <Section title="Gear" items={gear}
         empty="No equipment recorded." />
+      {armourSummary(gear).any && (
+        <Section title="Armour points"
+          items={[armourSummary(gear).slots.map((x) => `${x.name} ${x.ap}`).join(' \u00b7 ')]}
+          cols={1} empty="" />
+      )}
       {psyRating > 0 && (
         <Section title="Psychic powers" items={powers.map(describePower)}
           empty="No powers recorded." />
@@ -6715,6 +6805,9 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
     ...extras.gear
   ];
   const gearCount = allGear.length;
+  // Armour Points by location, from everything on the gear list.
+  const armour = armourSummary(allGear);
+  const tBonus = totals ? Math.floor(totals.t / 10) : null;
 
   const listFor = (kind) => ({
     skills: allSkills, talents: allTalents, traits: allTraits,
@@ -6865,6 +6958,23 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
               </div>
             )}
 
+            {/* Armour Points, location by location, always in sight: until now
+                the AP of what a character wore was nowhere on the sheet. */}
+            <div className="rt-der wide rt-ap"
+              title={'Armour Points by location, from everything on the gear list. '
+                + 'A hit loses its Penetration from these, then Toughness Bonus'
+                + (tBonus != null ? ` (${tBonus})` : '') + ' on top.'}>
+              <div className="rt-der-k top">ARMOUR POINTS{tBonus != null ? ` \u00b7 + T BONUS ${tBonus}` : ''}</div>
+              <div className="rt-move">
+                {armour.slots.map((sl) => (
+                  <div className={'rt-move-i' + (sl.ap ? '' : ' bare')} key={sl.id}>
+                    <div className="rt-der-v">{sl.ap}</div>
+                    <div className="rt-der-k">{sl.short}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
             {/* XP is a running campaign total, so it gets steppers rather than
                 a field you have to select and retype. */}
             <div className="rt-xpgauge">
@@ -7005,6 +7115,8 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
           <PursePanel purse={extras.purse} onGrant={onGrantThrones}
             onSpend={onSpendThrones} onRefund={onRefundThrones} />
         )}
+
+        {tab === 'gear' && <ArmourPanel armour={armour} tBonus={tBonus} />}
 
         {tab === 'gear' && (
           career || extras.gear.length

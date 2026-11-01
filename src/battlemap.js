@@ -553,6 +553,21 @@ export const MARKER_TYPES = [
 ];
 export const markerTypeById = (id) => MARKER_TYPES.find((m) => m.id === id) || MARKER_TYPES[0];
 
+/* A TARGET is an Objective marker laid on a hostile to pick it out on the
+   screen, and it carries a bonus to Ballistic Skill for whoever shoots at that
+   square. An Objective without the bonus is plain scenery ("the vault"), so the
+   bonus lives on the marker, not on the type: nothing that was already on a
+   deck turns into a target.
+
+   Rogue Trader gives no number for a marked target, so +10 is a house figure,
+   the same size as an Aim, and the GM can set +5, +10 or +20 on any one. */
+export const TARGET_BONUS = 10;
+export const TARGET_BONUS_CAP = 30;
+export const targetBonusAt = (map, pos) => {
+  const mk = map && map.markers && pos ? map.markers[`${pos.x},${pos.y}`] : null;
+  return mk && Number.isFinite(mk.bonus) ? mk.bonus : 0;
+};
+
 /* ----------------------- big decks: clean layers, packed storage -----------------------
 
    A deck is a record per square, and a big one is a quarter of a million of
@@ -769,7 +784,13 @@ export function readMap(m) {
     const out = {};
     for (const [k, v] of Object.entries(raw)) {
       if (!parseKey(k) || !v || typeof v !== 'object') continue;
-      out[k] = { type: markerTypeById(v.type).id, label: String(v.label || '') };
+      const rec = { type: markerTypeById(v.type).id, label: String(v.label || '') };
+      // Only a number that means something rides along: a target's bonus.
+      const bonus = Number(v.bonus);
+      if (v.bonus != null && Number.isFinite(bonus)) {
+        rec.bonus = Math.max(-TARGET_BONUS_CAP, Math.min(TARGET_BONUS_CAP, Math.round(bonus)));
+      }
+      out[k] = rec;
     }
     return out;
   });
@@ -1721,6 +1742,7 @@ export function reachBetween({ from, to, map, weaponRangeM = null } = {}) {
   const squares = distanceSquares(from, to);
   const metres = distanceMetres(from, to, m.metresPerSquare);
   const band = rangeBand(metres, weaponRangeM);
+  const marked = targetBonusAt(m, to);
   return {
     squares: Math.round(squares * 10) / 10,
     metres,
@@ -1728,6 +1750,10 @@ export function reachBetween({ from, to, map, weaponRangeM = null } = {}) {
     // 'out' carries null, not 0: out of range is no shot at all, and a 0 here
     // would be applied to the roll as "no modifier".
     mod: RANGE_MODIFIERS[band],
+    // A marked target: the bonus on its own, and the whole thing. Out of range
+    // stays null however marked the target is.
+    marked,
+    total: RANGE_MODIFIERS[band] === null ? null : RANGE_MODIFIERS[band] + marked,
     blocked: map ? walkLine(m, from, to) : null,
     // What the target is crouched behind, if anything.
     cover: map ? coverBetween(m, from, to) : null

@@ -3,7 +3,7 @@ import {
   MAP_THEMES, themeById, readMap, cellKey, parseKey,
   TILE_CATALOG, TILE_CATEGORIES, stampCells, paintCells,
   wallMask, cornerPillar, WALL_N, WALL_E, WALL_S, WALL_W,
-  DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById,
+  DOOR_STATES, nextDoorState, MARKER_TYPES, markerTypeById, TARGET_BONUS,
   reachBetween, rangeRings, areaCells, coneCells, visibleCells, unobstructed,
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
   clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice, rotateMap, rotationFits,
@@ -517,6 +517,10 @@ export default function BattleMap({
   const [rotation, setRotation] = useState(0);
   const [markerType, setMarkerType] = useState('objective');
   const [brush, setBrush] = useState(1);
+  // How big a cloud the right-click menu lays: smoke is an area, and one square
+  // of it is no smoke at all. Apart from the brush so changing one is not
+  // changing the other.
+  const [cloud, setCloud] = useState(3);
   /* A VIEW control, deliberately not stored on the map. px/square is the
      projector's calibration and must not move; zoom scales what is already
      drawn so the GM can read a corner or take in the whole deck. On the
@@ -1113,6 +1117,27 @@ export default function BattleMap({
   const cellAtRef = useRef(null);
   cellAtRef.current = posFromEvent;
 
+  /* What a click takes off a square, as a patch, or null when it holds none of
+     the environment the menu lays. The target token first, then fire and gas,
+     then smoke; a square with several is cleared one click at a time, top
+     down. A cloud goes the way it came: the size it was laid at, around the
+     clicked square, and only the smoke of that density. */
+  const liftEnvironmentAt = (pos) => {
+    const k = cellKey(pos.x, pos.y);
+    if (m.markers[k]) { const markers = { ...m.markers }; delete markers[k]; return { markers }; }
+    if (m.hazards[k]) { const hazards = { ...m.hazards }; delete hazards[k]; return { hazards }; }
+    const density = m.obscuring[k];
+    if (density) {
+      const obscuring = { ...m.obscuring };
+      for (const c of brushCells(pos, cloud, m)) {
+        const ck = cellKey(c.x, c.y);
+        if (obscuring[ck] === density) delete obscuring[ck];
+      }
+      return { obscuring };
+    }
+    return null;
+  };
+
   const applyAt = (pos, dragging = false, sweep = false, lineOfSight = false, conceal = false) => {
     if (!pos) return;
     const k = cellKey(pos.x, pos.y);
@@ -1226,7 +1251,10 @@ export default function BattleMap({
     }
     if (mode === 'hazard') {
       const hazards = { ...m.hazards };
-      if (hazards[k] === hazardType) delete hazards[k]; else hazards[k] = hazardType;
+      // Whatever is burning there goes out with a click, not only the kind in
+      // hand: a fire set from the right-click menu should not need the Fire
+      // chip chosen to be put out.
+      if (hazards[k]) delete hazards[k]; else hazards[k] = hazardType;
       patch({ hazards });
       return;
     }
@@ -1273,6 +1301,11 @@ export default function BattleMap({
       // A door is clicked as a door: it steps to its next state, and opening
       // it lights what it joins.
       if (m.doors[k]) { clickDoor(pos); return; }
+      // A square holding a target, a fire or a cloud of smoke is clicked OUT:
+      // those are laid mid-session from the menu and are lifted the same way,
+      // without going back to the menu. Click the room beside it to reveal.
+      const lifted = liftEnvironmentAt(pos);
+      if (lifted) { patch(lifted); return; }
       // A PLACE at a time, which is the reveal the table expects: click
       // inside a room and the room is there.
       //
@@ -1285,9 +1318,10 @@ export default function BattleMap({
     }
     if (mode === 'marker') {
       const markers = { ...m.markers };
-      // Clicking a marker of the same type again lifts it, so one tool both
-      // places and removes.
-      if (markers[k] && markers[k].type === markerType) delete markers[k];
+      // Clicking a marker lifts it, whatever kind it is, so one tool both
+      // places and removes. A target set from the right-click menu goes with a
+      // click, without choosing its kind first.
+      if (markers[k]) delete markers[k];
       else markers[k] = { type: markerType, label: markerTypeById(markerType).name };
       patch({ markers });
       return;
@@ -1957,6 +1991,25 @@ export default function BattleMap({
         ctx.beginPath(); ctx.arc(mx, my, px * 0.36, 0, Math.PI * 2); ctx.fill();
         ctx.globalAlpha = 1;
         ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        // A target carries a bonus to hit: ringed twice with sights at the
+        // four sides and the number, so a hostile is picked out from across the
+        // table and the bonus is read off the screen.
+        if (Number.isFinite(mk.bonus)) {
+          const r = px * 0.46;
+          ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = Math.max(2, px * 0.07);
+          ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2); ctx.stroke();
+          ctx.beginPath();
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            ctx.moveTo(mx + dx * r * 0.7, my + dy * r * 0.7);
+            ctx.lineTo(mx + dx * r * 1.25, my + dy * r * 1.25);
+          }
+          ctx.stroke();
+          ctx.font = `bold ${Math.max(9, Math.round(px * 0.3))}px sans-serif`;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.lineWidth = 3; ctx.strokeStyle = '#000';
+          const tag = `${mk.bonus >= 0 ? '+' : ''}${mk.bonus}`;
+          ctx.strokeText(tag, mx, my); ctx.fillStyle = '#fff'; ctx.fillText(tag, mx, my);
+        }
       });
 
       // A square the GM asked to be shown: ringed for a moment, on their own
@@ -2861,6 +2914,161 @@ export default function BattleMap({
     }
     return a;
   };
+  /* ---- what the right-clicked square can be given ----
+     The tools lay hazards, smoke and tokens by clicking, and that means picking
+     the tool first, which is a trip to the toolbar the projector view does not
+     have. So the square under the pointer can be given these directly, on either
+     tab and with whatever tool is in hand: set fire to it, fill it with smoke,
+     mark it as a target, drop a hostile on it. Choosing what is already there
+     takes it off again, the way the tools do. */
+  const hereCell = menu && menu.cell ? menu.cell : null;
+  const hereKey = hereCell ? cellKey(hereCell.x, hereCell.y) : null;
+  const hereHas = hereCell
+    ? Boolean(m.hazards[hereKey] || m.obscuring[hereKey] || m.markers[hereKey] || m.contacts[hereKey])
+    : false;
+  const hereGroups = () => {
+    if (!hereCell) return [];
+    const out = [];
+    const add = (id, title, items) => out.push({
+      id, title, items, current: (items.find((i) => i.checked) || {}).label || ''
+    });
+    /* A door or hatch on this square, of any kind: the Door tool without the
+       tool. A square that already has one keeps its state when the kind is
+       changed, so a jammed hatch swapped for a bulkhead is still jammed. Its
+       open, closed and jammed are further up the menu, and "Remove the door"
+       is below. */
+    add('h-door', 'Door or hatch', DOOR_KINDS.map((d) => radio('dr-' + d.id, `${d.name} \u00b7 AP ${d.ap}`,
+      Boolean(m.doors[hereKey] && m.doors[hereKey].kind === d.id), () => {
+        const doors = { ...m.doors };
+        const here = doors[hereKey];
+        doors[hereKey] = { kind: d.id, state: here ? here.state : 'closed' };
+        patch({ doors });
+      })));
+    add('h-hazard', 'Fire, gas, radiation\u2026', HAZARD_TYPES.map((h) => radio('hz-' + h.id, h.name, m.hazards[hereKey] === h.id, () => {
+      const hazards = { ...m.hazards };
+      if (hazards[hereKey] === h.id) delete hazards[hereKey]; else hazards[hereKey] = h.id;
+      patch({ hazards });
+    })));
+    add('h-smoke', 'Smoke or foliage', OBSCURING.map((o) => radio('sm-' + o.id, `${o.name} \u00b7 ${cloud}\u00d7${cloud}`, m.obscuring[hereKey] === o.id, () => {
+      const obscuring = { ...m.obscuring };
+      const lifting = obscuring[hereKey] === o.id;
+      for (const c of brushCells(hereCell, cloud, m)) {
+        const ck = cellKey(c.x, c.y);
+        if (lifting) delete obscuring[ck]; else obscuring[ck] = o.id;
+      }
+      patch({ obscuring });
+    })));
+    add('h-cloud', 'Cloud size', [1, 3, 5, 7].map((n) => radio('cl' + n, `${n}\u00d7${n}`, cloud === n, () => setCloud(n))));
+    /* A target is an Objective that carries a bonus to hit. The plain kinds
+       below it are the scenery the Marker tool lays, with no bonus. */
+    const mkHere = m.markers[hereKey] || null;
+    add('h-token', 'Target or token', [
+      radio('mk-target', `Target (${TARGET_BONUS >= 0 ? '+' : ''}${TARGET_BONUS} to hit)`,
+        Boolean(mkHere && Number.isFinite(mkHere.bonus)), () => {
+          const markers = { ...m.markers };
+          if (markers[hereKey] && Number.isFinite(markers[hereKey].bonus)) delete markers[hereKey];
+          else markers[hereKey] = { type: 'objective', label: 'Target', bonus: TARGET_BONUS };
+          patch({ markers });
+        }),
+      ...MARKER_TYPES.map((t) => radio('mk-' + t.id, t.name,
+        Boolean(mkHere && mkHere.type === t.id && !Number.isFinite(mkHere.bonus)), () => {
+          const markers = { ...m.markers };
+          if (markers[hereKey] && markers[hereKey].type === t.id && !Number.isFinite(markers[hereKey].bonus)) delete markers[hereKey];
+          else markers[hereKey] = { type: t.id, label: markerTypeById(t.id).name };
+          patch({ markers });
+        }))
+    ]);
+    if (mkHere && Number.isFinite(mkHere.bonus)) {
+      add('h-bonus', 'Bonus to hit this target', [5, 10, 20].map((n) => radio('bn' + n, `+${n}`, mkHere.bonus === n, () => {
+        patch({ markers: { ...m.markers, [hereKey]: { ...mkHere, bonus: n } } });
+      })));
+    }
+    // The hostiles an encounter was prepared with, as contacts the table has
+    // not found yet: the same thing the Contacts tool lays, without picking it.
+    const pool = [];
+    for (const e of encounters) (e.hostiles || []).forEach((h, i) => pool.push({ e, h, i }));
+    if (pool.length) {
+      add('h-hostile', 'Hostile contact', pool.slice(0, 24).map(({ e, h, i }) => radio(
+        `ct-${e.id}-${i}`, encounters.length > 1 ? `${h.name} \u00b7 ${e.name || 'Untitled'}` : h.name,
+        Boolean(m.contacts[hereKey] && m.contacts[hereKey].encounterId === e.id && m.contacts[hereKey].hostileId === String(i)),
+        () => {
+          const contacts = { ...m.contacts };
+          const here = contacts[hereKey];
+          if (here && here.encounterId === e.id && here.hostileId === String(i)) delete contacts[hereKey];
+          else contacts[hereKey] = { name: h.name, encounterId: e.id, hostileId: String(i), state: 'hidden' };
+          patch({ contacts });
+        }
+      )));
+    }
+    return out;
+  };
+  const clearHere = () => {
+    const hazards = { ...m.hazards }; const obscuring = { ...m.obscuring };
+    const markers = { ...m.markers }; const contacts = { ...m.contacts };
+    delete hazards[hereKey]; delete obscuring[hereKey]; delete markers[hereKey]; delete contacts[hereKey];
+    patch({ hazards, obscuring, markers, contacts });
+  };
+  /* ---- the firing overlay, from the menu ----
+     The overlay is two clicks and a weapon: where the firer stands, what they
+     point at. With the toolbars hidden (full screen, the projector) there is
+     nowhere to pick the weapon and no way to set either square except by
+     already holding the Overlay tool, so the menu does all three from any tool,
+     on either tab. Choosing "Fire from here" brings the Overlay tool up with
+     it, on the Play tab where it lives, so the rings and the line are drawn. */
+  const openOverlay = () => {
+    if (tabRef.current !== 'play') chooseTab('play');
+    modeRef.current = 'overlay';
+    setMode('overlay');
+  };
+  const overlayItems = () => {
+    if (!hereCell) return [];
+    const a = [];
+    if (origin) {
+      const name = (ARMED.find((x) => x.key === weaponKey) || {}).label;
+      const shot = weapon && weapon.range
+        ? reachBetween({ from: origin, to: hereCell, map: m, weaponRangeM: weapon.range }) : null;
+      const sign = (n) => `${n >= 0 ? '+' : ''}${n}`;
+      a.push({
+        key: 'ov-info', disabled: true,
+        label: `From ${origin.x},${origin.y}${name ? ` with ${name}` : ''}`
+          + (shot ? ` \u00b7 here ${shot.metres} m, ${shot.band.replace('_', ' ')}, `
+            + (shot.total === null ? 'out of range' : `${sign(shot.total)} to hit${shot.marked ? ' (target)' : ''}`) : '')
+      });
+      a.push({ key: 'ov-aim', label: 'Aim at here', icon: 'overlay', run: () => { openOverlay(); setAim(hereCell); } });
+    }
+    a.push({
+      key: 'ov-from', label: origin ? 'Fire from here instead' : 'Fire from here', icon: 'overlay',
+      run: () => { openOverlay(); originRef.current = hereCell; setOrigin(hereCell); setAim(null); }
+    });
+    if (origin && mode !== 'overlay') {
+      a.push({ key: 'ov-clear', label: 'Clear the overlay', run: () => { originRef.current = null; setOrigin(null); setAim(null); } });
+    }
+    return a;
+  };
+  // The weapon is a group in the Overlay and Measure tools' own menu already;
+  // from any other tool it is offered here, so it can be chosen before firing.
+  const overlayGroups = () => {
+    if (!hereCell || mode === 'overlay' || mode === 'measure') return [];
+    return [{
+      id: 'h-weapon', title: 'Weapon',
+      current: (ARMED.find((x) => x.key === weaponKey) || {}).label || '',
+      items: [
+        radio('none', 'No weapon', !weaponKey, () => setWeaponKey('')),
+        ...ARMED.map((x) => radio(x.key, `${x.label} \u00b7 ${x.kind}`, weaponKey === x.key, () => setWeaponKey(x.key)))
+      ]
+    }];
+  };
+  const renderGroup = (g) => (
+    <div key={g.id} className="rt-bm-menu-group">
+      <button type="button" className="rt-bm-menu-item head" aria-expanded={menuOpen === g.id}
+        onClick={() => setMenuOpen(menuOpen === g.id ? null : g.id)}>
+        <span className="rt-bm-menu-tick">{menuOpen === g.id ? '\u25BE' : '\u25B8'}</span>
+        <span>{g.title}</span>
+        <em>{g.current}</em>
+      </button>
+      {menuOpen === g.id && <div className="rt-bm-menu-list">{g.items.map(menuItem)}</div>}
+    </div>
+  );
   const menuItem = (i) => (
     <button key={i.key} type="button" disabled={i.disabled}
       role={i.checked === undefined ? 'menuitem' : 'menuitemcheckbox'} aria-checked={i.checked}
@@ -2882,6 +3090,11 @@ export default function BattleMap({
       x: Math.max(4, Math.min(menu.x, w.innerWidth - r.width - 4)),
       y: Math.max(4, Math.min(menu.y, w.innerHeight - r.height - 4))
     });
+    /* The menu is taller than a small or full-screen window can show, and it
+       scrolls. A group that has just been unfolded is brought into view, or its
+       list would open below the edge with nothing to say it was there. */
+    const list = el.querySelector('.rt-bm-menu-list');
+    if (list && list.scrollIntoView) list.scrollIntoView({ block: 'nearest' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menu, menuOpen]);
 
@@ -3811,9 +4024,12 @@ export default function BattleMap({
                 {overlay && overlay.shot ? (
                   <span>
                     {' · '}{overlay.shot.metres} m — {overlay.shot.band.replace('_', ' ')}
-                    {' ('}{overlay.shot.mod === null
+                    {' ('}{overlay.shot.total === null
                       ? 'out of range'
-                      : `${overlay.shot.mod >= 0 ? '+' : ''}${overlay.shot.mod} to hit`}{')'}
+                      : `${overlay.shot.total >= 0 ? '+' : ''}${overlay.shot.total} to hit`}
+                    {overlay.shot.total !== null && overlay.shot.marked
+                      ? ` \u2014 ${overlay.shot.mod >= 0 ? '+' : ''}${overlay.shot.mod} range, ${overlay.shot.marked >= 0 ? '+' : ''}${overlay.shot.marked} marked target`
+                      : ''}{')'}
                     {overlay.shot.blocked ? (
                       <strong> · blocked by {blockedText(overlay.shot.blocked)}</strong>
                     ) : null}
@@ -3839,7 +4055,10 @@ export default function BattleMap({
         <div className={'rt-bm-measure' + (measurement.blocked ? ' blocked' : '')}>
           <strong>{measurement.squares} squares · {measurement.metres} m</strong>
           <span> — {measurement.band.replace('_', ' ')}</span>
-          <span> ({measurement.mod === null ? 'out of range' : `${measurement.mod >= 0 ? '+' : ''}${measurement.mod} to hit`})</span>
+          <span> ({measurement.total === null ? 'out of range' : `${measurement.total >= 0 ? '+' : ''}${measurement.total} to hit`}
+            {measurement.total !== null && measurement.marked
+              ? ` \u2014 ${measurement.mod >= 0 ? '+' : ''}${measurement.mod} range, ${measurement.marked >= 0 ? '+' : ''}${measurement.marked} marked target`
+              : ''})</span>
           {measurement.blocked && (
             <span> · blocked by {blockedText(measurement.blocked)} at {measurement.blocked.x},{measurement.blocked.y}</span>
           )}
@@ -3931,17 +4150,23 @@ export default function BattleMap({
           </div>
           <div className="rt-bm-menu-sep" />
           {menuActions().map(menuItem)}
-          {menuGroups().map((g) => (
-            <div key={g.id} className="rt-bm-menu-group">
-              <button type="button" className="rt-bm-menu-item head" aria-expanded={menuOpen === g.id}
-                onClick={() => setMenuOpen(menuOpen === g.id ? null : g.id)}>
-                <span className="rt-bm-menu-tick">{menuOpen === g.id ? '\u25BE' : '\u25B8'}</span>
-                <span>{g.title}</span>
-                <em>{g.current}</em>
-              </button>
-              {menuOpen === g.id && <div className="rt-bm-menu-list">{g.items.map(menuItem)}</div>}
-            </div>
-          ))}
+          {menuGroups().map(renderGroup)}
+          {hereCell && (
+            <>
+              <div className="rt-bm-menu-sep" />
+              <div className="rt-bm-menu-h">At this square</div>
+              {hereGroups().map(renderGroup)}
+              {hereHas && menuItem({ key: 'clear-here', label: 'Clear this square', run: clearHere })}
+              {m.doors[hereKey] && menuItem({
+                key: 'remove-door', label: `Remove the ${m.doors[hereKey].kind === 'hatch' ? 'hatch' : 'door'}`,
+                run: () => { const doors = { ...m.doors }; delete doors[hereKey]; patch({ doors }); }
+              })}
+              <div className="rt-bm-menu-sep" />
+              <div className="rt-bm-menu-h">Firing overlay</div>
+              {overlayItems().map(menuItem)}
+              {overlayGroups().map(renderGroup)}
+            </>
+          )}
           {menuItem({ key: 'fog', label: 'Fog of war', checked: m.fog, run: () => patch({ fog: !m.fog }) })}
           <div className="rt-bm-menu-sep" />
           <div className="rt-bm-menu-icons">

@@ -20,7 +20,8 @@ import {
   cellKey, parseKey, wallMask, cornerPillar, floorBounds, lineBlocked,
   WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, doorBlocks, MARKER_TYPES, markerTypeById,
-  setStartRoom, startPlay, playDoor, rotateMap, roomsOf, doorsOf, roomFog
+  setStartRoom, startPlay, playDoor, rotateMap, roomsOf, doorsOf, roomFog,
+  TARGET_BONUS, TARGET_BONUS_CAP, targetBonusAt, packMap
 } from './battlemap.js';
 import { rangeBand, parseWeaponStats, RANGE_MODIFIERS, conditionById } from './groundcombat.js';
 import { GEAR } from './gear.js';
@@ -584,6 +585,63 @@ import { GEAR } from './gear.js';
   // A marker with an unknown type still renders, as the default type.
   assert.equal(readMap({ markers: { '3,3': { type: 'bogus' } } }).markers['3,3'].type,
     MARKER_TYPES[0].id);
+}
+
+/* ---- a target is an Objective that carries a bonus to hit ---- */
+
+{
+  assert.equal(TARGET_BONUS, 10, 'the house bonus is the size of an Aim');
+  const floor = {};
+  for (let x = 0; x < 12; x++) for (let y = 0; y < 3; y++) floor[`${x},${y}`] = true;
+  const base = { cols: 14, rows: 6, floor };
+  const withMarkers = (markers) => readMap({ ...base, markers });
+  const m = withMarkers({
+    '3,1': { type: 'objective', label: 'Target', bonus: 10 },
+    '5,1': { type: 'objective', label: 'The vault' },
+    '6,1': { type: 'objective', label: 'x', bonus: 999 },
+    '7,1': { type: 'objective', label: 'y', bonus: -999 },
+    '8,1': { type: 'objective', label: 'z', bonus: 'abc' },
+    '9,1': { type: 'objective', label: 'n', bonus: null },
+    '10,1': { type: 'objective', label: 'f', bonus: 7.6 },
+    '11,1': { type: 'objective', label: 'Target', bonus: 10 }
+  });
+  assert.equal(m.markers['3,1'].bonus, 10, 'a target keeps its bonus');
+  assert.equal('bonus' in m.markers['5,1'], false, 'an Objective with none is scenery, and stays so');
+  assert.equal(m.markers['6,1'].bonus, TARGET_BONUS_CAP, 'a bonus is held to the cap');
+  assert.equal(m.markers['7,1'].bonus, -TARGET_BONUS_CAP);
+  assert.equal('bonus' in m.markers['8,1'], false, 'junk is dropped, not turned into 0');
+  assert.equal('bonus' in m.markers['9,1'], false, 'and so is null');
+  assert.equal(m.markers['10,1'].bonus, 8, 'whole numbers only');
+
+  assert.equal(targetBonusAt(m, { x: 3, y: 1 }), 10);
+  assert.equal(targetBonusAt(m, { x: 5, y: 1 }), 0, 'scenery gives nothing');
+  assert.equal(targetBonusAt(m, { x: 0, y: 0 }), 0, 'nor does an empty square');
+  assert.equal(targetBonusAt(null, { x: 0, y: 0 }), 0);
+  assert.equal(targetBonusAt(m, null), 0);
+
+  // The shot a firer would take: range and the mark, kept apart and added.
+  const shot = (to, range = 30) => reachBetween({ from: { x: 0, y: 1 }, to, map: m, weaponRangeM: range });
+  const marked = shot({ x: 3, y: 1 });
+  const bare = shot({ x: 4, y: 1 });
+  assert.equal(marked.marked, 10);
+  assert.equal(marked.total, marked.mod + 10, 'the mark is added to the range modifier');
+  assert.equal(bare.marked, 0);
+  assert.equal(bare.total, bare.mod, 'an unmarked square is just the range');
+  assert.equal(shot({ x: 5, y: 1 }).total, shot({ x: 5, y: 1 }).mod, 'scenery is not a target');
+  // Too far is too far, however marked: the bonus never makes a shot of it.
+  const far = reachBetween({ from: { x: 0, y: 1 }, to: { x: 11, y: 1 }, map: m, weaponRangeM: 1 });
+  assert.equal(far.mod, null);
+  assert.equal(far.total, null, 'out of range stays out of range');
+  assert.equal(far.marked, 10, 'though the mark is still reported');
+  // No map, no mark.
+  assert.equal(reachBetween({ from: { x: 0, y: 0 }, to: { x: 2, y: 0 }, weaponRangeM: 30 }).marked, 0);
+
+  // The bonus survives being stored, and being turned with the deck.
+  const back = readMap(JSON.parse(JSON.stringify(packMap(m))));
+  assert.equal(back.markers['3,1'].bonus, 10, 'through the packed form');
+  const turned = rotateMap(m, 1);
+  const bonuses = Object.values(turned.markers).filter((x) => x.bonus === 10);
+  assert.equal(bonuses.length, 2, 'and when the deck is turned (two targets, both kept)');
 }
 
 /* ---- keys ---- */

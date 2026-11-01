@@ -8,7 +8,11 @@ import {
   placeShips, pruneShips, moveShip, turnShip, bearing, snapToSquare, clearSpace,
   redactVoidForTable, voidForBridge, voidForTable, describeScene, combatForBridge,
   FIELD_KINDS, BODY_KINDS, TERRAIN_FLOOR, MAX_VOID, MIN_VOID,
-  ARC_DEFAULTS, ARC_SLOTS, MIN_ARC, angleDiff, inArc, arcWedges, weaponsBearing
+  ARC_DEFAULTS, ARC_SLOTS, MIN_ARC, angleDiff, inArc, arcWedges, weaponsBearing,
+  rotatePoint, rotateThing, rotateScene, clearChart, removeThing,
+  togglePins, togglePin, isPinned, overlayWedges, MAX_OVERLAYS,
+  MAX_SAVED_CHARTS, MAX_LIBRARY_BYTES, readSavedChart, readVoidLibrary, libraryBytes, chartSummary,
+  saveChart, deleteChart, sameChart
 } from './voidmap.js';
 import { rangeBand } from './voidcombat.js';
 
@@ -644,6 +648,228 @@ const firstWith = (id) => {
   assert.equal(all.range, 12);
   assert.deepEqual(arcWedges(m, ship, []), []);
   assert.deepEqual(arcWedges(m, ship, null), []);
+}
+
+/* ---- turning things ---- */
+{
+  const p = rotatePoint({ x: 10, y: 5 }, { x: 5, y: 5 }, 90);
+  assert.deepEqual(p, { x: 5, y: 10 }, 'east of the centre, turned clockwise, is south of it');
+  assert.deepEqual(rotatePoint({ x: 5, y: 0 }, { x: 5, y: 5 }, 90), { x: 10, y: 5 }, 'north goes to east');
+  assert.deepEqual(rotatePoint({ x: 3, y: 3 }, { x: 3, y: 3 }, 77), { x: 3, y: 3 });
+
+  const m = readVoidMap({
+    cols: 40, rows: 28,
+    bodies: [{ id: 'h', kind: 'hulk', x: 10, y: 10, r: 1, rot: 350 }],
+    fields: [
+      { id: 'belt', kind: 'asteroid_belt', shape: 'band', x: 0, y: 14, x2: 40, y2: 14, w: 8 },
+      { id: 'rip', kind: 'gravity_riptide', shape: 'band', x: 0, y: 6, x2: 40, y2: 6, w: 6, drift: [2, 0] },
+      { id: 'dust', kind: 'dust_cloud', shape: 'circle', x: 20, y: 14, r: 4, rot: 10 }
+    ],
+    ships: [{ id: 'a', x: 5.5, y: 5.5, heading: 350 }]
+  });
+  assert.equal(rotateThing(m, 'ship', 'a', 15).ships[0].heading, 5, 'a ship turns, wrapping past north');
+  assert.equal(rotateThing(m, 'ship', 'a', -15).ships[0].heading, 335);
+  assert.equal(rotateThing(m, 'body', 'h', 25).bodies[0].rot, 15);
+  assert.equal(rotateThing(m, 'field', 'dust', -20).fields[2].rot, 350, 'a round field turns its contents');
+
+  const belt = rotateThing(m, 'field', 'belt', 90).fields[0];
+  assert.equal(belt.x, 20, 'a belt turns about its middle');
+  assert.equal(belt.x2, 20);
+  assert.ok(Math.abs(belt.y2 - belt.y) > 39.9, 'and keeps its length');
+  assert.equal(belt.w, 8);
+  const rip = rotateThing(m, 'field', 'rip', 90).fields[1];
+  assert.deepEqual(rip.drift, [0, 2], 'a riptide carries the way it points after the turn');
+  assert.deepEqual(rotateThing(m, 'field', 'rip', 360).fields[1].drift, [2, 0]);
+  assert.deepEqual(rotateThing(m, 'nothing', 'x', 90), m, 'an unknown kind turns nothing');
+  assert.deepEqual(rotateThing(m, 'ship', 'zzz', 90).ships, m.ships, 'an unknown id turns nothing');
+}
+
+/* ---- turning the whole scene ---- */
+{
+  const m = readVoidMap({
+    cols: 40, rows: 28,
+    stars: [{ typeId: 'luminous', x: -4, y: 6, r: 8 }],
+    bodies: [{ id: 'p', kind: 'planet', x: 30, y: 8, r: 3, rot: 0 }],
+    fields: [
+      { id: 'rip', kind: 'gravity_riptide', shape: 'band', x: 0, y: 14, x2: 40, y2: 14, w: 6, drift: [2, 0] },
+      { id: 'dust', kind: 'dust_cloud', shape: 'circle', x: 10, y: 20, r: 4 }
+    ],
+    ships: [
+      { id: 'a', x: 3.5, y: 5.5, heading: 90 },
+      { id: 'b', x: 36.5, y: 22.5, heading: 270 }
+    ],
+    overlays: [{ id: 'o', shipId: 'a', slot: 'prow', range: 6, name: 'Lance' }]
+  });
+  const once = rotateScene(m, 1);
+  assert.equal(once.cols, 28);
+  assert.equal(once.rows, 40, 'width and height swap');
+  const a = once.ships.find((s) => s.id === 'a');
+  // (3.5, 5.5) in a 40x28 chart goes to (28 - 5.5, 3.5): the top-left ship is now top-right.
+  assert.deepEqual([a.x, a.y], [22.5, 3.5]);
+  assert.equal(a.heading, 180, 'a ship that faced east now faces south');
+  assert.equal(once.bodies[0].rot, 90);
+  const rip = once.fields.find((f) => f.id === 'rip');
+  assert.deepEqual(rip.drift, [-0, 2].map((v) => v + 0), 'the drift turns too');
+  assert.equal(Math.round(rip.x), 14, 'a band across the middle turns to run down it');
+  assert.equal(once.fields.find((f) => f.id === 'dust').rot, 90);
+  assert.equal(once.overlays.length, 1, 'pinned ranges ride with their ship');
+  const sq = (v) => v % 1 === 0.5;
+  assert.ok(once.ships.every((s) => sq(s.x) && sq(s.y)), 'ships stay on square centres');
+  assert.ok(once.ships.every((s) => s.x > 0 && s.x < once.cols && s.y > 0 && s.y < once.rows), 'and on the chart');
+
+  // Distances and shots do not change when the table is turned.
+  const before = reach(m, 'a', 'b', { weaponRange: 60, slot: 'prow' });
+  const after = reach(once, 'a', 'b', { weaponRange: 60, slot: 'prow' });
+  assert.equal(after.distance, before.distance, 'the same fight from another side');
+  assert.equal(after.arc.relative, before.arc.relative, 'and the same bearing off the bow');
+  assert.equal(after.canFire, before.canFire);
+
+  assert.deepEqual(rotateScene(m, 4), readVoidMap(m), 'four quarter turns is no turn at all');
+  assert.deepEqual(rotateScene(rotateScene(m, 1), -1), readVoidMap(m), 'and a turn back undoes it');
+  assert.deepEqual(rotateScene(m, 2), rotateScene(rotateScene(m, 1), 1));
+  assert.deepEqual(rotateScene(m, 3), rotateScene(m, -1));
+  assert.deepEqual(rotateScene(m, 0), readVoidMap(m));
+  const half = rotateScene(m, 2);
+  assert.equal(half.cols, 40);
+  assert.deepEqual([half.ships[0].x, half.ships[0].y], [36.5, 22.5], 'half a turn puts the corner ship in the opposite corner');
+  assert.equal(half.ships[0].heading, 270);
+}
+
+/* ---- clearing and removing ---- */
+{
+  const m = readVoidMap({
+    cols: 40, rows: 28, stars: [{ typeId: 'dull', x: 0, y: 0, r: 4 }],
+    bodies: [{ id: 'p', kind: 'planet', x: 5, y: 5, r: 2 }],
+    fields: [{ id: 'f', kind: 'dust_cloud', x: 20, y: 9, r: 3 }],
+    hazards: [{ id: 'solar_flares', name: 'Solar Flares' }],
+    ships: [{ id: 'a', x: 3.5, y: 3.5 }, { id: 'b', x: 30.5, y: 3.5 }],
+    overlays: [{ id: 'o1', shipId: 'a', slot: 'prow', range: 5 }, { id: 'o2', shipId: 'b', slot: null, range: 6 }]
+  });
+  const c = clearChart(m, 'everything');
+  assert.deepEqual([c.ships, c.bodies, c.fields, c.hazards, c.overlays], [[], [], [], [], []]);
+  assert.equal(c.stars.length, 1, 'the star stays');
+  assert.equal(c.cols, 40);
+  assert.equal(clearChart(m, 'fields').fields.length, 0);
+  assert.equal(clearChart(m, 'fields').bodies.length, 1, 'only what was asked');
+  assert.equal(clearChart(m, 'bodies').bodies.length, 0);
+  assert.equal(clearChart(m, 'ships').ships.length, 0);
+  assert.equal(clearChart(m, 'ships').overlays.length, 0, 'with no ships there is nothing to pin a range to');
+  assert.equal(clearChart(m, 'overlays').overlays.length, 0);
+  assert.equal(clearChart(m, 'overlays').ships.length, 2);
+
+  assert.deepEqual(removeThing(m, 'ship', 'a').overlays.map((o) => o.id), ['o2'], 'a ship takes its pinned ranges with it');
+  assert.equal(removeThing(m, 'ship', 'a').ships.length, 1);
+  assert.equal(removeThing(m, 'body', 'p').bodies.length, 0);
+  assert.equal(removeThing(m, 'field', 'f').fields.length, 0);
+  assert.deepEqual(removeThing(m, 'ship', 'nobody'), m);
+  assert.deepEqual(pruneShips(m, ['b']).overlays.map((o) => o.id), ['o2'], 'a ship the host dropped loses its pins');
+}
+
+/* ---- pinned ranges ---- */
+{
+  const m = readVoidMap({
+    cols: 40, rows: 28,
+    ships: [{ id: 'a', name: 'Alpha', side: 'player', x: 10.5, y: 10.5, heading: 90 }, { id: 'b', name: 'Beta', side: 'enemy', x: 30.5, y: 10.5, heading: 270 }]
+  });
+  const guns = [
+    { name: 'Lance', range: 5, slot: 'prow' },
+    { name: 'Macro A', range: 6, slot: 'port' },
+    { name: 'Macro B', range: 8, slot: 'port' }
+  ];
+  const pinned = togglePins(m, 'a', guns);
+  assert.equal(pinned.overlays.length, 2, 'one pin per mount, not per gun');
+  assert.deepEqual(pinned.overlays.map((o) => [o.slot, o.range]), [['prow', 5], ['port', 8]]);
+  assert.equal(pinned.overlays[1].name, 'Macro A, Macro B');
+  assert.ok(isPinned(pinned, 'a', 'prow') && isPinned(pinned, 'a', 'port'));
+  assert.ok(!isPinned(pinned, 'b', 'prow'));
+  assert.equal(togglePins(pinned, 'a', guns).overlays.length, 0, 'the same call takes them down again');
+  assert.equal(togglePins(m, 'nobody', guns).overlays.length, 0);
+
+  const one = togglePin(m, 'b', 'dorsal', 6, 'Macro');
+  assert.equal(one.overlays.length, 1);
+  assert.equal(togglePin(one, 'b', 'dorsal', 6).overlays.length, 0, 'and one mount can be pinned alone');
+  assert.equal(togglePin(m, 'b', null, 12, 'Torpedoes').overlays[0].slot, null);
+
+  // The wedge follows the ship: where it is, which way it faces.
+  const w0 = overlayWedges(pinned);
+  assert.equal(w0.length, 2);
+  assert.equal(w0[0].wedge.centre, 90);
+  const turned = rotateThing(moveShip(pinned, 'a', { x: 20.5, y: 14.5 }), 'ship', 'a', 90);
+  const w1 = overlayWedges(turned);
+  assert.equal(w1[0].wedge.centre, 180, 'turn the ship and its pinned prow turns with it');
+  assert.equal(w1[0].ship.x, 20.5, 'and moves with it');
+  assert.equal(overlayWedges(removeThing(pinned, 'ship', 'a')).length, 0);
+  assert.deepEqual(overlayWedges(null), []);
+
+  // Pins are bounded and junk is dropped.
+  assert.equal(readVoidMap({ overlays: [{ shipId: '', range: 5 }, { shipId: 'a', range: 0 }, { shipId: 'a', range: 5, slot: 'keel' }, 'x'] }).overlays.length, 1);
+  assert.equal(readVoidMap({ overlays: [{ shipId: 'a', range: 5, slot: 'keel' }] }).overlays[0].slot, null, 'an unknown mount is all-round');
+  assert.equal(readVoidMap({ overlays: Array.from({ length: 200 }, (_, i) => ({ shipId: `s${i}`, range: 5 })) }).overlays.length, MAX_OVERLAYS);
+
+  // The table sees a pin only for a ship it can read.
+  const mixed = readVoidMap({
+    cols: 40, rows: 28,
+    ships: [{ id: 'a', x: 5.5, y: 5.5 }, { id: 'p', x: 9.5, y: 5.5, state: 'ping' }, { id: 'h', x: 12.5, y: 5.5, state: 'hidden' }],
+    overlays: [{ shipId: 'a', slot: 'prow', range: 5 }, { shipId: 'p', slot: 'prow', range: 5 }, { shipId: 'h', slot: 'prow', range: 5 }]
+  });
+  assert.deepEqual(redactVoidForTable(mixed).overlays.map((o) => o.shipId), ['a'], 'a ping or a hidden ship does not give away its guns');
+}
+
+/* ---- the chart library ---- */
+{
+  assert.deepEqual(readVoidLibrary(null), []);
+  assert.deepEqual(readVoidLibrary([null, 'x', { id: 'a' }, { id: '', map: {} }, { id: 'b', map: 'nope' }]), []);
+  const m1 = buildScene(systems[0], [], { seed: 'LIB1' });
+  const r1 = saveChart([], { name: '  Cold derelict ', map: m1, now: 1000 });
+  assert.equal(r1.ok, true);
+  assert.equal(r1.library.length, 1);
+  assert.equal(r1.library[0].name, 'Cold derelict');
+  assert.equal(r1.library[0].updatedAt, 1000);
+  assert.deepEqual(r1.library[0].map, readVoidMap(m1), 'saved as the reader sees it');
+  assert.ok(r1.id && r1.library[0].id === r1.id);
+
+  // Saving over an id replaces it; an unknown id is a new chart.
+  const m2 = buildScene(systems[1], [], { seed: 'LIB2' });
+  const over = saveChart(r1.library, { id: r1.id, name: 'Renamed', map: m2, now: 2000 });
+  assert.equal(over.library.length, 1);
+  assert.equal(over.library[0].name, 'Renamed');
+  assert.equal(over.library[0].map.seed, 'LIB2');
+  assert.equal(over.id, r1.id);
+  const fresh = saveChart(r1.library, { id: 'ghost', name: 'Other', map: m2 });
+  assert.equal(fresh.library.length, 2, 'an id that is not in the library makes a new chart');
+  assert.notEqual(fresh.id, 'ghost');
+  assert.equal(saveChart([], { map: m1 }).library[0].name, m1.name, 'no name falls back to the chart\'s');
+
+  // The library is capped by count and by size, and refuses rather than half-saves.
+  let lib = [];
+  for (let i = 0; i < MAX_SAVED_CHARTS; i++) lib = saveChart(lib, { name: `c${i}`, map: { cols: 20, rows: 20 } }).library;
+  assert.equal(lib.length, MAX_SAVED_CHARTS);
+  const full = saveChart(lib, { name: 'one too many', map: m1 });
+  assert.equal(full.ok, false);
+  assert.match(full.error, /Delete one first/);
+  assert.equal(saveChart(lib, { id: lib[0].id, name: 'overwrite is fine', map: m1 }).ok, true, 'a full library can still be updated');
+  const fat = readVoidMap({ cols: 200, rows: 200, bodies: Array.from({ length: 120 }, (_, i) => ({ kind: 'planet', x: i, y: i, r: 1, note: 'x'.repeat(300), name: 'n'.repeat(60) })) });
+  let heavy = [];
+  let refused = null;
+  for (let i = 0; i < MAX_SAVED_CHARTS && !refused; i++) {
+    const r = saveChart(heavy, { name: `fat${i}`, map: fat });
+    if (r.ok) heavy = r.library; else refused = r;
+  }
+  assert.ok(refused, 'big charts hit the size cap before the count');
+  assert.match(refused.error, /KB, over the \d+KB/);
+  assert.ok(libraryBytes(heavy) <= MAX_LIBRARY_BYTES, 'and what was kept is under it');
+
+  assert.deepEqual(deleteChart(fresh.library, fresh.id).map((c) => c.id), [r1.id]);
+  assert.equal(deleteChart(fresh.library, 'nobody').length, 2);
+  const sum = chartSummary(over.library[0]);
+  assert.deepEqual(Object.keys(sum).sort(), ['cols', 'id', 'name', 'rows', 'ships', 'updatedAt']);
+  assert.ok(!('map' in sum), 'a list does not need the maps');
+  assert.equal(readSavedChart({ id: 'z', name: 'x'.repeat(300), map: {} }).name.length, 80);
+
+  assert.equal(sameChart(m1, m1), true);
+  assert.equal(sameChart(m1, readVoidMap(m1)), true, 'read or not, it is the same chart');
+  assert.equal(sameChart(m1, moveShip(placeShips(m1, [{ id: 's', side: 'player' }]), 's', { x: 9.5, y: 9.5 })), false);
+  assert.equal(sameChart(null, m1), false);
 }
 
 console.log('voidmap checks passed');

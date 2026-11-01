@@ -16,7 +16,8 @@ import {
    stays on the GM's screen; only the chart is shared. */
 
 export default function VoidPanel({
-  voidState, onVoidState, roster, system, setSystem, onWindow, windowOpen, windowErr, onUseShot
+  voidState, onVoidState, roster, system, setSystem, onWindow, windowOpen, windowErr, onUseShot,
+  library = null, gunnery = null
 }) {
   const state = voidState || {};
   const map = state.map ? readVoidMap(state.map) : null;
@@ -39,23 +40,29 @@ export default function VoidPanel({
 
   const write = (next) => onVoidState({ ...state, system: state.system || system || undefined, ...next });
 
+  // Building or starting a chart replaces the one on screen: ask first if it
+  // has changes the library does not have.
+  const replaceOk = () => !(library && library.dirty)
+    || window.confirm('The chart on screen has changes that are not saved. Replace it anyway?');
+
   const build = (seed) => {
-    if (!system) return;
+    if (!system || !replaceOk()) return;
     const s = seed || seedText.trim() || newSeed();
     let m = buildScene(system, chosen.map((e) => ({ zoneId: e.zoneId, index: e.index })), {
       size, seed: s, zoneId: openZone
     });
     m = placeShips(m, roster);
-    onVoidState({ ...state, system, map: m });
+    onVoidState({ ...state, system, map: m, chartId: null });
     setSeedText(s);
     setNote(`${m.name}. ${describeScene(m)}. Seed ${s}.`);
     setSetupOpen(false);
   };
 
   const blank = () => {
+    if (!replaceOk()) return;
     let m = newVoidMap('Open void', size);
     m = placeShips({ ...m, seed: newSeed() }, roster);
-    onVoidState({ ...state, map: m });
+    onVoidState({ ...state, map: m, chartId: null });
     setNote('A blank chart. Add worlds and fields from the panel beside it.');
   };
 
@@ -161,16 +168,43 @@ export default function VoidPanel({
       )}
 
       {!map ? (
-        <p className="rt-vm-sub">
-          No chart yet. Roll a star system, pick where the fight is, and build it, or start from a blank chart.
-        </p>
+        <>
+          <p className="rt-vm-sub">
+            No chart open. Roll a star system, pick where the fight is, and build it, start from a blank
+            chart, or open one you saved.
+          </p>
+          {library && library.list.length > 0 && (
+            <div className="rt-vm-card">
+              <div className="rt-vm-sub">Saved charts</div>
+              {library.error && <p className="rt-warn">{library.error}</p>}
+              <ul className="rt-vm-saved">
+                {library.list.map((c) => (
+                  <li key={c.id}>
+                    <button type="button" className="rt-vm-open" onClick={() => library.onOpen(c.id)}>
+                      <span>{c.name}</span>
+                      <span className="rt-vm-dist">{c.cols}{'\u00d7'}{c.rows}{c.ships ? ` \u00b7 ${c.ships} ship${c.ships === 1 ? '' : 's'}` : ''}</span>
+                    </button>
+                    <button type="button" className="rt-ico-btn" title="Delete this saved chart" aria-label={`Delete ${c.name}`}
+                      onClick={() => { if (window.confirm(`Delete \u201c${c.name}\u201d? This cannot be undone.`)) library.onDelete(c.id); }}>
+                      <svg className="rt-ico" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                        strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6" />
+                      </svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
       ) : windowOpen ? (
         <p className="rt-vm-sub">
           The chart is running in a second window so this dashboard stays free. Closing that window brings it back.
         </p>
       ) : (
         <VoidMap map={map} onChange={(next) => write({ map: next })} fleet={roster}
-          historyKey={`${map.seed}|${map.cols}x${map.rows}`} onUseShot={onUseShot} />
+          historyKey={`${state.chartId || '-'}|${map.seed}`} onUseShot={onUseShot}
+          gunnery={gunnery} library={library} />
       )}
     </>
   );

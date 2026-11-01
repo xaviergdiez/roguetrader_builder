@@ -84,7 +84,9 @@ import {
 } from './npcgen.js';
 import { rollSystem, describeSystem, describePlanet } from './stargen.js';
 import {
-  combatForBridge, buildScene as buildVoidScene, placeShips as placeVoidShips
+  combatForBridge, buildScene as buildVoidScene, placeShips as placeVoidShips, pruneShips as pruneVoidShips,
+  newVoidMap, readVoidLibrary, saveChart as saveVoidChart, deleteChart as deleteVoidChart,
+  chartSummary as voidChartSummary, readVoidMap as readVoidChart
 } from './voidmap.js';
 import {
   TYPES as BESTIARY_TYPES, searchBestiary, citation, indexToNpc
@@ -2023,6 +2025,71 @@ const CSS = `
 .rt-vm-shotcard .bad{color:#e58a7a;}
 .rt-vm-shotcard button{margin-top:4px;align-self:flex-start;}
 .rt-vm-add{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+/* ---- the chart's controls hidden, its menu, its questions ---- */
+.rt-vm.clean .rt-vm-bar,.rt-vm.clean .rt-vm-side{display:none;}
+.rt-vm.clean .rt-vm-stage{flex-basis:100%;}
+.rt-vm-peek{position:absolute;top:8px;right:8px;z-index:6;width:30px;height:30px;padding:0;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer;
+  color:var(--gold-lit);background:rgba(8,14,12,.8);border:1px solid var(--brass-dim);
+  opacity:.12;transition:opacity .15s;}
+.rt-vm-peek:hover,.rt-vm-peek:focus{opacity:1;}
+.rt-vm-menu{position:absolute;z-index:7;width:244px;max-height:calc(100% - 8px);overflow-y:auto;
+  padding:5px;background:var(--panel);border:1px solid var(--brass);
+  box-shadow:0 8px 28px rgba(0,0,0,.6);font-size:12.5px;color:var(--text);}
+.rt-vm-menu-h{font-family:var(--display);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--brass-lit);padding:2px 6px 4px;}
+.rt-vm-menu-item{display:flex;align-items:center;gap:6px;width:100%;text-align:left;padding:5px 7px;
+  background:transparent;border:1px solid transparent;color:var(--text);cursor:pointer;font:inherit;}
+.rt-vm-menu-item:hover{background:var(--panel-lit);border-color:var(--brass-dim);}
+.rt-vm-menu-item kbd{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--dim);}
+.rt-vm-menu-tick{display:inline-block;width:14px;text-align:center;flex:0 0 auto;color:var(--gold-lit);}
+.rt-vm-menu-sep{height:1px;margin:4px 2px;background:var(--brass-dim);}
+.rt-vm-menu-group{padding:2px 4px 4px;}
+.rt-vm-menu-gh{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--dim);margin:2px 0 3px;}
+.rt-vm-menu-chips{display:flex;flex-wrap:wrap;gap:3px;}
+.rt-vm-menu-chips button{padding:3px 7px;font:inherit;font-size:11.5px;cursor:pointer;
+  background:var(--well);color:var(--text);border:1px solid var(--brass-dim);}
+.rt-vm-menu-chips button:hover{border-color:var(--brass-lit);background:var(--panel-lit);}
+.rt-vm-askwrap{position:absolute;inset:0;z-index:9;display:flex;align-items:center;
+  justify-content:center;padding:12px;background:rgba(3,5,4,.72);}
+.rt-vm-ask{width:min(420px,100%);padding:14px 16px;background:var(--panel);
+  border:1px solid var(--brass);box-shadow:0 18px 50px rgba(0,0,0,.7);outline:none;}
+.rt-vm-ask h4{margin:0 0 8px;font-family:var(--display);font-size:13px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--gold-lit);}
+.rt-vm-ask p{margin:0 0 12px;font-size:13px;line-height:1.5;color:var(--text);}
+.rt-vm-askrow{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;}
+.rt-vm-gun{margin-top:8px;padding-top:6px;border-top:1px solid var(--brass-dim);
+  display:flex;flex-direction:column;gap:6px;}
+.rt-vm-gunrow{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.rt-vm-gunrow label{display:flex;flex-direction:column;gap:2px;font-family:var(--mono);
+  font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);}
+.rt-vm-gunrow .rt-field{font-size:13px;padding:3px 6px;min-height:0;}
+.rt-vm-tn{display:flex;flex-direction:column;gap:1px;font-size:12px;}
+.rt-vm-tn b{color:var(--gold-lit);font-size:14px;}
+.rt-vm-tn span{font-family:var(--mono);font-size:10.5px;color:var(--dim);}
+.rt-vm-btns{display:flex;flex-wrap:wrap;gap:4px;}
+.rt-vm-gunlog{list-style:none;margin:2px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;
+  max-height:170px;overflow-y:auto;}
+.rt-vm-gunlog li{font-size:11.5px;line-height:1.4;padding:3px 6px;background:var(--well);
+  border-left:3px solid var(--brass-dim);color:var(--text);}
+.rt-vm-gunlog li.hit{border-left-color:#e5574f;}
+.rt-vm-gunlog li.soak{border-left-color:#6bd08f;}
+.rt-vm-gunlog li.miss{border-left-color:var(--dim);color:var(--dim);}
+.rt-vm-gunlog li.critical{border-left-color:#ffbf47;color:#f3d28a;}
+.rt-vm-pins{margin:6px 0 2px;}
+.rt-vm-chipbtn{padding:3px 8px;font:inherit;font-size:11.5px;cursor:pointer;color:var(--text);
+  background:var(--well);border:1px solid var(--brass-dim);}
+.rt-vm-chipbtn.on{background:var(--panel-lit);color:var(--gold-lit);}
+.rt-vm-saved{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:3px;}
+.rt-vm-saved li{display:flex;gap:4px;align-items:stretch;}
+.rt-vm-saved li.on .rt-vm-open{border-color:var(--gold);background:var(--panel-lit);}
+.rt-vm-saved .rt-ico-btn{width:30px;height:auto;flex:0 0 30px;}
+.rt-vm-open{flex:1;display:flex;justify-content:space-between;gap:8px;text-align:left;padding:4px 7px;
+  background:var(--well);border:1px solid var(--brass-dim);color:var(--text);cursor:pointer;font:inherit;
+  font-size:12px;}
+.rt-vm-open:hover{border-color:var(--brass-lit);}
+.rt-vm-lib .rt-warn{margin:6px 0 0;}
 .rt-vm-bears{list-style:none;margin:4px 0 2px;padding:0;display:flex;flex-direction:column;gap:2px;}
 .rt-vm-bears button{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;
   padding:3px 6px;background:var(--panel);border:1px solid var(--brass-dim);color:var(--text);
@@ -2978,6 +3045,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [voidWindow, setVoidWindow] = useState(false);
   const [voidWindowErr, setVoidWindowErr] = useState('');
   const [voidShot, setVoidShot] = useState(null);
+  const [voidLibMsg, setVoidLibMsg] = useState({ error: '', note: '' });
 
   /* ---- generated grounds: their own store, not the homebrew library ----
      A ground carries its floor as a data URL. Signed in, the index comes
@@ -3260,10 +3328,78 @@ export default function RogueTraderBuilder({ me, cloud }) {
   }, [bridgeCode]);
   const [fleet, setFleet] = useState([]);          // the GM's NPC ships
   const [combat, setCombat] = useState(EMPTY_COMBAT);
+  const gun = useGunnery({ fleet, setFleet, combat, setCombat, blueprint, homebrew, bridgeCode, live: gmOpen || voidWindow });
   const voidRoster = useMemo(
     () => (gmOpen || voidWindow ? buildVoidRoster({ fleet, combat, blueprint, homebrew }) : []),
     [gmOpen, voidWindow, fleet, combat, blueprint, homebrew]
   );
+
+  /* ---- saved void charts ----
+     Kept in the homebrew library (see MAX_LIBRARY_BYTES in voidmap.js for why
+     they are capped well under it). Owned here, not in the dashboard, so the
+     chart's own window can save, open, start and close charts too. */
+  const voidCharts = useMemo(() => readVoidLibrary(homebrew && homebrew.voidcharts), [homebrew]);
+  const voidChartId = (combat.void && combat.void.chartId) || null;
+  const voidSaved = voidChartId ? voidCharts.find((c) => c.id === voidChartId) || null : null;
+  const voidLive = (combat.void && combat.void.map) || null;
+  /* "Changed since it was saved", or for a chart that never was, since it was
+     built or opened. A scene a seed can bring back, or a blank chart with the
+     fleet on it, is not work to lose; the first thing done to it is. The
+     baseline is the chart as it first arrived under this id and seed. */
+  const voidJson = useMemo(() => (voidLive ? JSON.stringify(readVoidChart(voidLive)) : ''), [voidLive]);
+  const voidSavedJson = useMemo(() => (voidSaved ? JSON.stringify(voidSaved.map) : ''), [voidSaved]);
+  const voidBase = useRef({ key: null, json: '' });
+  const voidKey = voidLive ? `${voidChartId || '-'}|${voidLive.seed}` : null;
+  if (voidBase.current.key !== voidKey) voidBase.current = { key: voidKey, json: voidJson };
+  const voidDirty = Boolean(voidLive) && (voidSaved ? voidSavedJson !== voidJson : voidBase.current.json !== voidJson);
+  const patchVoid = (patch) => setCombat((c) => ({ ...c, void: { ...(c.void || {}), ...patch } }));
+  const voidLib = {
+    list: voidCharts.map(voidChartSummary),
+    currentId: voidSaved ? voidSaved.id : null,
+    currentName: voidSaved ? voidSaved.name : '',
+    dirty: voidDirty,
+    error: voidLibMsg.error, note: voidLibMsg.note,
+    // Over the saved chart, or as a new one. Answers whether it was kept.
+    onSave: (name, asNew = false) => {
+      if (!voidLive) return false;
+      const r = saveVoidChart(voidCharts, { id: asNew ? null : voidChartId, name, map: voidLive });
+      if (!r.ok) { setVoidLibMsg({ error: r.error, note: '' }); return false; }
+      setHomebrew({ ...(homebrew || {}), voidcharts: r.library });
+      patchVoid({ chartId: r.id });
+      setVoidLibMsg({ error: '', note: `Saved \u201c${r.entry.name}\u201d.` });
+      return true;
+    },
+    onSaveAs: (name) => voidLib.onSave(name, true),
+    onDelete: (id) => {
+      const gone = voidCharts.find((c) => c.id === id);
+      setHomebrew({ ...(homebrew || {}), voidcharts: deleteVoidChart(voidCharts, id) });
+      if (id === voidChartId) patchVoid({ chartId: null });
+      setVoidLibMsg({ error: '', note: gone ? `Deleted \u201c${gone.name}\u201d.` : '' });
+    },
+    // The saved chart's ships are whoever was in the fleet when it was saved:
+    // those still here keep their places, the rest come off, new ones are put on.
+    onOpen: (id) => {
+      const c = voidCharts.find((x) => x.id === id);
+      if (!c) return;
+      const m = placeVoidShips(pruneVoidShips(c.map, voidRoster.map((r) => r.id)), voidRoster);
+      patchVoid({ map: m, chartId: id });
+      setVoidLibMsg({ error: '', note: `Opened \u201c${c.name}\u201d.` });
+    },
+    onNew: () => {
+      const seed = Math.random().toString(36).slice(2, 8).toUpperCase();
+      patchVoid({ map: placeVoidShips({ ...newVoidMap('New chart'), seed }, voidRoster), chartId: null });
+      setVoidLibMsg({ error: '', note: '' });
+    },
+    // Off the screen, and out of its window. The star system stays.
+    onClose: () => {
+      setCombat((c) => {
+        const { map, chartId, ...rest } = c.void || {};
+        return { ...c, void: rest };
+      });
+      setVoidWindow(false);
+      setVoidLibMsg({ error: '', note: '' });
+    }
+  };
 
   /* THE MAP BOTH PLACES ARE LOOKING AT.
 
@@ -4160,7 +4296,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           mapErr={mapErr} setMapErr={setMapErr}
           voidRoster={voidRoster} voidWindow={voidWindow} setVoidWindow={setVoidWindow}
           voidWindowErr={voidWindowErr} setVoidWindowErr={setVoidWindowErr}
-          voidShot={voidShot} setVoidShot={setVoidShot}
+          voidShot={voidShot} setVoidShot={setVoidShot} gun={gun} voidLib={voidLib}
           grounds={grounds} onSaveGround={saveGroundToLibrary}
           onNeedGroundTexture={loadGroundTexture} groundErr={groundErr}
           decks={decksForMap} deckErr={deckErr} deckId={deckId} openDeck={openDeck}
@@ -4228,8 +4364,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
               onChange={(next) => setCombat((c) => ({ ...c, void: { ...(c.void || {}), map: next } }))}
               fleet={voidRoster}
               win={win}
-              historyKey={`${combat.void.map.seed}|${combat.void.map.cols}x${combat.void.map.rows}`}
-              onUseShot={(shot) => setVoidShot({ ...shot, at: Date.now() })}
+              historyKey={`${voidChartId || '-'}|${combat.void.map.seed}`}
+              gunnery={gunSurface(gun)}
+              library={voidLib}
+              onUseShot={(shot) => gun.loadShot(shot)}
             />
           )}
         </MapWindow>
@@ -8444,10 +8582,305 @@ function mapStamp(map) {
 // index when it is not.
 const deckSizeOf = (d) => (d && d.map ? `${d.map.cols}\u00d7${d.map.rows}` : deckSize(d));
 
+/* The gunnery, lifted out of the GM dashboard.
+
+   The dashboard used to own the whole of it: who is shooting whom with what, the
+   dice, the damage, the log, and the push to the shared ship. That was fine
+   while the only way to fire was its Void combat tab. The void chart can fire
+   too, and it lives in a window of its own that outlives the dashboard, so the
+   state and the rolls live up here where both can reach them, and the dashboard
+   and the chart are two views of one gunnery. `live` is whether a GM surface is
+   open, which is when the ship is pushed to the table. */
+function useGunnery({ fleet, setFleet, combat, setCombat, blueprint, homebrew, bridgeCode, live }) {
+  const endeavours = readEndeavours(homebrew && homebrew.endeavours);
+
+  const [attackerId, setAttackerId] = useState('player');
+  const [targetId, setTargetId] = useState('');
+  const [weaponId, setWeaponId] = useState('weap-macrocannon-mars');
+  const [distance, setDistance] = useState(3);
+  const [lockDoS, setLockDoS] = useState(0);
+  const [spiritDoS, setSpiritDoS] = useState(0);
+  const [bs, setBs] = useState(40);
+  const [log, setLog] = useState([]);
+  // A shot lined up on the void chart, as the gunnery panel last received it.
+  const [fromChart, setFromChart] = useState(null);
+
+  // The player's ship is always in the fleet, derived rather than stored, so
+  // it cannot drift from the blueprint the player is editing.
+  const playerShip = {
+    id: 'player', player: true,
+    vitals: combat.playerVitals || newVitals(blueprint)
+  };
+  const ships = [playerShip, ...fleet];
+  const usable = usableCustom(homebrew);
+  const bpWithCustom = { ...blueprint, custom: usable };
+  // An Endeavour marked under way is the app's answer to "participating in
+  // an Endeavour" — the one Adventurous turns on.
+  const onEndeavour = endeavours.some((e) => e.status === 'active');
+  const profileOf = (s) => shipProfile(s, bpWithCustom, usable,
+    { inEndeavour: onEndeavour });
+  const byId = (id) => ships.find((s) => s.id === id);
+
+  const say = (entry) => setLog((p) => [{ ...entry, key: newId() }, ...p].slice(0, 30));
+
+  /* ---- publishing ----
+     Driven by an effect watching the shared state rather than a call in each
+     handler. Every action here mutates fleet or combat, so watching those two
+     cannot miss one — where a call per handler is a list to keep in step, and
+     the one that gets forgotten is invisible until a player asks why their
+     screen is stale.
+
+     Debounced, because a burst of clicks would otherwise be a burst of writes
+     against the command budget, and the players only need the settled state. */
+  const [pushed, setPushed] = useState(null);
+  // The last state actually sent. Guarding on content rather than on "is this
+  // the first run" because a first-run flag does not survive StrictMode, which
+  // mounts, tears down and mounts again: the ref was already true on the
+  // second pass, so opening the panel pushed — the very clobber the guard was
+  // there to prevent.
+  const lastSent = useRef(null);
+
+  // The newest log line, so the bridge log reads as what the GM just did
+  // rather than "the GM updated the bridge". Declared above the effect that
+  // closes over it: reading a const from above its declaration is only safe
+  // while the read is deferred, and this project has already had one TDZ
+  // error blank every screen.
+  const logRef = useRef(null);
+
+  useEffect(() => {
+    // Only while the GM surface is up: the dashboard, or the chart's own window.
+    if (!bridgeCode || !live) return undefined;
+
+    // The map is compared by identity, not by content: stringifying a big
+    // one on every paint stroke would cost more than the stroke did.
+    const snapshot = JSON.stringify({ fleet, combat: combatSansMap(combat) })
+      + '|' + mapStamp(combat && combat.ground && combat.ground.map);
+    // Opening the panel is not a change. Remember what was there and send
+    // nothing until it differs.
+    if (lastSent.current === null) { lastSent.current = snapshot; return undefined; }
+    if (lastSent.current === snapshot) return undefined;
+
+    const t = setTimeout(() => {
+      writeBridge({
+        code: bridgeCode,
+        doc: { fleet, combat: combatForBridge(combat) },
+        vitals: combat.playerVitals || newVitals(blueprint),
+        log: logRef.current
+      }).then((r) => {
+        lastSent.current = snapshot;
+        setPushed({ rev: r.rev, at: Date.now() });
+      }).catch((e) => say({ kind: 'miss', text: 'Bridge: ' + e.message }));
+    }, 700);
+    return () => clearTimeout(t);
+  }, [fleet, combat, bridgeCode, live]);
+
+  logRef.current = log.length ? log[0].text : null;
+
+  const setVitals = (id, patch) => {
+    if (id === 'player') {
+      setCombat({ ...combat, playerVitals: { ...playerShip.vitals, ...patch } });
+    } else {
+      setFleet(fleet.map((s) => (s.id === id ? { ...s, vitals: { ...s.vitals, ...patch } } : s)));
+    }
+  };
+
+  /* ---- firing ---- */
+
+  const attacker = byId(attackerId);
+  const targetShip = byId(targetId);
+  const attackerP = attacker ? profileOf(attacker) : null;
+  const targetP = targetShip ? profileOf(targetShip) : null;
+  const weapon = componentById(weaponId, usable);
+
+  // What the chart told the gunnery panel, honoured only while the panel still
+  // shows the same shot: change the attacker, target or distance by hand and it
+  // is no longer the chart's number.
+  const chartShot = fromChart && fromChart.attackerId === attackerId
+    && fromChart.targetId === targetId && fromChart.distance === distance ? fromChart : null;
+
+  // The target number for one weapon on the current target.
+  const hitFor = (wid, w) => (targetP && w ? toHit({
+    ballisticSkill: bs,
+    weaponId: wid,
+    // passed explicitly so a homebrew weapon's range is honoured: toHit
+    // resolves ids against the built-ins only
+    weaponRange: w.range,
+    distanceVU: distance,
+    targetClass: targetP.cls,
+    lockDoS,
+    machineSpiritDoS: spiritDoS,
+    evadingDoS: targetShip.evadingDoS,
+    crippled: (targetShip.vitals.hullIntegrity || 0) <= 0,
+    silhouetted: Boolean(chartShot && chartShot.silhouetted),
+    extras: chartShot ? chartShot.parts : []
+  }) : null);
+
+  const hit = hitFor(weaponId, weapon);
+  // The table's number says it can fire; the chart may say the mount cannot
+  // bear, or a planet is in the way. Either one stops the shot.
+  const chartBlocks = Boolean(chartShot && chartShot.canFire === false);
+  const canShoot = Boolean(hit && hit.canFire && !chartBlocks);
+
+  /* One attack with one weapon against the current target, from the vitals it
+     is given rather than the ones on screen, so a broadside can thread each
+     weapon's damage into the next. Answers { patch, entries } or null when the
+     weapon cannot fire at all. Dice are rolled here so voidcombat stays pure. */
+  const strike = (wid, vitalsIn) => {
+    const w = componentById(wid, usable);
+    const h = hitFor(wid, w);
+    if (!attackerP || !targetP || !w || !h || !h.canFire) return null;
+    const roll = roll1d100();
+    const test = resolveTest(h.target, 0, roll);
+    if (!test.success) {
+      return { patch: null, entries: [{ kind: 'miss',
+        text: `${attackerP.name} missed ${targetP.name} with ${w.name} — rolled ${roll} against ${h.target}.` }] };
+    }
+    const hits = hitsScored(test.degrees, w.str);
+    const rolls = Array.from({ length: hits }, () => d(10));
+    const res = resolveAttack({
+      weaponId: wid,
+      // likewise: the stats travel with the call so homebrew resolves
+      weaponClass: w.weaponClass,
+      strength: w.str,
+      damageBonus: w.damageBonus,
+      hits,
+      damageRolls: rolls,
+      pointBlank: h.pointBlank,
+      target: {
+        turretRating: targetP.turretRating,
+        voidShields: vitalsIn.voidShields ?? targetP.voidShields,
+        // Armour Cracked is stored as a penalty rather than rewritten into
+        // the hull, so it has to be subtracted at the point of use.
+        armour: Math.max(0, targetP.armour - (vitalsIn.armourDamage || 0)),
+        hullIntegrity: vitalsIn.hullIntegrity
+      }
+    });
+    const damaged = { ...vitalsIn, hullIntegrity: res.hullIntegrity, voidShields: res.shieldsRemaining };
+    // A triggered critical rolls here rather than waiting for the GM to
+    // remember the button: the table is the consequence of the hit.
+    const crit = res.criticalTriggered ? critOn(damaged, targetP) : null;
+    const entries = [{ kind: res.netHullDamage > 0 ? 'hit' : 'soak', roll, test, res, rolls,
+      text: `${attackerP.name} → ${targetP.name} (${w.name}): rolled ${roll} against ${h.target}`
+        + ` (${test.degrees} DoS), ${res.hitsScored} hits`
+        + (res.turretsStop ? `, ${res.turretsStop} shot down` : '')
+        + (res.shieldsStop ? `, ${res.shieldsStop} on the shields` : '')
+        + `, ${res.combinedDamage} damage less ${res.armourMitigation} armour`
+        + ` = ${res.netHullDamage} to the hull.`
+        + (res.destroyed ? ' The ship is crippled.' : '') }];
+    if (crit) entries.push({ kind: 'critical', text: crit.text });
+    return {
+      patch: { hullIntegrity: res.hullIntegrity, voidShields: res.shieldsRemaining, ...(crit ? crit.vitals : null) },
+      entries
+    };
+  };
+
+  const fire = () => {
+    if (!canShoot || !targetShip) return;
+    const r = strike(weaponId, targetShip.vitals);
+    if (!r) return;
+    if (r.patch) setVitals(targetId, r.patch);
+    r.entries.forEach(say);
+  };
+
+  // Every weapon named, one after another, on the current target. Each is
+  // rolled against the vitals the one before left behind.
+  const volley = (weaponIds) => {
+    if (!targetShip || !targetP || !attackerP) return;
+    let v = targetShip.vitals;
+    const entries = [];
+    for (const wid of weaponIds || []) {
+      const r = strike(wid, v);
+      if (!r) continue;
+      if (r.patch) v = { ...v, ...r.patch };
+      entries.push(...r.entries);
+    }
+    if (!entries.length) return;
+    if (v !== targetShip.vitals) setVitals(targetId, v);
+    entries.forEach(say);
+  };
+
+  // The target number for a named weapon on the current target, or null when it
+  // cannot fire: what the chart prints beside each gun.
+  const targetNumber = (wid) => {
+    const h = hitFor(wid, componentById(wid, usable));
+    return h && h.canFire ? h.target : null;
+  };
+
+  // A shot lined up on the void chart: aim the panel the same way.
+  const loadShot = (shot) => {
+    setAttackerId(shot.attackerId);
+    setTargetId(shot.targetId);
+    setDistance(shot.distance);
+    if (shot.weaponId) setWeaponId(shot.weaponId);
+    setFromChart({
+      attackerId: shot.attackerId, targetId: shot.targetId, distance: shot.distance,
+      silhouetted: Boolean(shot.silhouetted), silhouette: shot.silhouette || null,
+      parts: shot.parts || [],
+      canFire: shot.canFire !== false, blocked: shot.blocked || null, outOfArc: Boolean(shot.outOfArc)
+    });
+  };
+
+  /* ---- criticals ----
+     The table used to print its own name and stop there, which left the GM
+     adjusting Speed and Population by hand. Now the row is applied. Dice are
+     rolled here so voidcombat stays pure; `component` is picked here too,
+     because only this side knows what the target has bolted on. */
+
+  const critOn = (vitals, profile, roll = d(10)) => {
+    const weapons = (profile && profile.weapons) || [];
+    const res = applyCritical(vitals, roll, {
+      d5: () => d(5),
+      d10: () => d(10),
+      d100: () => roll1d100(),
+      component: weapons.length ? weapons[Math.floor(Math.random() * weapons.length)] : null,
+      base: profile ? { detection: profile.detection, speed: profile.speed } : {}
+    });
+    if (res.unknown || !res.effect) return null;
+    const changes = Object.entries(res.vitals || {})
+      .map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ');
+    return {
+      ...res,
+      text: `Critical ${roll} on ${profile ? profile.name : 'the ship'}: `
+        + `${res.effect.name} — ${res.effect.effect}`
+        + (changes ? ` [${changes}]` : '')
+        + (res.notes && res.notes.length ? ` ${res.notes.join(' ')}` : '')
+    };
+  };
+
+  const rollCritical = () => {
+    if (!targetShip || !targetP) return;
+    const crit = critOn(targetShip.vitals, targetP);
+    if (!crit) return;
+    setVitals(targetId, crit.vitals);
+    say({ kind: 'critical', text: crit.text });
+  };
+
+  return {
+    attackerId, setAttackerId, targetId, setTargetId, weaponId, setWeaponId,
+    distance, setDistance, lockDoS, setLockDoS, spiritDoS, setSpiritDoS, bs, setBs,
+    log, setLog, fromChart, setFromChart, pushed,
+    playerShip, ships, usable, bpWithCustom, onEndeavour, profileOf, byId, say, setVitals,
+    attacker, attackerP, targetShip, targetP, weapon, chartShot, hit, canShoot, chartBlocks,
+    hitFor, targetNumber, strike, fire, volley, critOn, rollCritical, loadShot
+  };
+}
+
+/* What the void chart is given of the gunnery: the numbers it prints and the
+   rolls it can make, without the rest. */
+const gunSurface = (g) => ({
+  hit: g.hit, canShoot: g.canShoot, chartBlocks: g.chartBlocks,
+  bs: g.bs, setBs: g.setBs, lockDoS: g.lockDoS, setLockDoS: g.setLockDoS,
+  spiritDoS: g.spiritDoS, setSpiritDoS: g.setSpiritDoS,
+  attackerId: g.attackerId, targetId: g.targetId,
+  targetNumber: g.targetNumber,
+  aim: g.loadShot, fire: g.fire, volley: g.volley, rollCritical: g.rollCritical,
+  log: g.log.slice(0, 6)
+});
+
 function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
   voidRoster = [], voidWindow = false, setVoidWindow = () => {},
-  voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {},
+  voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {}, gun, voidLib = null,
   grounds, onSaveGround, onNeedGroundTexture, groundErr,
   decks, deckErr, deckId, openDeck, createDeck, renameDeck, deleteDeck,
   mapView, setMapView, activeMap, setActiveMap, activeMapKey, onClose }) {
@@ -8458,14 +8891,15 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   }, []);
   const close = () => dialogRef.current && dialogRef.current.close();
 
-  const [attackerId, setAttackerId] = useState('player');
-  const [targetId, setTargetId] = useState('');
-  const [weaponId, setWeaponId] = useState('weap-macrocannon-mars');
-  const [distance, setDistance] = useState(3);
-  const [lockDoS, setLockDoS] = useState(0);
-  const [spiritDoS, setSpiritDoS] = useState(0);
-  const [bs, setBs] = useState(40);
-  const [log, setLog] = useState([]);
+  // The gunnery is shared with the void chart's own window: see useGunnery.
+  const {
+    attackerId, setAttackerId, targetId, setTargetId, weaponId, setWeaponId,
+    distance, setDistance, lockDoS, setLockDoS, spiritDoS, setSpiritDoS, bs, setBs,
+    log, setLog, fromChart, setFromChart, pushed,
+    playerShip, ships, usable, bpWithCustom, onEndeavour, profileOf, byId, say, setVitals,
+    attacker, attackerP, targetShip, targetP, weapon, chartShot, hit, canShoot, chartBlocks,
+    fire, volley, critOn, rollCritical
+  } = gun;
   const [eventId, setEventId] = useState('macro_strike');
   const [eventAmount, setEventAmount] = useState(5);
   const [gmTab, setGmTab] = useState('fleet');
@@ -8474,8 +8908,6 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   // from is kept with the combat state (never sent to the shared ship), so
   // it comes back with the character.
   const [system, setSystem] = useState((combat.void && combat.void.system) || null);
-  // A shot lined up on the void chart, as the gunnery panel last received it.
-  const [fromChart, setFromChart] = useState(null);
 
   /* ---- the encounter library ----
      Stored in the homebrew library (see encounters.js for why), which the
@@ -8615,16 +9047,10 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   };
   const [eventShip, setEventShip] = useState('player');
 
+  // The chart already aimed the shared gunnery when the shot was lined up;
+  // "Use in gunnery" only asks to be taken there.
   useEffect(() => {
     if (!voidShot) return;
-    setAttackerId(voidShot.attackerId);
-    setTargetId(voidShot.targetId);
-    setDistance(voidShot.distance);
-    if (voidShot.weaponId) setWeaponId(voidShot.weaponId);
-    setFromChart({
-      attackerId: voidShot.attackerId, targetId: voidShot.targetId, distance: voidShot.distance,
-      silhouetted: voidShot.silhouetted, silhouette: voidShot.silhouette, parts: voidShot.parts || []
-    });
     setGmTab('void');
     setVoidShot(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -8637,84 +9063,6 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     m = placeVoidShips(m, voidRoster);
     setCombat((c) => ({ ...c, void: { ...(c.void || {}), system, map: m } }));
     setGmTab('voidmap');
-  };
-
-  // The player's ship is always in the fleet, derived rather than stored, so
-  // it cannot drift from the blueprint the player is editing.
-  const playerShip = {
-    id: 'player', player: true,
-    vitals: combat.playerVitals || newVitals(blueprint)
-  };
-  const ships = [playerShip, ...fleet];
-  const usable = usableCustom(homebrew);
-  const bpWithCustom = { ...blueprint, custom: usable };
-  // An Endeavour marked under way is the app's answer to "participating in
-  // an Endeavour" — the one Adventurous turns on.
-  const onEndeavour = endeavours.some((e) => e.status === 'active');
-  const profileOf = (s) => shipProfile(s, bpWithCustom, usable,
-    { inEndeavour: onEndeavour });
-  const byId = (id) => ships.find((s) => s.id === id);
-
-  const say = (entry) => setLog((p) => [{ ...entry, key: newId() }, ...p].slice(0, 30));
-
-  /* ---- publishing ----
-     Driven by an effect watching the shared state rather than a call in each
-     handler. Every action here mutates fleet or combat, so watching those two
-     cannot miss one — where a call per handler is a list to keep in step, and
-     the one that gets forgotten is invisible until a player asks why their
-     screen is stale.
-
-     Debounced, because a burst of clicks would otherwise be a burst of writes
-     against the command budget, and the players only need the settled state. */
-  const [pushed, setPushed] = useState(null);
-  // The last state actually sent. Guarding on content rather than on "is this
-  // the first run" because a first-run flag does not survive StrictMode, which
-  // mounts, tears down and mounts again: the ref was already true on the
-  // second pass, so opening the panel pushed — the very clobber the guard was
-  // there to prevent.
-  const lastSent = useRef(null);
-
-  // The newest log line, so the bridge log reads as what the GM just did
-  // rather than "the GM updated the bridge". Declared above the effect that
-  // closes over it: reading a const from above its declaration is only safe
-  // while the read is deferred, and this project has already had one TDZ
-  // error blank every screen.
-  const logRef = useRef(null);
-
-  useEffect(() => {
-    if (!bridgeCode) return undefined;
-
-    // The map is compared by identity, not by content: stringifying a big
-    // one on every paint stroke would cost more than the stroke did.
-    const snapshot = JSON.stringify({ fleet, combat: combatSansMap(combat) })
-      + '|' + mapStamp(combat && combat.ground && combat.ground.map);
-    // Opening the panel is not a change. Remember what was there and send
-    // nothing until it differs.
-    if (lastSent.current === null) { lastSent.current = snapshot; return undefined; }
-    if (lastSent.current === snapshot) return undefined;
-
-    const t = setTimeout(() => {
-      writeBridge({
-        code: bridgeCode,
-        doc: { fleet, combat: combatForBridge(combat) },
-        vitals: combat.playerVitals || newVitals(blueprint),
-        log: logRef.current
-      }).then((r) => {
-        lastSent.current = snapshot;
-        setPushed({ rev: r.rev, at: Date.now() });
-      }).catch((e) => say({ kind: 'miss', text: 'Bridge: ' + e.message }));
-    }, 700);
-    return () => clearTimeout(t);
-  }, [fleet, combat, bridgeCode]);
-
-  logRef.current = log.length ? log[0].text : null;
-
-  const setVitals = (id, patch) => {
-    if (id === 'player') {
-      setCombat({ ...combat, playerVitals: { ...playerShip.vitals, ...patch } });
-    } else {
-      setFleet(fleet.map((s) => (s.id === id ? { ...s, vitals: { ...s.vitals, ...patch } } : s)));
-    }
   };
 
   /* ---- fleet ---- */
@@ -8776,123 +9124,6 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
     }
     say({ kind: 'phase',
       text: `Phase: ${PHASE_LABELS[next]}${newTurn ? ' — new turn, void shields restored' : ''}` });
-  };
-
-  /* ---- firing ---- */
-
-  const attacker = byId(attackerId);
-  const targetShip = byId(targetId);
-  const attackerP = attacker ? profileOf(attacker) : null;
-  const targetP = targetShip ? profileOf(targetShip) : null;
-  const weapon = componentById(weaponId, usable);
-
-  // What the chart told the gunnery panel, honoured only while the panel still
-  // shows the same shot: change the attacker, target or distance by hand and it
-  // is no longer the chart's number.
-  const chartShot = fromChart && fromChart.attackerId === attackerId
-    && fromChart.targetId === targetId && fromChart.distance === distance ? fromChart : null;
-
-  const hit = targetP && weapon ? toHit({
-    ballisticSkill: bs,
-    weaponId,
-    // passed explicitly so a homebrew weapon's range is honoured: toHit
-    // resolves ids against the built-ins only
-    weaponRange: weapon.range,
-    distanceVU: distance,
-    targetClass: targetP.cls,
-    lockDoS,
-    machineSpiritDoS: spiritDoS,
-    evadingDoS: targetShip.evadingDoS,
-    crippled: (targetShip.vitals.hullIntegrity || 0) <= 0,
-    silhouetted: Boolean(chartShot && chartShot.silhouetted),
-    extras: chartShot ? chartShot.parts : []
-  }) : null;
-
-  const fire = () => {
-    if (!hit || !hit.canFire || !weapon || !targetP) return;
-    const roll = roll1d100();
-    const test = resolveTest(hit.target, 0, roll);
-    if (!test.success) {
-      say({ kind: 'miss', text: `${attackerP.name} missed ${targetP.name} — rolled ${roll} against ${hit.target}.` });
-      return;
-    }
-    const hits = hitsScored(test.degrees, weapon.str);
-    const rolls = Array.from({ length: hits }, () => d(10));
-    const res = resolveAttack({
-      weaponId,
-      // likewise: the stats travel with the call so homebrew resolves
-      weaponClass: weapon.weaponClass,
-      strength: weapon.str,
-      damageBonus: weapon.damageBonus,
-      hits,
-      damageRolls: rolls,
-      pointBlank: hit.pointBlank,
-      target: {
-        turretRating: targetP.turretRating,
-        voidShields: targetShip.vitals.voidShields ?? targetP.voidShields,
-        // Armour Cracked is stored as a penalty rather than rewritten into
-        // the hull, so it has to be subtracted at the point of use.
-        armour: Math.max(0, targetP.armour - (targetShip.vitals.armourDamage || 0)),
-        hullIntegrity: targetShip.vitals.hullIntegrity
-      }
-    });
-    const damaged = {
-      ...targetShip.vitals,
-      hullIntegrity: res.hullIntegrity,
-      voidShields: res.shieldsRemaining
-    };
-    // A triggered critical rolls here rather than waiting for the GM to
-    // remember the button: the table is the consequence of the hit.
-    const crit = res.criticalTriggered ? critOn(damaged, targetP) : null;
-    setVitals(targetId, {
-      hullIntegrity: res.hullIntegrity,
-      voidShields: res.shieldsRemaining,
-      ...(crit ? crit.vitals : null)
-    });
-    say({ kind: res.netHullDamage > 0 ? 'hit' : 'soak', roll, test, res, rolls,
-      text: `${attackerP.name} → ${targetP.name}: rolled ${roll} against ${hit.target}`
-        + ` (${test.degrees} DoS), ${res.hitsScored} hits`
-        + (res.turretsStop ? `, ${res.turretsStop} shot down` : '')
-        + (res.shieldsStop ? `, ${res.shieldsStop} on the shields` : '')
-        + `, ${res.combinedDamage} damage less ${res.armourMitigation} armour`
-        + ` = ${res.netHullDamage} to the hull.`
-        + (res.destroyed ? ' The ship is crippled.' : '') });
-    if (crit) say({ kind: 'critical', text: crit.text });
-  };
-
-  /* ---- criticals ----
-     The table used to print its own name and stop there, which left the GM
-     adjusting Speed and Population by hand. Now the row is applied. Dice are
-     rolled here so voidcombat stays pure; `component` is picked here too,
-     because only this side knows what the target has bolted on. */
-
-  const critOn = (vitals, profile, roll = d(10)) => {
-    const weapons = (profile && profile.weapons) || [];
-    const res = applyCritical(vitals, roll, {
-      d5: () => d(5),
-      d10: () => d(10),
-      d100: () => roll1d100(),
-      component: weapons.length ? weapons[Math.floor(Math.random() * weapons.length)] : null,
-      base: profile ? { detection: profile.detection, speed: profile.speed } : {}
-    });
-    if (res.unknown || !res.effect) return null;
-    const changes = Object.entries(res.vitals || {})
-      .map(([k, v]) => `${k} ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ');
-    return {
-      ...res,
-      text: `Critical ${roll} on ${profile ? profile.name : 'the ship'}: `
-        + `${res.effect.name} — ${res.effect.effect}`
-        + (changes ? ` [${changes}]` : '')
-        + (res.notes && res.notes.length ? ` ${res.notes.join(' ')}` : '')
-    };
-  };
-
-  const rollCritical = () => {
-    if (!targetShip || !targetP) return;
-    const crit = critOn(targetShip.vitals, targetP);
-    if (!crit) return;
-    setVitals(targetId, crit.vitals);
-    say({ kind: 'critical', text: crit.text });
   };
 
   /* ---- events ---- */
@@ -9081,9 +9312,17 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           ? <TargetNumber total={hit.target} base={hit.base} parts={hit.parts} band={hit.band} />
           : <div className="rt-warn"><p>Out of range: {weapon.name} reaches {weapon.range} VU.</p></div>
       )}
+      {hit && hit.canFire && chartBlocks && (
+        <div className="rt-warn">
+          <p>
+            {chartShot.blocked ? `${chartShot.blocked} is in the way.` : 'This weapon\u2019s mount cannot bear on the target.'}
+            {' '}The void chart will not let it fire. Pick another weapon, or move or turn the ship on the chart.
+          </p>
+        </div>
+      )}
 
       <div className="rt-btnrow">
-        <button className="rt-btn" disabled={!hit || !hit.canFire} onClick={fire}>Fire</button>
+        <button className="rt-btn" disabled={!canShoot} onClick={fire}>Fire</button>
         <button className="rt-btn ghost" disabled={!targetP} onClick={rollCritical}>Roll critical</button>
       </div>
 
@@ -9096,7 +9335,8 @@ function GmPanel({ fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
           system={system} setSystem={setSystem}
           windowOpen={voidWindow} windowErr={voidWindowErr}
           onWindow={() => { setVoidWindowErr(''); setVoidWindow(true); }}
-          onUseShot={(shot) => setVoidShot({ ...shot, at: Date.now() })}
+          gunnery={gunSurface(gun)} library={voidLib}
+          onUseShot={(shot) => { gun.loadShot(shot); setVoidShot({ ...shot, at: Date.now() }); }}
         />
       </>)}
       {gmTab === 'events' && (<>

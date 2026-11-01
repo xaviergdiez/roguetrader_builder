@@ -160,8 +160,10 @@ const ZONE_STAR = {
 
 const num = (v, dflt = 0) => (Number.isFinite(Number(v)) ? Number(v) : dflt);
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
-const round1 = (n) => Math.round(n * 10) / 10;
-const round2 = (n) => Math.round(n * 100) / 100;
+// The `+ 0` turns a rounded -0 into 0: a rotation that should land exactly on
+// an axis otherwise leaves a -0 that compares unequal to the 0 it means.
+const round1 = (n) => Math.round(n * 10) / 10 + 0;
+const round2 = (n) => Math.round(n * 100) / 100 + 0;
 const str = (v, max, dflt = '') => (typeof v === 'string' ? v.trim().slice(0, max) : dflt);
 const HEX = /^#[0-9a-f]{6}$/i;
 const hex = (v, dflt) => (typeof v === 'string' && HEX.test(v) ? v.toLowerCase() : dflt);
@@ -275,6 +277,9 @@ function readBody(b) {
     // world a pilot can see from orbit.
     air: clamp(Math.floor(num(b.air)), 0, 3),
     well: round2(clamp(num(b.well), 0, 80)),
+    // Which way it is turned, in degrees clockwise. Nothing but looks: a hulk's
+    // long axis, a station's spokes, the tilt of a giant's bands.
+    rot: Math.round(norm360(num(b.rot))),
     note: str(b.note, 300),
     state: STATES.includes(b.state) ? b.state : 'seen'
   };
@@ -297,6 +302,9 @@ function readField(f) {
     moveMod: f.moveMod === undefined ? spec.moveMod
       : (f.moveMod === null || f.moveMod === '' ? null : clamp(Math.round(num(f.moveMod)), -50, 50)),
     note: str(f.note, 300),
+    // A band's direction is its two ends; a round field's `rot` only turns the
+    // rocks or the wisps drawn inside it.
+    rot: shape === 'band' ? 0 : Math.round(norm360(num(f.rot))),
     state: STATES.includes(f.state) ? f.state : 'seen'
   };
   if (shape === 'band') {
@@ -342,13 +350,32 @@ function readHazard(h) {
   };
 }
 
+/* A pinned attack range: one mount's arc and reach, cast on the chart and kept
+   there. It belongs to a ship and follows it, turning when the ship turns, so
+   it is stored as which ship and which mount, plus the numbers it was pinned
+   with (a table that cannot read a ship's weapons can still read its reach). */
+function readOverlay(o) {
+  if (!o || typeof o !== 'object') return null;
+  const shipId = str(o.shipId, 40);
+  const range = round1(clamp(num(o.range), 0, 200));
+  if (!shipId || range <= 0) return null;
+  return {
+    id: str(o.id, 24) || newVoidId(),
+    shipId,
+    slot: ARC_SLOTS.includes(o.slot) ? o.slot : null,
+    range,
+    name: str(o.name, 80)
+  };
+}
+export const MAX_OVERLAYS = 60;
+
 const list = (raw, read, cap) => (Array.isArray(raw) ? raw : []).map(read).filter(Boolean).slice(0, cap);
 
 export const EMPTY_VOID = Object.freeze({
   v: 1, name: 'Void scene', cols: 64, rows: 40, seed: '',
   mmPerSquare: 25, pxPerSquare: 18, grid: true, minis: true,
   source: null, glow: 0.6,
-  stars: [], bodies: [], fields: [], hazards: [], ships: []
+  stars: [], bodies: [], fields: [], hazards: [], ships: [], overlays: []
 });
 
 /* Anything absent is defaulted rather than trusted, the same way readMap
@@ -385,7 +412,8 @@ export function readVoidMap(m) {
     bodies: list(src.bodies, readBody, MAX_BODIES),
     fields: list(src.fields, readField, MAX_FIELDS),
     hazards: list(src.hazards, readHazard, 8),
-    ships: list(src.ships, readShip, MAX_SHIPS)
+    ships: list(src.ships, readShip, MAX_SHIPS),
+    overlays: list(src.overlays, readOverlay, MAX_OVERLAYS)
   };
 }
 
@@ -456,7 +484,7 @@ function planetBodies(element, at, rng, ids, cols, rows) {
   const out = [{
     id: ids(), kind: 'planet',
     name: element.homeworld ? 'Homeworld' : `Planet · ${p.climate.name}`,
-    x: at.x, y: at.y, r, tone, air, well: round2(r * 2.6),
+    x: at.x, y: at.y, r, tone, air, well: round2(r * 2.6), rot: Math.floor(rng() * 360),
     note: bits.join(' · '), state: 'seen'
   }];
   const fields = [];
@@ -514,7 +542,8 @@ function layElement(element, zoneId, cols, rows, taken, rng, ids, features, firs
       const at = spot(rng, cols, rows, r + 6, taken, { centre: k });
       added.bodies.push({
         id: ids(), kind: 'gas_giant', name: 'Gas Giant', x: at.x, y: at.y, r,
-        tone: pickOf(rng, GIANT_TONES), air: 3, well: round2(r * 2.2), note: '', state: 'seen'
+        tone: pickOf(rng, GIANT_TONES), air: 3, well: round2(r * 2.2), note: '', state: 'seen',
+        rot: Math.floor(rng() * 40) - 20
       });
       const moons = 2 + Math.floor(rng() * 3);
       for (let i = 0; i < moons; i++) {
@@ -618,6 +647,7 @@ function layElement(element, zoneId, cols, rows, taken, rng, ids, features, firs
       added.bodies.push({
         id: ids(), kind: 'station', name: s ? s.origin.name : 'Derelict Station',
         x: at.x, y: at.y, r: 2.2, tone: s && s.xenos ? '#7fbf9a' : '#b59a62', air: 0, well: 0,
+        rot: Math.floor(rng() * 360),
         note: s ? `${s.origin.name} · Armour ${s.armour}, Hull ${s.hullIntegrity}` : '',
         state: 'ping'
       });
@@ -641,7 +671,7 @@ function layElement(element, zoneId, cols, rows, taken, rng, ids, features, firs
           id: ids(), kind: 'hulk', name: `${h.species.name} hulk`,
           x: round2(at.x + Math.cos(a) * d), y: round2(at.y + Math.sin(a) * d),
           r: round2(between(rng, 0.9, 1.7)), tone: HULK_TONE[h.condition.id] || '#7b7f86',
-          air: 0, well: 0, note: h.condition.name, state: 'ping'
+          air: 0, well: 0, note: h.condition.name, state: 'ping', rot: Math.floor(rng() * 360)
         });
       });
       keep(at.x, at.y, spread + 1);
@@ -830,7 +860,11 @@ export function placeShips(map, ships, seed = '') {
 export function pruneShips(map, liveIds) {
   const m = readVoidMap(map);
   const live = new Set(liveIds);
-  return { ...m, ships: m.ships.filter((s) => live.has(s.id)) };
+  return {
+    ...m,
+    ships: m.ships.filter((s) => live.has(s.id)),
+    overlays: m.overlays.filter((o) => live.has(o.shipId))
+  };
 }
 
 /* ------------------------------ distance, cover, silhouette ------------------------------ */
@@ -1002,6 +1036,156 @@ export function turnShip(map, id, heading) {
   return { ...m, ships: m.ships.map((s) => (s.id === id ? { ...s, heading: h } : s)) };
 }
 
+/* ------------------------------ turning things ------------------------------ */
+
+// A point turned `deg` degrees clockwise about c. The chart's y runs down, so
+// "clockwise" on screen is the plain rotation matrix.
+export function rotatePoint(p, c, deg) {
+  const r = (num(deg) * Math.PI) / 180;
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  return {
+    x: round2(c.x + dx * Math.cos(r) - dy * Math.sin(r)),
+    y: round2(c.y + dx * Math.sin(r) + dy * Math.cos(r))
+  };
+}
+
+const rotateVec = (v, deg) => {
+  const r = (num(deg) * Math.PI) / 180;
+  return [round1(v[0] * Math.cos(r) - v[1] * Math.sin(r)), round1(v[0] * Math.sin(r) + v[1] * Math.cos(r))];
+};
+
+/* Turn one thing by `deg` degrees clockwise: a ship's heading, a body's
+   facing, a belt or riptide about its middle (its drift turning with it), or
+   the rocks inside a round field. type is 'ship' | 'body' | 'field'. */
+export function rotateThing(map, type, id, deg) {
+  const m = readVoidMap(map);
+  const d = num(deg);
+  if (type === 'ship') {
+    return { ...m, ships: m.ships.map((s) => (s.id === id ? { ...s, heading: Math.round(norm360(s.heading + d)) } : s)) };
+  }
+  if (type === 'body') {
+    return { ...m, bodies: m.bodies.map((b) => (b.id === id ? { ...b, rot: Math.round(norm360(b.rot + d)) } : b)) };
+  }
+  if (type === 'field') {
+    return {
+      ...m,
+      fields: m.fields.map((f) => {
+        if (f.id !== id) return f;
+        if (f.shape !== 'band') return { ...f, rot: Math.round(norm360(f.rot + d)) };
+        const mid = { x: (f.x + f.x2) / 2, y: (f.y + f.y2) / 2 };
+        const a = rotatePoint({ x: f.x, y: f.y }, mid, d);
+        const b = rotatePoint({ x: f.x2, y: f.y2 }, mid, d);
+        return { ...f, x: a.x, y: a.y, x2: b.x, y2: b.y, drift: f.drift ? rotateVec(f.drift, d) : null };
+      })
+    };
+  }
+  return m;
+}
+
+/* Turn the whole scene by quarter turns, clockwise (negative for anticlockwise).
+   The chart's width and height swap, every position turns about the middle,
+   and everything that faces somewhere turns with it, so what the table sees
+   is the same fight seen from another side. Ships stay on square centres: a
+   square maps to a square. */
+export function rotateScene(map, turns = 1) {
+  let m = readVoidMap(map);
+  const n = ((Math.round(num(turns)) % 4) + 4) % 4;
+  for (let i = 0; i < n; i++) {
+    const rows = m.rows;
+    const at = (p) => ({ x: round2(rows - p.y), y: round2(p.x) });
+    m = readVoidMap({
+      ...m,
+      cols: m.rows, rows: m.cols,
+      stars: m.stars.map((s) => ({ ...s, ...at(s) })),
+      bodies: m.bodies.map((b) => ({ ...b, ...at(b), rot: norm360(b.rot + 90) })),
+      fields: m.fields.map((f) => {
+        const out = { ...f, ...at(f) };
+        if (f.shape === 'band') {
+          const e = at({ x: f.x2, y: f.y2 });
+          out.x2 = e.x; out.y2 = e.y;
+        } else {
+          out.rot = norm360(f.rot + 90);
+        }
+        if (f.drift) out.drift = [-f.drift[1], f.drift[0]];
+        return out;
+      }),
+      ships: m.ships.map((s) => ({ ...s, ...at(s), heading: norm360(s.heading + 90) }))
+    });
+  }
+  return m;
+}
+
+// Empty out part of a chart. 'everything' leaves the stars and the settings.
+export function clearChart(map, what = 'everything') {
+  const m = readVoidMap(map);
+  const all = what === 'everything';
+  return {
+    ...m,
+    ships: all || what === 'ships' ? [] : m.ships,
+    bodies: all || what === 'bodies' ? [] : m.bodies,
+    fields: all || what === 'fields' ? [] : m.fields,
+    hazards: all ? [] : m.hazards,
+    overlays: all || what === 'overlays' || what === 'ships' ? [] : m.overlays
+  };
+}
+
+// Take one thing off the chart, and any range pinned to it.
+export function removeThing(map, type, id) {
+  const m = readVoidMap(map);
+  if (type === 'ship') {
+    return { ...m, ships: m.ships.filter((s) => s.id !== id), overlays: m.overlays.filter((o) => o.shipId !== id) };
+  }
+  if (type === 'body') return { ...m, bodies: m.bodies.filter((b) => b.id !== id) };
+  if (type === 'field') return { ...m, fields: m.fields.filter((f) => f.id !== id) };
+  return m;
+}
+
+/* ------------------------------ pinned ranges ------------------------------ */
+
+/* Pin a ship's attack ranges to the chart: one wedge per mount, as far as the
+   longest gun in it reaches. If any of the ship's are already pinned, they are
+   all taken down instead, so the same button pins and unpins. `weapons` is what
+   the host knows: [{ name, range, slot }]. */
+export function togglePins(map, shipId, weapons) {
+  const m = readVoidMap(map);
+  const ship = m.ships.find((s) => s.id === shipId);
+  if (!ship) return m;
+  if (m.overlays.some((o) => o.shipId === shipId)) {
+    return { ...m, overlays: m.overlays.filter((o) => o.shipId !== shipId) };
+  }
+  const added = arcWedges(m, ship, weapons).map((w) => ({
+    id: newVoidId(), shipId, slot: w.slot, range: w.range, name: w.weapons.join(', ')
+  }));
+  return readVoidMap({ ...m, overlays: [...m.overlays, ...added] });
+}
+
+// Pin or unpin one mount's reach.
+export function togglePin(map, shipId, slot, range, name = '') {
+  const m = readVoidMap(map);
+  const key = slot || null;
+  const has = m.overlays.find((o) => o.shipId === shipId && o.slot === key);
+  if (has) return { ...m, overlays: m.overlays.filter((o) => o !== has) };
+  return readVoidMap({ ...m, overlays: [...m.overlays, { id: newVoidId(), shipId, slot: key, range, name }] });
+}
+
+export const isPinned = (map, shipId, slot = null) =>
+  (map.overlays || []).some((o) => o.shipId === shipId && o.slot === (slot || null));
+
+// Every pinned range as the wedge it covers now: from where its ship is, facing
+// the way it faces. A pin whose ship has left the chart covers nothing.
+export function overlayWedges(map) {
+  const m = map && map.overlays ? map : readVoidMap(map);
+  const out = [];
+  for (const o of m.overlays) {
+    const ship = m.ships.find((s) => s.id === o.shipId);
+    if (!ship) continue;
+    const [wedge] = arcWedges(m, ship, [{ name: o.name || 'Weapon', range: o.range, slot: o.slot }]);
+    if (wedge) out.push({ overlay: o, ship, wedge });
+  }
+  return out;
+}
+
 // The bearing from a to b, degrees, 0 up and clockwise: what a heading is.
 export const bearing = (a, b) => {
   const deg = (Math.atan2(b.x - a.x, -(b.y - a.y)) * 180) / Math.PI;
@@ -1073,7 +1257,13 @@ export function redactVoidForTable(map) {
     fields: m.fields.filter((f) => f.state !== 'hidden')
       .map((f) => (f.state === 'ping' ? { ...f, name: 'Unknown reading', note: '', shotMod: 0, moveMod: null, drift: null } : f)),
     ships: m.ships.filter((s) => s.state !== 'hidden')
-      .map((s) => (s.state === 'ping' ? { ...s, name: 'Unknown contact', cls: '' } : s))
+      .map((s) => (s.state === 'ping' ? { ...s, name: 'Unknown contact', cls: '' } : s)),
+    // A pinned range gives away the ship's guns, so only a ship the table can
+    // read keeps one.
+    overlays: m.overlays.filter((o) => {
+      const ship = m.ships.find((s) => s.id === o.shipId);
+      return ship && ship.state === 'seen';
+    })
   };
 }
 
@@ -1098,6 +1288,72 @@ export function combatForBridge(combat) {
   const c = packCombat(combat);
   return c && c.void ? { ...c, void: voidForBridge(c.void) } : c;
 }
+
+/* ------------------------------ saved charts ------------------------------ */
+
+/* A GM keeps a few charts to come back to: the derelict they will fly to
+   next session, a stock ambush. They live in the homebrew library next to the
+   encounters, which is one 900KB budget shared with everything else, so the
+   library is capped well under it, by count and by size, rather than left to
+   crowd out a hull a player was building. A chart is a few KB; the cap is
+   something to hit on purpose. */
+export const MAX_SAVED_CHARTS = 25;
+export const MAX_LIBRARY_BYTES = 250_000;
+
+export function readSavedChart(x) {
+  if (!x || typeof x !== 'object' || !x.map || typeof x.map !== 'object') return null;
+  const id = str(x.id, 24);
+  if (!id) return null;
+  const map = readVoidMap(x.map);
+  return {
+    id,
+    name: str(x.name, 80) || map.name || 'Void scene',
+    updatedAt: Math.max(0, Math.floor(num(x.updatedAt))),
+    map
+  };
+}
+
+export const readVoidLibrary = (raw) =>
+  (Array.isArray(raw) ? raw : []).map(readSavedChart).filter(Boolean).slice(0, MAX_SAVED_CHARTS);
+
+export const libraryBytes = (lib) => JSON.stringify(lib || []).length;
+
+// What a list needs to show, without the maps.
+export const chartSummary = (c) => ({
+  id: c.id, name: c.name, cols: c.map.cols, rows: c.map.rows,
+  ships: c.map.ships.length, updatedAt: c.updatedAt
+});
+
+/* Save a chart into the library: over the one with this id, or as a new one.
+   Never throws and never half-saves: it answers { ok: true, library, id } or
+   { ok: false, error } and leaves the library as it was. */
+export function saveChart(library, { id = null, name = '', map, now = Date.now() } = {}) {
+  const lib = readVoidLibrary(library);
+  const chart = readVoidMap(map);
+  const entry = {
+    id: id && lib.some((c) => c.id === id) ? id : newVoidId(),
+    name: str(name, 80) || chart.name,
+    updatedAt: now,
+    map: chart
+  };
+  const isNew = !lib.some((c) => c.id === entry.id);
+  if (isNew && lib.length >= MAX_SAVED_CHARTS) {
+    return { ok: false, error: `The library holds ${MAX_SAVED_CHARTS} charts. Delete one first.` };
+  }
+  const next = isNew ? [...lib, entry] : lib.map((c) => (c.id === entry.id ? entry : c));
+  const bytes = libraryBytes(next);
+  if (bytes > MAX_LIBRARY_BYTES) {
+    return { ok: false, error: `That makes the chart library ${Math.round(bytes / 1024)}KB, over the ${Math.round(MAX_LIBRARY_BYTES / 1024)}KB it may take. Delete a chart first.` };
+  }
+  return { ok: true, library: next, id: entry.id, entry };
+}
+
+export const deleteChart = (library, id) => readVoidLibrary(library).filter((c) => c.id !== id);
+
+// Is the chart on screen the one that was saved? Compared as the reader sees
+// them, so a stored field that did not exist yet when it was saved is not a change.
+export const sameChart = (a, b) =>
+  Boolean(a) && Boolean(b) && JSON.stringify(readVoidMap(a)) === JSON.stringify(readVoidMap(b));
 
 // A one-line summary for a list.
 export function describeScene(map) {

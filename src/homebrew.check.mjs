@@ -45,7 +45,7 @@ assert.deepEqual(normalise({ hulls: [null, 'x', 3, { id: 'h1' }] }).hulls, [{ id
 assert.deepEqual(normalise({ components: [{ id: 'c1' }, undefined] }).components, [{ id: 'c1' }]);
 // and an unexpected key is not carried either
 assert.deepEqual(Object.keys(normalise({ hulls: [], components: [], junk: 1 })).sort(),
-  ['battlemaps', 'components', 'encounters', 'endeavours', 'hulls', 'mapgrounds']);
+  ['battlemaps', 'components', 'encounters', 'endeavours', 'hulls', 'mapgrounds', 'voidcharts']);
 
 // Encounters ride in this same library rather than on a route of their own,
 // so they get the same treatment as the other two keys.
@@ -74,7 +74,8 @@ assert.deepEqual(normalise({ endeavours: [null, { id: 'd1' }] }).endeavours, [{ 
     encounters: [{ id: 'enc-z', name: 'Ambush' }],
     endeavours: [{ id: 'end-w', name: 'The Cloud-Fane' }],
     battlemaps: [{ id: 'bmap-v', name: 'Hulk deck 1' }],
-    mapgrounds: [{ id: 'env-u', name: 'Refinery floor' }]
+    mapgrounds: [{ id: 'env-u', name: 'Refinery floor' }],
+    voidcharts: [{ id: 'vc-t', name: 'Cold derelict' }]
   };
   assert.equal(writeLocal(lib), true);
   assert.equal(store.has(HOMEBREW_KEY), true);
@@ -85,7 +86,7 @@ assert.deepEqual(normalise({ endeavours: [null, { id: 'd1' }] }).endeavours, [{ 
   store.set(HOMEBREW_KEY, JSON.stringify({ hulls: [{ id: 'old' }], components: [] }));
   assert.deepEqual(readLocal(), {
     hulls: [{ id: 'old' }], components: [], encounters: [], endeavours: [],
-    battlemaps: [], mapgrounds: []
+    battlemaps: [], mapgrounds: [], voidcharts: []
   });
 
   // a corrupt blob reads as empty rather than throwing
@@ -109,7 +110,7 @@ assert.deepEqual(normalise({ endeavours: [null, { id: 'd1' }] }).endeavours, [{ 
   // hands the editor a library with every key present.
   assert.deepEqual(got, {
     hulls: [{ id: 'hull-a' }], components: [], encounters: [], endeavours: [],
-    battlemaps: [], mapgrounds: []
+    battlemaps: [], mapgrounds: [], voidcharts: []
   });
   assert.equal(calls[0].opts, undefined, 'a GET sends no body');
 
@@ -125,7 +126,7 @@ assert.deepEqual(normalise({ endeavours: [null, { id: 'd1' }] }).endeavours, [{ 
   const sent2 = JSON.parse(calls[0].opts.body);
   assert.deepEqual(sent2.homebrew, {
     hulls: [{ id: 'ok' }], components: [], encounters: [{ id: 'e' }], endeavours: [],
-    battlemaps: [], mapgrounds: []
+    battlemaps: [], mapgrounds: [], voidcharts: []
   });
 
   // ...and on the way back, so a bad answer cannot poison the editor
@@ -165,7 +166,7 @@ console.log('homebrew store: all checks passed');
   // Listed explicitly rather than derived from EMPTY, so adding a key to
   // EMPTY without carrying it through normalise still fails here.
   const LIBRARIES = ['hulls', 'components', 'encounters', 'endeavours',
-    'battlemaps', 'mapgrounds'];
+    'battlemaps', 'mapgrounds', 'voidcharts'];
 
   const full = {};
   for (const k of LIBRARIES) full[k] = [{ id: k + '-1', name: k }];

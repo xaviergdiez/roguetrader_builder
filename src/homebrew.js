@@ -25,9 +25,12 @@ export const HOMEBREW_KEY = 'rt:homebrew';
 // list of keys, so anything not named was silently discarded on every read
 // and every write. A ground saved from the map survived in React state until
 // the next round trip and then vanished.
+// `voidcharts` are the GM's saved void charts (see src/voidmap.js). A chart is
+// a few KB, so they stay here, under a cap of their own (MAX_LIBRARY_BYTES)
+// that keeps them from crowding out what shares this one 900KB budget.
 export const EMPTY = {
   hulls: [], components: [], encounters: [], endeavours: [],
-  battlemaps: [], mapgrounds: []
+  battlemaps: [], mapgrounds: [], voidcharts: []
 };
 
 // Anything absent or the wrong shape reads as "no homebrew" rather than
@@ -41,7 +44,8 @@ export function normalise(h) {
     encounters: entries(src && src.encounters),
     endeavours: entries(src && src.endeavours),
     battlemaps: entries(src && src.battlemaps),
-    mapgrounds: entries(src && src.mapgrounds)
+    mapgrounds: entries(src && src.mapgrounds),
+    voidcharts: entries(src && src.voidcharts)
   };
 }
 
@@ -58,7 +62,8 @@ export const isEmpty = (h) => {
   const n = normalise(h);
   return n.hulls.length === 0 && n.components.length === 0
     && n.encounters.length === 0 && n.endeavours.length === 0
-    && n.battlemaps.length === 0 && n.mapgrounds.length === 0;
+    && n.battlemaps.length === 0 && n.mapgrounds.length === 0
+    && n.voidcharts.length === 0;
 };
 
 /* --------------------------------- local --------------------------------- */

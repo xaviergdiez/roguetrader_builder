@@ -2727,10 +2727,12 @@ const CSS = `
 .rt-gear-g{margin-bottom:2px;}
 .rt-gear-alts{list-style:none;margin:0;padding:0;}
 /* ---- armour points ---- */
-.rt-ap{padding-bottom:8px;}
-.rt-ap .rt-der-k.top{margin-bottom:6px;}
-.rt-ap .rt-move-i .rt-der-v{font-size:20px;}
-.rt-ap .rt-move-i.bare .rt-der-v{opacity:.35;}
+.rt-ap-locs{display:grid;grid-template-columns:repeat(3,1fr);gap:3px 2px;margin-top:6px;}
+.rt-ap-locs span{display:block;line-height:1.15;}
+.rt-ap-locs i{display:block;font-style:normal;font-family:var(--mono);font-size:8px;
+  letter-spacing:.04em;color:var(--brass-lit);}
+.rt-ap-locs b{display:block;font-family:var(--display);font-size:14px;font-weight:600;color:var(--gold-lit);}
+.rt-ap-locs .bare{opacity:.4;}
 /* A dark card on the parchment, like the Throne ledger beside it: the gold and
    brass of the numbers are for a dark ground and vanish on paper. */
 .rt-armour{margin:0 0 14px;padding:11px 12px;border:1px solid var(--brass-dim);
@@ -6941,6 +6943,23 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                   aria-label="Raise Insanity Points">+</button>
               </div>
             </div>
+            {/* Armour, a tile like the rest: the number that matters most (the
+                body, where most hits land) large, and every location under it.
+                It took the empty third place beside Corruption and Insanity. */}
+            <div className="rt-der rt-ap"
+              title={'Armour Points, from everything on the gear list: '
+                + armour.slots.map((sl) => `${sl.name} ${sl.ap}`).join(', ') + '. '
+                + 'A hit loses its Penetration from these, then Toughness Bonus'
+                + (tBonus != null ? ` (${tBonus})` : '') + ' comes off on top.'}>
+              <div className="rt-der-k top">ARMOUR</div>
+              <div className="rt-der-v">{armour.bodyAp}</div>
+              <div className="rt-der-sub">{armour.any ? 'BODY AP' : 'NONE WORN'}</div>
+              <div className="rt-ap-locs">
+                {armour.slots.map((sl) => (
+                  <span key={sl.id} className={sl.ap ? '' : 'bare'}><i>{sl.short}</i><b>{sl.ap}</b></span>
+                ))}
+              </div>
+            </div>
             {move && (
               /* Derived from Agility Bonus alone — see movement.js. Its own
                  full-width row, same as the Psy Rating one below, since six
@@ -6957,23 +6976,6 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                 ))}
               </div>
             )}
-
-            {/* Armour Points, location by location, always in sight: until now
-                the AP of what a character wore was nowhere on the sheet. */}
-            <div className="rt-der wide rt-ap"
-              title={'Armour Points by location, from everything on the gear list. '
-                + 'A hit loses its Penetration from these, then Toughness Bonus'
-                + (tBonus != null ? ` (${tBonus})` : '') + ' on top.'}>
-              <div className="rt-der-k top">ARMOUR POINTS{tBonus != null ? ` \u00b7 + T BONUS ${tBonus}` : ''}</div>
-              <div className="rt-move">
-                {armour.slots.map((sl) => (
-                  <div className={'rt-move-i' + (sl.ap ? '' : ' bare')} key={sl.id}>
-                    <div className="rt-der-v">{sl.ap}</div>
-                    <div className="rt-der-k">{sl.short}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
 
             {/* XP is a running campaign total, so it gets steppers rather than
                 a field you have to select and retype. */}

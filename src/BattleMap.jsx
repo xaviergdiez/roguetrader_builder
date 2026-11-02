@@ -67,7 +67,10 @@ const MODES = [
    and revealing a room has none while the deck is being drawn. Build holds the
    tools that make the deck; Play holds the ones that run it, with the fog and
    the doors in one place, clickable. Measure is wanted in both. */
-const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'cover', 'hazard', 'obscure', 'start', 'marker', 'measure'];
+/* The starting room is set at the table, not at the drawing board: it is where
+   the party ARRIVES, which is a thing about the session rather than about the
+   deck. It lives on Play only. */
+const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'cover', 'hazard', 'obscure', 'marker', 'measure'];
 const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'overlay', 'measure'];
 const toolsOf = (tab) => MODES.filter((x) => (tab === 'play' ? PLAY_TOOLS : BUILD_TOOLS).includes(x.id));
 
@@ -1561,11 +1564,24 @@ export default function BattleMap({
      and an overview (one pixel per square, kept until the map changes) is
      scaled up instead. */
 
-  // What the fog shows, worked out when the deck changes, not on every redraw.
+  /* What the fog shows, worked out when the deck changes, not on every redraw.
+
+     THE BUILD TAB SEES THROUGH IT, and only on the GM's own screen. You
+     cannot draw a deck you cannot see, and feeling about in the dark to place
+     a crate was the reason the fog had to be turned off to build — which
+     threw away what the party had found and could not be undone by turning it
+     back on.
+
+     Nothing is stored and nothing is revealed: this is the drawing mask, not
+     the explored record, so stepping back to Play shows exactly the fog the
+     party had left. The projector's copy is never let through, because the
+     whole point of the GM having a second window is that what they do in it
+     does not reach the table. */
+  const seeAll = tab === 'build' && !projecting;
   const shown = useMemo(
-    () => (m.fog ? visibleExplored(m) : null),
+    () => (m.fog && !seeAll ? visibleExplored(m) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [m.fog, m.explored, m.doors, m.floor, m.viewpoint]);
+    [m.fog, m.explored, m.doors, m.floor, m.viewpoint, seeAll]);
 
   // The room the starting-room tool would choose, drawn tinted while it is in
   // hand. Worked out only then: it walks the room.

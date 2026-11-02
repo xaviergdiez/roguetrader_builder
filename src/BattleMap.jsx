@@ -1616,39 +1616,46 @@ export default function BattleMap({
       : null;
     /* A TEMPLATE: THE SQUARES IT CATCHES, AND WHAT ITS ART IS CLIPPED TO.
 
-       The caught squares are what the GM rules on, and they are trimmed to
-       what the template can actually reach — fire does not cross a sealed
-       bulkhead and a grenade does not blast through a wall.
+       The caught squares are what the GM rules on, trimmed to what the
+       template can physically reach — fire does not cross a sealed bulkhead
+       and a grenade does not blast through a wall.
 
-       The smooth art over them is a separate question, and getting it wrong
-       is what made a flamer draw a staircase and a force field draw a plus
-       sign. Clipped to its own squares, a circle can only ever BE squares.
-       So the art is clipped to the DECK when nothing obstructs the template —
-       which keeps it out of the void without squaring it off — and to the
-       caught squares only when something really did trim it. The stepped
-       edge then means what it looks like it means: the template stopping at
-       something, rather than being drawn on graph paper.
+       The smooth art over them is clipped to those squares PLUS the ring of
+       deck squares around them that the template could also reach. The ring
+       is the point. A cone's straight edge and a shield's round one run
+       through squares whose centres fall just outside the template, so
+       clipped to the caught squares alone the art could only ever be squares:
+       a flamer drew a staircase, a field drew a plus sign, and the tip of the
+       cone was cut off short of the firer where no square's centre was inside
+       it. With the ring, the art keeps its own edge wherever it has room, and
+       is cut only where a wall or a shut door actually stands — on the line
+       of the wall, which is where fire stops.
 
-       The deck clip is taken a square and a half wider than the template, or
-       the art's own outer edge would land exactly on the clip's and be shaved
-       off again. */
-    const template = (centre, cells, radiusM) => {
-      const onMap = onDeck(m, cells);
-      const clear = unobstructed(m, centre, onMap);
-      const blocked = clear.length !== onMap.length;
-      const pad = (m.metresPerSquare || 1) * 1.5;
-      return {
-        cells: clear,
-        clip: blocked ? clear : onDeck(m, areaCells(m, centre, (Number(radiusM) || 0) + pad)),
-        blocked
-      };
+       An earlier fix clipped to the whole deck when nothing was in the way
+       and to the caught squares when anything was. One blocked square
+       anywhere — a doorway behind the far wall — dropped the whole cone back
+       to a staircase, which is why the same cone broke at some angles in a
+       room and not at others. There is no switch now. */
+    const template = (centre, cells) => {
+      const caught = unobstructed(m, centre, onDeck(m, cells));
+      const seen = new Set(caught.map((c) => cellKey(c.x, c.y)));
+      const ring = [];
+      for (const c of caught) {
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const k = cellKey(c.x + dx, c.y + dy);
+            if (!seen.has(k)) { seen.add(k); ring.push({ x: c.x + dx, y: c.y + dy }); }
+          }
+        }
+      }
+      return { cells: caught, clip: caught.concat(unobstructed(m, centre, onDeck(m, ring))) };
     };
     const blastT = weapon && weapon.blastM && target
-      ? template(target, areaCells(m, target, weapon.blastM), weapon.blastM) : null;
+      ? template(target, areaCells(m, target, weapon.blastM)) : null;
     const coneT = weapon && weapon.isFlame && target
-      ? template(origin, coneCells(m, origin, target, weapon.range, coneAngle / 2), weapon.range) : null;
+      ? template(origin, coneCells(m, origin, target, weapon.range, coneAngle / 2)) : null;
     const auraT = kind === 'field'
-      ? template(origin, areaCells(m, origin, weapon.auraM), weapon.auraM) : null;
+      ? template(origin, areaCells(m, origin, weapon.auraM)) : null;
 
     return {
       kind,

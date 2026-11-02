@@ -5,6 +5,7 @@ import {
   MAP_THEMES, DEFAULT_THEME, themeById, EMPTY_MAP, readMap,
   distanceSquares, distanceMetres, reachBetween, deploymentRows, calibrationBar,
   rangeRings, areaCells, coneCells, visibleCells, weaponOverlay, unobstructed,
+  meleeReachM, meleeReaches,
   overlayKindFor, onDeck,
   DOOR_KINDS, doorKindById, readDoor, COVER_TYPES, coverById, coverBetween,
   HAZARD_TYPES, hazardById,
@@ -1927,6 +1928,69 @@ console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   // square, which is asserted above and is the rule this file already settled.
   assert.deepEqual(coneCells(m, null, east, 10, 20), []);
   assert.deepEqual(coneCells(m, origin, east, 0, 20), [], 'no range is no cone');
+}
+
+
+/* ---- what a weapon is, and how far it reaches ---- */
+{
+  const ov = (k) => weaponOverlay(GEAR[k].stats, { kind: GEAR[k].kind, name: k });
+
+  // A sword is not a lane across the deck.
+  assert.equal(overlayKindFor(ov('power sword')), 'melee');
+  assert.equal(overlayKindFor(ov('lasgun')), 'beam');
+  assert.equal(overlayKindFor(ov('hand flamer')), 'cone');
+
+  /* MELEE HAS A REACH, which the rules do not give it and a table needs.
+     House numbers, coarse on purpose: a hand's length, or a haft's. */
+  assert.equal(ov('knife').reachM, 1, 'a knife reaches its own square and the next');
+  assert.equal(ov('power sword').reachM, 1);
+  assert.equal(ov('staff').reachM, 2, 'a haft reaches further');
+  assert.equal(ov('singing spear').reachM, 2);
+  assert.equal(ov('shock whip').reachM, 2, 'and so does a cord');
+  assert.equal(ov('lasgun').reachM, null, 'a ranged weapon has no reach');
+  // Square size carries through: on a 2m grid a sword threatens 2 metres.
+  assert.equal(meleeReachM({ name: 'knife', perSquare: 2 }), 2);
+
+  // In reach or out of it, which is the melee answer to out of range.
+  assert.equal(meleeReaches(ov('knife'), 1), true);
+  assert.equal(meleeReaches(ov('knife'), 2), false, 'a knife does not reach two metres');
+  assert.equal(meleeReaches(ov('staff'), 2), true, 'a staff does');
+  assert.equal(meleeReaches(ov('lasgun'), 1), null, 'and a lasgun is not asked');
+
+  /* THE SHOOTING BANDS, against the book: Point Blank within 2m (+30), Short
+     at half range (+10), Standard at range (0), Long at twice (-10), Extreme
+     at three times (-30), and nothing at all beyond that. */
+  const r = 100;
+  assert.equal(rangeBand(1, r), 'point_blank');
+  assert.equal(rangeBand(2, r), 'point_blank', 'two metres is still point blank');
+  assert.equal(rangeBand(2.1, r), 'short');
+  assert.equal(rangeBand(50, r), 'short', 'half the range');
+  assert.equal(rangeBand(50.1, r), 'standard');
+  assert.equal(rangeBand(100, r), 'standard');
+  assert.equal(rangeBand(100.1, r), 'long');
+  assert.equal(rangeBand(200, r), 'long', 'twice');
+  assert.equal(rangeBand(200.1, r), 'extreme');
+  assert.equal(rangeBand(300, r), 'extreme', 'three times');
+  assert.equal(rangeBand(300.1, r), 'out', 'and past three times is no shot');
+  assert.equal(RANGE_MODIFIERS.point_blank, 30);
+  assert.equal(RANGE_MODIFIERS.short, 10);
+  assert.equal(RANGE_MODIFIERS.standard, 0);
+  assert.equal(RANGE_MODIFIERS.long, -10);
+  assert.equal(RANGE_MODIFIERS.extreme, -30);
+  assert.equal(RANGE_MODIFIERS.out, null, 'out of range is no modifier, it is no shot');
+
+  // The rings the overlay draws are those same boundaries, outermost first.
+  const rings = rangeRings(100, readMap({ cols: 40, rows: 40, metresPerSquare: 1 }));
+  assert.deepEqual(rings.map((x) => x.band), ['extreme', 'long', 'standard', 'short', 'point_blank']);
+  assert.deepEqual(rings.map((x) => x.metres), [300, 200, 100, 50, 2]);
+  assert.deepEqual(rings.map((x) => x.mod), [-30, -10, 0, 10, 30]);
+
+  // Every weapon with a ranged profile parses a range out of its stat line:
+  // a missing one silently became "standard, no modifier" at any distance.
+  const ranged = Object.entries(GEAR)
+    .filter(([, g]) => ['Pistol', 'Basic', 'Heavy'].includes(g.kind));
+  const noRange = ranged.filter(([k, g]) => !weaponOverlay(g.stats, { kind: g.kind, name: k }).range);
+  assert.equal(noRange.length, 0, 'every gun has a range: ' + noRange.map(([k]) => k).join(', '));
 }
 
 console.log('battlemap.check.mjs: rotation passed');

@@ -9,7 +9,7 @@ import {
   overlayKindFor, onDeck, revealArea, concealArea, visibleExplored, fitGrid, brushCells,
   clampZoom, MIN_ZOOM, MAX_ZOOM, textureAdvice, rotateMap, rotationFits,
   expandMap, expandPlan, MIN_GRID, MAX_GRID, MAX_CUSTOM_SPRITES,
-  resolveTheme, themeNumbersFor, groundsUsed, tokensNeeded,
+  resolveTheme, themeNumbersFor, groundsUsed, tokensNeeded, meleeReaches,
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, readCover, writeCover,
   HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
@@ -382,18 +382,20 @@ function drawCone(ctx, ox, oy, aimRad, reachPx, halfRad) {
 
 // The shot itself: a glowing beam with a head, so a measured line reads as a
 // line of fire and not as a stray guide.
-function drawBeam(ctx, x1, y1, x2, y2, rgb) {
+// `weight` scales the beam: a heavy weapon throws a fatter bolt than a
+// marksman's rifle, and the two should not look the same across a table.
+function drawBeam(ctx, x1, y1, x2, y2, rgb, weight = 1) {
   const ang = Math.atan2(y2 - y1, x2 - x1);
   ctx.save();
   ctx.lineCap = 'round';
   ctx.strokeStyle = `rgba(${rgb},0.22)`;
-  ctx.lineWidth = 11;
+  ctx.lineWidth = 11 * weight;
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
   ctx.strokeStyle = `rgba(${rgb},0.5)`;
-  ctx.lineWidth = 5;
+  ctx.lineWidth = 5 * weight;
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
   ctx.strokeStyle = 'rgba(255,255,255,0.95)';
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.5 * Math.max(0.6, weight);
   ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
   // Arrowhead at the target end, in a contrasting colour so the direction
   // of the shot is readable at a glance across a lit table.
@@ -422,15 +424,78 @@ function clipToCells(ctx, cells, px, draw) {
   ctx.restore();
 }
 
+/* A shotgun does not put a hole in one square: it opens out. A short wedge
+   that widens to the target, so the GM can see who else is in the way. */
+function drawSpread(ctx, x1, y1, x2, y2) {
+  const a = Math.atan2(y2 - y1, x2 - x1);
+  const len = Math.hypot(x2 - x1, y2 - y1);
+  const wide = Math.max(6, len * 0.22);
+  const g = ctx.createLinearGradient(x1, y1, x2, y2);
+  g.addColorStop(0, 'rgba(255,214,140,0.75)');
+  g.addColorStop(1, 'rgba(255,170,60,0.08)');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2 + Math.cos(a + Math.PI / 2) * wide, y2 + Math.sin(a + Math.PI / 2) * wide);
+  ctx.lineTo(x2 + Math.cos(a - Math.PI / 2) * wide, y2 + Math.sin(a - Math.PI / 2) * wide);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/* Automatic fire: a handful of tracers that do not all go to the same place,
+   because that is the whole difference between a burst and a shot. */
+function drawBurst(ctx, x1, y1, x2, y2) {
+  const a = Math.atan2(y2 - y1, x2 - x1);
+  const n = ctx.canvas ? 3 : 3;
+  for (let i = 0; i < n; i++) {
+    const off = (i - (n - 1) / 2) * 4;
+    const ex = x2 + Math.cos(a + Math.PI / 2) * off * 1.6;
+    const ey = y2 + Math.sin(a + Math.PI / 2) * off * 1.6;
+    drawBeam(ctx, x1 + Math.cos(a + Math.PI / 2) * off * 0.25,
+      y1 + Math.sin(a + Math.PI / 2) * off * 0.25, ex, ey, '168,130,255', 0.7);
+  }
+}
+
+/* A thrown weapon arcs. Drawn as a curve rather than a line so nobody reads
+   a grenade as something that needs a clear lane at head height. */
+function drawLob(ctx, x1, y1, x2, y2) {
+  const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+  const a = Math.atan2(y2 - y1, x2 - x1);
+  const lift = Math.max(8, Math.hypot(x2 - x1, y2 - y1) * 0.22);
+  const cx = mx + Math.cos(a - Math.PI / 2) * lift;
+  const cy = my + Math.sin(a - Math.PI / 2) * lift;
+  ctx.strokeStyle = 'rgba(168,130,255,0.85)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.quadraticCurveTo(cx, cy, x2, y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
 /* A shot: a beam from the firer to what they are shooting at. A clear lane
    is one beam end to end; a blocked one stops dead at whatever stopped it
    and continues as a thin dashed line, so the picture agrees with the label
    instead of drawing confidently through a sealed bulkhead. */
-function drawShot(ctx, px, from, to, blocked) {
+function drawShot(ctx, px, from, to, blocked, style = {}) {
   const x1 = from.x * px + px / 2, y1 = from.y * px + px / 2;
   const x2 = to.x * px + px / 2, y2 = to.y * px + px / 2;
   if (!blocked) {
-    drawBeam(ctx, x1, y1, x2, y2, '168,130,255');
+    /* EACH WEAPON SHOOTS LIKE ITSELF. One beam for everything said a
+       shotgun, an autocannon and a thrown grenade all put the same neat line
+       across the deck, which is the one thing none of them does. */
+    if (style.scatter) { drawSpread(ctx, x1, y1, x2, y2); return; }
+    if (style.burst) { drawBurst(ctx, x1, y1, x2, y2); return; }
+    if (style.thrown) { drawLob(ctx, x1, y1, x2, y2); return; }
+    drawBeam(ctx, x1, y1, x2, y2, style.heavy ? '255,170,80' : '168,130,255',
+      style.heavy ? 2 : style.accurate ? 0.6 : 1);
+    if (style.accurate) {
+      // A marksman's weapon puts a mark on what it is pointed at.
+      ctx.strokeStyle = 'rgba(200,180,255,0.9)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(x2, y2, px * 0.3, 0, Math.PI * 2); ctx.stroke();
+    }
     return;
   }
   const bx = blocked.x * px + px / 2, by = blocked.y * px + px / 2;
@@ -898,8 +963,13 @@ export default function BattleMap({
 
   const weapon = useMemo(() => {
     const entry = GEAR[weaponKey];
-    return entry ? weaponOverlay(entry.stats) : null;
-  }, [weaponKey]);
+    // The kind and the name as well as the numbers: a sword's stat line does
+    // not say it is a sword, and the overlay has to know that to draw it as
+    // one rather than as a lane across the deck.
+    return entry
+      ? weaponOverlay(entry.stats, { kind: entry.kind, name: weaponKey, perSquare: m.metresPerSquare })
+      : null;
+  }, [weaponKey, m.metresPerSquare]);
 
   /* Every ground this deck draws with — its own, plus any painted onto
      individual squares. Joined to a string so the effects below re-run when
@@ -1541,7 +1611,7 @@ export default function BattleMap({
     // wedge. A grenade keeps the beam too — it is still thrown at a point,
     // and the line is what shows whether the throw lane is clear.
     const kind = overlayKindFor(weapon);
-    const shot = target && kind === 'beam'
+    const shot = target && (kind === 'beam' || kind === 'melee')
       ? reachBetween({ from: origin, to: target, map: m, weaponRangeM: weapon.range })
       : null;
     // Templates are trimmed to what they can actually reach: fire does not
@@ -1551,13 +1621,19 @@ export default function BattleMap({
       kind,
       shot,
       target,
-      rings: showRings && weapon && !weapon.isField ? rangeRings(weapon.range, m) : [],
+      rings: showRings && weapon && !weapon.isField && !weapon.isMelee ? rangeRings(weapon.range, m) : [],
       blast: weapon && weapon.blastM && target
         ? onDeck(m, unobstructed(m, target, areaCells(m, target, weapon.blastM))) : [],
       cone: weapon && weapon.isFlame && target
         ? onDeck(m, unobstructed(m, origin, coneCells(m, origin, target, weapon.range, coneAngle / 2))) : [],
       aura: kind === 'field'
-        ? onDeck(m, unobstructed(m, origin, areaCells(m, origin, weapon.auraM))) : []
+        ? onDeck(m, unobstructed(m, origin, areaCells(m, origin, weapon.auraM))) : [],
+      // The squares a melee weapon threatens from where its bearer stands.
+      // Trimmed like any other template: you cannot stab through a bulkhead.
+      threat: kind === 'melee'
+        ? onDeck(m, unobstructed(m, origin, areaCells(m, origin, weapon.reachM))) : [],
+      // Whether the thing being pointed at is actually within reach of it.
+      reaches: kind === 'melee' && shot ? meleeReaches(weapon, shot.metres) : null
     };
   }, [mode, origin, aim, hover, weapon, showRings, coneAngle, m]);
 
@@ -2186,8 +2262,28 @@ export default function BattleMap({
       }
 
       // The shot itself, over the rings so the lane is not lost under them.
+      /* The squares a melee weapon threatens, under everything else: a ring
+         of reach around its bearer, green while the target is inside it and
+         red once it is not. Out of reach is no attack, the melee answer to
+         being out of range. */
+      if (overlay.threat && overlay.threat.length) {
+        fill(overlay.threat, overlay.reaches === false
+          ? 'rgba(231,76,60,0.12)' : 'rgba(126,217,87,0.14)');
+        ctx.strokeStyle = overlay.reaches === false
+          ? 'rgba(231,76,60,0.8)' : 'rgba(126,217,87,0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(ox, oy, (weapon.reachM / (m.metresPerSquare || 1)) * px + px * 0.42, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       if (overlay.shot && overlay.target) {
-        drawShot(ctx, px, origin, overlay.target, overlay.shot.blocked);
+        drawShot(ctx, px, origin, overlay.target, overlay.shot.blocked, {
+          scatter: weapon.isScatter,
+          burst: Boolean(weapon.burst) && !weapon.isScatter,
+          thrown: weapon.isThrown,
+          heavy: weapon.isHeavy,
+          accurate: weapon.isAccurate
+        });
       }
 
       // The firing square itself.
@@ -3992,15 +4088,30 @@ export default function BattleMap({
           {!origin
             ? 'Click the square the firer is standing in. Click it again to clear.'
             : <>
-                <strong>Firing from {origin.x},{origin.y}</strong>
+                <strong>{weapon && weapon.isMelee ? 'Fighting from' : 'Firing from'} {origin.x},{origin.y}</strong>
                 {weapon && weapon.range ? <span> · range {weapon.range} m</span> : null}
-                {weapon && !weapon.range && !weapon.isField
+                {weapon && weapon.isMelee
+                  ? <span> · reach {weapon.reachM} m</span> : null}
+                {weapon && !weapon.range && !weapon.isMelee && !weapon.isField
                   ? <span> · no ranged profile</span> : null}
                 {weapon && weapon.blastM ? <span> · Blast {weapon.blastM} m</span> : null}
                 {weapon && weapon.isFlame ? <span> · flame cone — click to aim</span> : null}
                 {/* The shot the GM is actually about to roll, so the band and
                     its modifier are on screen without switching to Measure. */}
-                {overlay && overlay.shot ? (
+                {/* A sword is in reach or it is not. The shooting bands say
+                    nothing about it: with no range in its stat line a knife
+                    reported "standard range, no modifier" from across the
+                    deck, because that is what rangeBand falls back to when
+                    it is handed nothing. */}
+                {overlay && overlay.shot && weapon && weapon.isMelee ? (
+                  <span>
+                    {' · '}{overlay.shot.metres} m — {overlay.reaches ? 'in reach' : 'OUT OF REACH'}
+                    {overlay.shot.blocked ? (
+                      <strong> · blocked by {blockedText(overlay.shot.blocked)}</strong>
+                    ) : null}
+                  </span>
+                ) : null}
+                {overlay && overlay.shot && !(weapon && weapon.isMelee) ? (
                   <span>
                     {' · '}{overlay.shot.metres} m — {overlay.shot.band.replace('_', ' ')}
                     {' ('}{overlay.shot.total === null

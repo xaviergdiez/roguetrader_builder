@@ -1960,7 +1960,37 @@ export function visibleCells(map, origin, radiusM = null) {
 /* Pulls the numbers an overlay needs straight off a weapon's catalogue line,
    so a flamer's reach and a grenade's Blast come from the same string the
    damage does rather than being typed in again. */
-export function weaponOverlay(stats) {
+/* HOW FAR A MELEE WEAPON REACHES.
+
+   Rogue Trader does not give melee a range: you are Engaged or you are not,
+   and the rules leave it there. At a table with miniatures on squares that
+   is not quite enough — a knife and a power lance are both "engaged" and the
+   two plainly do not threaten the same squares, and a GM asked whether the
+   spear can hit from two squares back wants an answer, not a shrug.
+
+   So these are HOUSE NUMBERS, the way the obscuring-terrain distances above
+   are, and they are deliberately coarse:
+
+     1 square   everything held in the hand. A sword, an axe, a fist.
+     2 squares  anything on a haft or a cord — a staff, a spear, a whip,
+                something two-handed and swung wide.
+
+   The cue is the weapon's name and its qualities, because the data has no
+   reach field: Flexible is the whip-and-chain quality, and the rest is read
+   off words that mean "long". A GM who disagrees moves the model. */
+const LONG_HAFT = /\b(staff|spear|lance|pike|polearm|halberd|glaive|scythe|eviscerator|great weapon)\b/i;
+
+export function meleeReachM({ name = '', qualities = [], perSquare = 1 } = {}) {
+  const words = `${name} ${(qualities || []).join(' ')}`;
+  const squares = LONG_HAFT.test(words) || /\bflexible\b/i.test(words) ? 2 : 1;
+  return squares * (Number(perSquare) || 1);
+}
+
+/* What a weapon is, beyond its numbers: enough for the overlay to draw it as
+   itself rather than as a generic line. `meta` carries the things the stats
+   line does not say — what kind of weapon it is and what it is called — and
+   is optional, so a caller with only a stats string still gets the rest. */
+export function weaponOverlay(stats, meta = {}) {
   // The field figures are read off the raw line rather than the parsed
   // qualities: parseWeaponStats splits a segment on ", " as well as on the
   // separator, which cuts "aura, 5 m" into two useless halves.
@@ -1970,11 +2000,28 @@ export function weaponOverlay(stats) {
   const blast = /blast\s*\((\d+)\)/i.exec(qualities);
   const rating = /protection rating\s*(\d+)/i.exec(text);
   const aura = /aura,?\s*(\d+)\s*m/i.exec(text);
+  const kind = meta.kind || null;
+  const name = meta.name || '';
+  const isMelee = kind === 'Melee';
   return {
     range: parsed.range,
+    kind,
     // Blast (X) is a radius in metres from the point of impact.
     blastM: blast ? Number(blast[1]) : null,
     isFlame: /flame/i.test(qualities),
+    isMelee,
+    /* Melee has no range in the data, so without this a knife reported
+       "standard range, no modifier" at fifty metres: rangeBand falls back to
+       standard when it is handed nothing, and nothing is exactly what a
+       sword's stat line gives it. */
+    reachM: isMelee ? meleeReachM({ name, qualities: parsed.qualities, perSquare: meta.perSquare }) : null,
+    isThrown: kind === 'Thrown',
+    isHeavy: kind === 'Heavy',
+    // A shotgun sprays, and a weapon that can empty a magazine in a burst
+    // does not put one neat hole in anything.
+    isScatter: /\bscatter\b/i.test(qualities),
+    burst: parsed.modes && (parsed.modes.fullAuto || parsed.modes.semiAuto) ? 1 : 0,
+    isAccurate: /\baccurate\b/i.test(qualities),
     // A force field, which is not a weapon and never draws a shot.
     isField: Boolean(rating),
     protectionRating: rating ? Number(rating[1]) : null,
@@ -1993,7 +2040,18 @@ export function overlayKindFor(ov) {
   if (!ov) return null;
   if (ov.isField) return 'field';
   if (ov.isFlame) return 'cone';
+  // A sword threatens the squares around its bearer, not a lane across the
+  // deck; drawing it as a beam said a knife could reach anything it could see.
+  if (ov.isMelee) return 'melee';
   return 'beam';            // blast weapons draw a beam AND a burst
+}
+
+/* Is the target within reach of a melee weapon? Out of reach is no attack at
+   all, which is the melee answer to being out of range. */
+export function meleeReaches(ov, metres) {
+  if (!ov || !ov.isMelee) return null;
+  const d = Math.max(0, Number(metres) || 0);
+  return d <= (Number(ov.reachM) || 0) + 1e-9;
 }
 
 /* Deployment zones are drawn, not occupied: a shaded band at each end of the

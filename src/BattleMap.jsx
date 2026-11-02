@@ -500,15 +500,36 @@ const BAND_COLOUR = {
 export default function BattleMap({
   map, onChange, historyKey = null, win = null, encounters = [], customThemes = [], onSaveTheme = null,
   decks = [], onSaveDeck = null, onLoadDeck = null, onDeleteDeck = null, onNeedTexture = null,
-  library = null
+  library = null,
+  /* A second copy of the TOOLS, with no map of its own. While the only map is
+     on the projector the GM has nothing on their own screen to click, and
+     bringing the map back to click it would put it in front of the table. So
+     the dashboard may show this: the toolbars, the tool's own options and its
+     dropdowns, driving the same state the projected map is drawing. */
+  controlsOnly = false,
+  /* { tab, setTab, mode, setMode } when the owner keeps the selection, so a
+     control panel and the map it drives agree on what is in hand. */
+  shared = null
 }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = resolveTheme(m.theme, customThemes);
 
   // A deck with the fog on is one being played, so it opens on the Play tab with
   // the tool that runs a crawl in hand; a deck being drawn opens on Build.
-  const [tab, setTab] = useState(m.fog ? 'play' : 'build');
-  const [mode, setMode] = useState(m.fog ? 'fog' : 'stamp');
+  /* WHICH TAB AND WHICH TOOL, shared when there are two copies of this.
+
+     The GM may have the map on the projector and its controls on their own
+     screen (controlsOnly, below). Those are two mounts of this component, and
+     with a tool selection each the control panel would be a dead thing:
+     picking Cover there would change nothing the projected map does. So the
+     owner may hold the selection and hand it down to both, and both go on
+     calling `mode` and `setMode` exactly as they did. */
+  const [tabOwn, setTabOwn] = useState(m.fog ? 'play' : 'build');
+  const [modeOwn, setModeOwn] = useState(m.fog ? 'fog' : 'stamp');
+  const tab = shared ? shared.tab : tabOwn;
+  const setTab = shared ? shared.setTab : setTabOwn;
+  const mode = shared ? shared.mode : modeOwn;
+  const setMode = shared ? shared.setMode : setModeOwn;
   const tabRef = useRef(tab);
   const modeRef = useRef(mode);
   tabRef.current = tab;
@@ -3977,6 +3998,10 @@ export default function BattleMap({
 
       </>)}
 
+      {/* THE MAP ITSELF, which a controls-only copy leaves out: it is a
+          second panel of tools for the GM while the only map is on the
+          projector, not a second map to keep painted. */}
+      {!controlsOnly && (<>
       <div className="rt-bm-stage" ref={stageRef}>
         {/* The wrapper takes the scaled size because a CSS transform does not
             affect layout — without it the stage would not know there was
@@ -4007,6 +4032,7 @@ export default function BattleMap({
         />
         </div>
       </div>
+      </>)}
 
       {/* Deliberately outside the toolbars' own gate: the map is run with the
           options hidden on a projector, and a question asked there has to be

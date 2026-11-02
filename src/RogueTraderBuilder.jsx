@@ -3149,6 +3149,16 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // The boarding map's own window. Owned here rather than in the GM panel so
   // that closing the dashboard mid-encounter does not shut the map with it.
   const [mapWindow, setMapWindow] = useState(false);
+  /* The tab and the tool, held here rather than inside the map, because there
+     may be two copies of the map: the one on the projector and the control
+     panel the GM may open on the dashboard beside it. One selection between
+     them, or picking a tool on the panel would change nothing on the map the
+     table is looking at. */
+  const [mapTab, setMapTab] = useState('build');
+  const [mapMode, setMapMode] = useState('stamp');
+  const sharedMapTools = useMemo(
+    () => ({ tab: mapTab, setTab: setMapTab, mode: mapMode, setMode: setMapMode }),
+    [mapTab, mapMode]);
   const [mapErr, setMapErr] = useState('');
   // The void chart's window, owned here for the same reason. voidShot is a
   // shot lined up on the chart waiting to be read by the gunnery panel: it
@@ -4559,7 +4569,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           combat={combat} setCombat={setCombat}
           blueprint={blueprint} bridgeCode={bridgeCode}
           homebrew={homebrew} setHomebrew={setHomebrew}
-          mapWindow={mapWindow} setMapWindow={setMapWindow}
+          mapWindow={mapWindow} setMapWindow={setMapWindow} sharedMapTools={sharedMapTools}
           mapErr={mapErr} setMapErr={setMapErr}
           voidRoster={voidRoster} voidWindow={voidWindow} setVoidWindow={setVoidWindow}
           voidWindowErr={voidWindowErr} setVoidWindowErr={setVoidWindowErr}
@@ -4610,6 +4620,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               onSaveDeck={saveLiveDeck}
               onLoadDeck={loadDeckOntoMap}
               onDeleteDeck={deleteSavedDeck}
+              shared={sharedMapTools}
             />
           )}
         </MapWindow>
@@ -9236,7 +9247,7 @@ const gunSurface = (g) => ({
 });
 
 function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
-  homebrew, setHomebrew, mapWindow, setMapWindow, mapErr, setMapErr,
+  homebrew, setHomebrew, mapWindow, setMapWindow, sharedMapTools, mapErr, setMapErr,
   voidRoster = [], voidWindow = false, setVoidWindow = () => {},
   voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {}, gun, voidLib = null, mapLib = null,
   grounds, onSaveGround, onNeedGroundTexture, groundErr, moveNote,
@@ -9258,6 +9269,14 @@ function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridge
     attacker, attackerP, targetShip, targetP, weapon, chartShot, hit, canShoot, chartBlocks,
     fire, volley, critOn, rollCritical
   } = gun;
+  /* Whether the map's tools are shown here while the map itself is on the
+     projector. The GM's choice, and off by default: it is a second row of
+     toolbars, and the map's own window already has one.
+
+     The selection is held HERE while it is on, so the panel and the projected
+     map have one tool and one tab between them: picking Cover on the
+     dashboard is picking it on the map the table is looking at. */
+  const [mapControls, setMapControls] = useState(false);
   // Whether the map library is unfolded on the Battle map tab.
   const [mapLibOpen, setMapLibOpen] = useState(false);
   const [eventId, setEventId] = useState('macro_strike');
@@ -10333,15 +10352,42 @@ function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridge
               and nothing in them reaches the table until you publish.
             </p>
           )
-        ) : mapWindow ? (
-          <p className="rt-bm-hint">
-            The map is running in a second window so the dashboard and bridge data stay
-            here while you run the encounter. Closing that window brings it back.
-          </p>
-        ) : (
+        ) : mapWindow ? (<>
+          <div className="rt-bm-bar">
+            <p className="rt-bm-hint" style={{ flex: '1 1 auto' }}>
+              The map is running in a second window so the dashboard and bridge data stay
+              here while you run the encounter. Closing that window brings it back.
+            </p>
+            {/* The tools, on the GM's own screen, while the only map is on the
+                projector. Offered rather than always on: it is a second row of
+                toolbars the GM may not want, and the map window has its own. */}
+            <button type="button" className={'rt-btn' + (mapControls ? ' on' : '')}
+              onClick={() => setMapControls((v) => !v)}
+              title="The map's tools here, with no second map: pick a tool, set its options, and the projected map obeys">
+              {mapControls ? 'Hide the controls' : 'Show the controls here'}
+            </button>
+          </div>
+          {mapControls && (
+            <BattleMap
+              controlsOnly
+              shared={sharedMapTools}
+              map={activeMap}
+              onChange={setActiveMap}
+              historyKey={activeMapKey}
+              encounters={encounters}
+              customThemes={grounds}
+              onSaveTheme={onSaveGround}
+              onNeedTexture={onNeedGroundTexture}
+              library={mapLib}
+            />
+          )}
+        </>) : (
           // The same map and the same writer the window uses, so a column
           // added in one place is there in the other.
           <BattleMap
+            // The same selection the window's copy uses, so popping the map
+            // out does not land the GM on a different tool than they left.
+            shared={sharedMapTools}
             map={activeMap}
             onChange={setActiveMap}
             historyKey={activeMapKey}

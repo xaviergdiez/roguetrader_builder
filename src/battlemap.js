@@ -523,7 +523,14 @@ export const HAZARD_TYPES = [
   { id: 'radiation', name: 'Radiation', colour: '#e3d23c', condition: null,
     note: 'Lingering after the exposure. The GM sets the toll.' },
   { id: 'electrical', name: 'Live current', colour: '#b98cff', condition: 'stunned',
-    note: 'A ruptured conduit. Crossing it risks being Stunned.' }
+    note: 'A ruptured conduit. Crossing it risks being Stunned.' },
+  /* The warp itself, as terrain: a tear where the veil has worn through. It
+     has no token on the sheets and is drawn churning instead, and it carries
+     the warp's own tables with it — right-click one on the map to roll
+     Psychic Phenomena, or Perils of the Warp. What it costs anyone who
+     lingers is the GM's call, as radiation's is. */
+  { id: 'warp', name: 'Warp rift', colour: '#b45cff', condition: null,
+    note: 'The veil is torn. Right-click it to roll Phenomena or Perils; the GM sets the toll on anyone who lingers.' }
 ];
 export const hazardById = (id) => HAZARD_TYPES.find((h) => h.id === id) || null;
 

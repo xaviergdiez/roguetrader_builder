@@ -25,7 +25,10 @@ import { generateDeck, growDeck as buildAroundDeck, newSeed, DECK_STYLES, styleB
 import {
   spriteRole, spriteTurn, SHEET_FOR_THEME, SPRITE_SLOTS, cellRect, keyBlack
 } from './spritesheet.js';
-import { DISCIPLINES, powerRule, powerShape, effectivePsyRating } from './psychic.js';
+import {
+  DISCIPLINES, powerRule, powerShape, effectivePsyRating,
+  phenomenaResult, perilsResult, escalatesToPerils
+} from './psychic.js';
 import { generateTerrain, readTerrainPrompt, TERRAIN_SIZES, TERRAIN_SCOPES } from './terrain.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 import MapLibrary from './MapLibrary.jsx';
@@ -127,9 +130,11 @@ function powerOverlay(key, psyRating, psyMode) {
   }
   const name = key.slice(4);
   const rule = powerRule(name);
+  // Pyromancy is fire and is drawn as fire; everything else is the warp.
+  const fire = DISCIPLINES.some((d) => d.id === 'pyromancy' && [d.basic, ...d.techniques].includes(name));
   const pr = channelled(psyRating, psyMode);
   const sh = powerShape(rule && rule.range, pr);
-  const base = { power: 'psy', name, pr, rangeText: rule ? rule.range : '', test: rule ? rule.test : '', range: null };
+  const base = { power: 'psy', name, pr, fire, rangeText: rule ? rule.range : '', test: rule ? rule.test : '', range: null };
   if (sh.shape === 'cone') return { ...base, overlayKind: 'cone', range: sh.metres, coneDeg: sh.coneDeg };
   if (sh.shape === 'radius') return { ...base, overlayKind: 'burst', burstM: sh.metres };
   if (sh.shape === 'line') return { ...base, overlayKind: 'line', lineM: sh.metres };
@@ -431,13 +436,56 @@ function drawShield(ctx, cx, cy, radiusPx) {
 // A flame cone: hottest at the nozzle, fading to the limit of its reach,
 // with the edges and the end arc drawn so the template has a readable
 // boundary rather than dissolving into haze.
+/* THE WARP'S COLOURS, which do not hold still.
+
+   Warp-work is drawn in colours that shift — purple through magenta to a
+   sick green and round the spectrum — so a psychic power or a rift reads at a
+   glance as nothing a weapon makes. `t` is the clock in milliseconds and `k`
+   offsets one band from the next, so a gradient's stops ripple outward rather
+   than changing all at once. A full turn of the wheel takes about three
+   seconds. Pyromancy is fire and is drawn as fire. */
+function warpRgb(t, k = 0) {
+  const h = ((t * 0.12 + k * 55) % 360 + 360) % 360;
+  const sat = 0.88, light = 0.62;
+  const c = (1 - Math.abs(2 * light - 1)) * sat;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const mm = light - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
+    : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return `${Math.round((r + mm) * 255)},${Math.round((g + mm) * 255)},${Math.round((b + mm) * 255)}`;
+}
+
+/* A warp rift on one square: a dark wound with the colours turning round it
+   and a slow swirl through the middle. */
+function drawWarpRift(ctx, x0, y0, px, t) {
+  const cx = x0 + px / 2, cy = y0 + px / 2;
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, px * 0.62);
+  g.addColorStop(0, 'rgba(8,0,18,0.9)');
+  g.addColorStop(0.35, `rgba(${warpRgb(t, 0)},0.75)`);
+  g.addColorStop(0.7, `rgba(${warpRgb(t, 1)},0.45)`);
+  g.addColorStop(1, `rgba(${warpRgb(t, 2)},0)`);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y0, px, px); ctx.clip();
+  ctx.fillStyle = g;
+  ctx.fillRect(x0, y0, px, px);
+  ctx.lineWidth = Math.max(1, px * 0.05);
+  for (let i = 0; i < 3; i++) {
+    const a = t * 0.002 + i * (Math.PI * 2 / 3);
+    ctx.strokeStyle = `rgba(${warpRgb(t, i + 3)},0.85)`;
+    ctx.beginPath();
+    ctx.arc(cx, cy, px * (0.18 + i * 0.1), a, a + Math.PI * 0.9);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // Flame by default; `warp` for a psychic cone, which is a scream through the
 // warp and should not be mistaken across the table for a flamer.
 const CONE_FLAME = ['255,241,180', '255,170,40', '231,76,60', '255,170,60', '255,220,130'];
-const CONE_WARP = ['245,215,255', '200,110,255', '120,60,200', '200,130,255', '230,190,255'];
 function drawCone(ctx, ox, oy, aimRad, reachPx, halfRad, warp = false) {
   if (reachPx <= 0) return;
-  const c = warp ? CONE_WARP : CONE_FLAME;
+  const now = warp ? performance.now() : 0;
+  const c = warp ? [0, 1, 2, 3, 4].map((k) => warpRgb(now, k)) : CONE_FLAME;
   const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, reachPx);
   g.addColorStop(0, `rgba(${c[0]},0.75)`);
   g.addColorStop(0.35, `rgba(${c[1]},0.55)`);
@@ -1918,6 +1966,30 @@ export default function BattleMap({
   }, [mode, origin, showLos, weapon, m]);
 
   const drawRef = useRef(() => {});
+
+  /* THE WARP DOES NOT HOLD STILL. While a rift is on the deck or a psychic
+     power is in hand, the map is redrawn about fifteen times a second so its
+     colours keep turning. Nothing else animates, so a deck with no warp on it
+     costs exactly what it did. The redraw calls the current draw directly
+     rather than through React, which would re-render this whole component
+     fifteen times a second to move a colour. Off for anyone whose system asks
+     for reduced motion: the colours are still the warp's, just still. */
+  const warpOnDeck = useMemo(() => Object.values(m.hazards).includes('warp'), [m.hazards]);
+  const warpInHand = mode === 'overlay' && Boolean(origin) && Boolean(weapon)
+    && weapon.power === 'psy' && !weapon.fire;
+  useEffect(() => {
+    if (!warpOnDeck && !warpInHand) return undefined;
+    const w = win || window;
+    if (w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
+    let id = 0;
+    let last = 0;
+    const loop = (t) => {
+      if (t - last > 66) { last = t; drawRef.current(); }
+      id = w.requestAnimationFrame(loop);
+    };
+    id = w.requestAnimationFrame(loop);
+    return () => w.cancelAnimationFrame(id);
+  }, [warpOnDeck, warpInHand, win]);
   const overviewRef = useRef(null);
   const OVERVIEW_BELOW = 6;       // screen pixels per square under which only the overview is drawn
 
@@ -2099,6 +2171,7 @@ export default function BattleMap({
         const hz = hazardById(id);
         if (!hz) return;
         const x0 = cx * px, y0 = cy * px;
+        if (hz.id === 'warp') { drawWarpRift(ctx, x0, y0, px, performance.now()); return; }
         /* With a picture for this hazard, the picture IS the warning and the
            stripes come off — a fire that looks like fire does not also need
            hatching. The coloured edge stays: it is what says which hazard
@@ -2388,7 +2461,7 @@ export default function BattleMap({
       // exactly which squares are in it, and a gradient edge alone is a
       // thing to argue over.
       fill(overlay.aura, 'rgba(0,229,255,0.10)');
-      fill(overlay.cone, weapon.power ? 'rgba(200,110,255,0.14)' : 'rgba(255,170,40,0.12)');
+      fill(overlay.cone, weapon.power && !weapon.fire ? `rgba(${warpRgb(performance.now(), 1)},0.14)` : 'rgba(255,170,40,0.12)');
       fill(overlay.blast, 'rgba(231,76,60,0.12)');
       fill(overlay.burst, 'rgba(255,120,40,0.14)');
 
@@ -2405,7 +2478,7 @@ export default function BattleMap({
           Math.atan2(target.y - origin.y, target.x - origin.x),
           inSquares(weapon.range),
           ((weapon.coneDeg || coneAngle) / 2) * Math.PI / 180,
-          weapon.power === 'psy'
+          weapon.power === 'psy' && !weapon.fire
         ));
       }
       // A power bursting round the psyker: the blast art, centred on them.
@@ -2428,7 +2501,15 @@ export default function BattleMap({
         ctx.restore();
       }
       // A personal power: a glow round the psyker's own square.
-      if (overlay.kind === 'personal') drawShield(ctx, ox, oy, px * 0.85);
+      if (overlay.kind === 'personal') {
+        const rgb = weapon.fire ? '255,140,40' : warpRgb(performance.now());
+        const gl = ctx.createRadialGradient(ox, oy, px * 0.2, ox, oy, px * 0.95);
+        gl.addColorStop(0, `rgba(${rgb},0)`);
+        gl.addColorStop(0.6, `rgba(${rgb},0.55)`);
+        gl.addColorStop(1, `rgba(${rgb},0)`);
+        ctx.fillStyle = gl;
+        ctx.beginPath(); ctx.arc(ox, oy, px * 0.95, 0, Math.PI * 2); ctx.fill();
+      }
       if (overlay.blast.length && target) {
         clipToCells(ctx, overlay.blastClip.length ? overlay.blastClip : overlay.blast, px, () => drawBlast(
           ctx, target.x * px + px / 2, target.y * px + px / 2,
@@ -2473,7 +2554,8 @@ export default function BattleMap({
         ctx.stroke();
       }
       if (overlay.kind === 'bolt' && Number.isFinite(weapon.reachM) && weapon.reachM > 0) {
-        ctx.strokeStyle = overlay.reaches === false ? 'rgba(231,76,60,0.85)' : 'rgba(200,110,255,0.85)';
+        ctx.strokeStyle = overlay.reaches === false ? 'rgba(231,76,60,0.85)'
+          : weapon.fire ? 'rgba(255,140,40,0.85)' : `rgba(${warpRgb(performance.now(), 2)},0.85)`;
         ctx.lineWidth = 2;
         ctx.setLineDash([3, 4]);
         ctx.beginPath();
@@ -2485,7 +2567,8 @@ export default function BattleMap({
         drawShot(ctx, px, origin, overlay.target, overlay.shot.blocked, {
           // A power or a gaze is a stream of the warp, not a round: its own
           // colour, so nobody reads a psychic bolt as a lasgun shot.
-          rgb: weapon.power === 'nav' ? '120,255,200' : weapon.power === 'psy' ? '220,110,255' : null,
+          rgb: weapon.power === 'nav' ? '120,255,200'
+            : weapon.power === 'psy' ? (weapon.fire ? '255,140,40' : warpRgb(performance.now())) : null,
           scatter: weapon.isScatter,
           burst: Boolean(weapon.burst) && !weapon.isScatter,
           thrown: weapon.isThrown,
@@ -3208,6 +3291,33 @@ export default function BattleMap({
           run: () => clickDoor({ x: at.x, y: at.y }, st)
         });
       }
+    }
+    /* A WARP RIFT UNDER THE POINTER: the warp's own tables, rolled where it
+       happened. Phenomena of 75 or more escalates to Perils, as the rules
+       have it, and both results are shown together. */
+    if (at && m.hazards[cellKey(at.x, at.y)] === 'warp') {
+      const d100 = () => 1 + Math.floor(Math.random() * 100);
+      const say = (r) => (r ? `${r.name}. ${r.effect}` : 'Nothing comes of it.');
+      a.push({
+        key: 'warp-phen', label: 'Roll Psychic Phenomena',
+        run: () => {
+          const roll = d100();
+          const ph = phenomenaResult(roll);
+          let body = `${roll}: ${say(ph)}`;
+          if (escalatesToPerils(roll)) {
+            const pr = d100();
+            body += ` The warp does not let go. Perils of the Warp, ${pr}: ${say(perilsResult(pr))}`;
+          }
+          confirmInMap({ title: 'Psychic Phenomena', body, yes: 'Done', info: true });
+        }
+      });
+      a.push({
+        key: 'warp-perils', label: 'Roll Perils of the Warp',
+        run: () => {
+          const roll = d100();
+          confirmInMap({ title: 'Perils of the Warp', body: `${roll}: ${say(perilsResult(roll))}`, yes: 'Done', info: true });
+        }
+      });
     }
     if (library) {
       a.push({ key: 'library', label: 'Library\u2026 (decks, environments, files)', icon: 'save',
@@ -4454,7 +4564,7 @@ export default function BattleMap({
               <button type="button" className="rt-btn" autoFocus
                 onClick={() => closeAsk(true)}>{ask.yes || 'Yes'}</button>
               <button type="button" className="rt-btn ghost"
-                onClick={() => closeAsk(false)}>Cancel</button>
+                onClick={() => closeAsk(false)} hidden={Boolean(ask.info)}>Cancel</button>
             </div>
           </div>
         </div>

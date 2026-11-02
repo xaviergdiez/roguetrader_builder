@@ -63,6 +63,7 @@ for (const o of OBSCURING) {
 const hazardRoles = Object.fromEntries(HAZARD_TYPES.map((h) => [h.id, spriteRole('hazard', h.id)]));
 ok(hazardRoles.fire === 'fire' && hazardRoles.toxic === 'gas' && hazardRoles.electrical === 'energy',
   'fire, gas and current have tokens');
+ok(hazardRoles.warp === null, 'a warp rift is drawn churning, not from a token');
 ok(hazardRoles.void === null && hazardRoles.radiation === null,
   'vacuum and radiation are drawn flat, deliberately');
 ok(spriteRole('nonsense', 'x') === null, 'an unknown kind asks for nothing');

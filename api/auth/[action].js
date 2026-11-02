@@ -8,6 +8,7 @@ import {
   destroySession,
   getUser,
   saveUser,
+  signInRecord,
 } from "../../lib/auth.js";
 
 const GOOGLE_AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -124,8 +125,10 @@ export default async function handler(req, res) {
       return res.status(403).send("This app is not open for signups yet.");
     }
 
+    // Refresh who they are and keep everything else on the account: decks,
+    // grounds, homebrew and tables are all stored on this record.
     const existing = await getUser(sub);
-    await saveUser(sub, { email, name, chars: existing?.chars ?? [] });
+    await saveUser(sub, signInRecord(existing, { email, name }));
     await createSession(res, sub, { gm: asGm });
     return res.redirect(302, "/");
   }

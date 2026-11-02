@@ -49,9 +49,13 @@ ok(spriteRole('door', 'bulkhead', 'open') === 'door_open', 'an open bulkhead is 
 ok(spriteRole('door', 'bulkhead', 'jammed') === 'door_closed', 'a jammed door still looks shut');
 ok(spriteRole('door', 'hatch', 'open') === 'hatch', 'a hatch is a hatch either way');
 
+// Promethium tanks are drawn by hand, as the warp is: the sheets have no
+// tank, and a crate stack standing in for a bomb would be read as a crate.
+const DRAWN_COVER = new Set(['tank']);
 for (const c of COVER_TYPES) {
   const role = spriteRole('cover', c.id, null, { x: 0, y: 0 });
-  ok(SPRITE_ROLES.includes(role), `cover ${c.id} -> a real role (got ${role})`);
+  if (DRAWN_COVER.has(c.id)) ok(role === null, `cover ${c.id} is drawn, not a token (got ${role})`);
+  else ok(SPRITE_ROLES.includes(role), `cover ${c.id} -> a real role (got ${role})`);
 }
 for (const o of OBSCURING) {
   const role = spriteRole('obscure', o.id);
@@ -64,6 +68,7 @@ const hazardRoles = Object.fromEntries(HAZARD_TYPES.map((h) => [h.id, spriteRole
 ok(hazardRoles.fire === 'fire' && hazardRoles.toxic === 'gas' && hazardRoles.electrical === 'energy',
   'fire, gas and current have tokens');
 ok(hazardRoles.warp === null, 'a warp rift is drawn churning, not from a token');
+ok(hazardRoles.zerog === null, 'nor is dead gravity: there is nothing there to picture');
 ok(hazardRoles.void === null && hazardRoles.radiation === null,
   'vacuum and radiation are drawn flat, deliberately');
 ok(spriteRole('nonsense', 'x') === null, 'an unknown kind asks for nothing');

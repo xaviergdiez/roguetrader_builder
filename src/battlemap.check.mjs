@@ -23,7 +23,10 @@ import {
   WALL_N, WALL_E, WALL_S, WALL_W,
   DOOR_STATES, nextDoorState, doorBlocks, MARKER_TYPES, markerTypeById,
   setStartRoom, startPlay, playDoor, rotateMap, roomsOf, doorsOf, roomFog,
-  TARGET_BONUS, TARGET_BONUS_CAP, targetBonusAt, packMap
+  TARGET_BONUS, TARGET_BONUS_CAP, targetBonusAt, packMap,
+  wearCover, detonateTank, turretAt, turretCells, setTurret, setDeckTurrets, TURRET_WEAPON,
+  spreadWarp, sealWarp, sanctified, placeVent, ventPartner, crawlThrough, ventSources, ventField,
+  VENT_REACH_SQUARES, lightAt
 } from './battlemap.js';
 import { rangeBand, parseWeaponStats, RANGE_MODIFIERS, conditionById } from './groundcombat.js';
 import { GEAR } from './gear.js';
@@ -1671,19 +1674,19 @@ import { GEAR } from './gear.js';
      into five hundred records saying nothing. */
   {
     // Read either way round, as a door is.
-    assert.deepEqual(readCover('low'), { id: 'low', turn: 0 }, 'the old bare string');
-    assert.deepEqual(readCover({ id: 'low', turn: 1 }), { id: 'low', turn: 1 }, 'and the record');
+    assert.deepEqual(readCover('low'), { id: 'low', turn: 0, wear: 0 }, 'the old bare string');
+    assert.deepEqual(readCover({ id: 'low', turn: 1, wear: 0 }), { id: 'low', turn: 1, wear: 0 }, 'and the record');
     assert.equal(readCover('nonsense'), null, 'junk is not cover');
     assert.equal(readCover(null), null);
     assert.equal(readCover({ id: 'nope', turn: 1 }), null);
     // Two states and only two: a barrier is \u2014 or |, so anything else folds
     // into one of them rather than becoming a third thing the art cannot draw.
-    assert.deepEqual(readCover({ id: 'low', turn: 7 }), { id: 'low', turn: 1 }, 'odd is standing');
-    assert.deepEqual(readCover({ id: 'low', turn: 2 }), { id: 'low', turn: 0 }, 'even is across');
-    assert.deepEqual(readCover({ id: 'low', turn: -1 }), { id: 'low', turn: 1 }, 'and negatives fold too');
-    assert.deepEqual(readCover({ id: 'low', turn: 'x' }), { id: 'low', turn: 0 }, 'junk turn is none');
+    assert.deepEqual(readCover({ id: 'low', turn: 7 }), { id: 'low', turn: 1, wear: 0 }, 'odd is standing');
+    assert.deepEqual(readCover({ id: 'low', turn: 2 }), { id: 'low', turn: 0, wear: 0 }, 'even is across');
+    assert.deepEqual(readCover({ id: 'low', turn: -1 }), { id: 'low', turn: 1, wear: 0 }, 'and negatives fold too');
+    assert.deepEqual(readCover({ id: 'low', turn: 'x' }), { id: 'low', turn: 0, wear: 0 }, 'junk turn is none');
     // Bulk cover never carries one, however it is asked to.
-    assert.deepEqual(readCover({ id: 'crates', turn: 1 }), { id: 'crates', turn: 0 },
+    assert.deepEqual(readCover({ id: 'crates', turn: 1, wear: 0 }), { id: 'crates', turn: 0, wear: 0 },
       'a crate stack has no front');
 
     // Written compactly: a plain string unless it is actually turned.
@@ -2118,6 +2121,149 @@ console.log('battlemap.js OK (%d themes, %dx%d default grid)',
 
   // A terminal is drawn as its ground's machinery, so that token is fetched.
   assert.ok(tokensNeeded(base).some((k) => k.endsWith('/machinery')));
+  // A vent is drawn as its ground's grating; a shrine asks for nothing.
+  const vented = readMap({ ...base, doors: {}, markers: { '2,2': { type: 'vent' }, '3,3': { type: 'shrine' } } });
+  assert.deepEqual(tokensNeeded(vented), [`${vented.theme}/grate`]);
+}
+
+/* ---- terrain that does things ---- */
+{
+  const block = (x0, y0, x1, y1, into = {}) => {
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) into[`${x},${y}`] = true;
+    return into;
+  };
+  const deck = (extra = {}) => readMap({ cols: 20, rows: 12, floor: block(0, 0, 11, 4), ...extra });
+
+  // COVER WEARS. Effective AP is what is left; at nothing it is gone.
+  const crates = deck({ cover: { '6,2': 'crates', '7,2': { id: 'low', turn: 1 }, '1,1': 'pillar' } });
+  const hit = readMap({ ...crates, ...wearCover(crates, { x: 6, y: 2 }, 3) });
+  assert.deepEqual(readCover(hit.cover['6,2']), { id: 'crates', turn: 0, wear: 3 });
+  assert.equal(coverBetween(hit, { x: 0, y: 2 }, { x: 6, y: 2 }).ap, 5, 'worn crates give what they have left');
+  const barrier = readMap({ ...hit, ...wearCover(hit, { x: 7, y: 2 }, 1) });
+  assert.deepEqual(readCover(barrier.cover['7,2']), { id: 'low', turn: 1, wear: 1 }, 'a worn barrier keeps its lie');
+  assert.deepEqual(readCover(readMap(JSON.parse(JSON.stringify(packMap(barrier)))).cover['7,2']),
+    { id: 'low', turn: 1, wear: 1 }, 'and both survive being stored');
+  const turnedBarrier = rotateMap(readMap({ ...barrier, cols: 20, rows: 20 }), 1);
+  assert.deepEqual(Object.values(turnedBarrier.cover).map(readCover).find((c) => c.id === 'low'),
+    { id: 'low', turn: 0, wear: 1 }, 'and turning the deck turns it without mending it');
+  const gone = wearCover(hit, { x: 6, y: 2 }, 5);
+  assert.ok(gone.destroyed && !gone.cover['6,2'], 'shot down to nothing, it is gone');
+  const mended = readMap({ ...hit, ...wearCover(hit, { x: 6, y: 2 }, -10) });
+  assert.equal(mended.cover['6,2'], 'crates', 'patched up, it is a plain crate stack again');
+  assert.equal(wearCover(crates, { x: 1, y: 1 }, 5), null, 'a pillar does not wear');
+  assert.equal(wearCover(crates, { x: 3, y: 3 }, 1), null, 'nor does bare deck');
+  assert.equal(readCover({ id: 'crates', wear: 99 }).wear, 8, 'wear is never more than the cover had');
+
+  // PROMETHIUM. Off the deck, fire through the blast, the next tank with it.
+  const tanks = deck({
+    floor: block(0, 0, 11, 4, block(14, 0, 18, 4)),
+    cover: { '4,2': 'tank', '7,2': 'tank', '11,2': 'crates', '14,2': 'tank' },
+    hazards: { '5,0': 'void' }
+  });
+  const boom = detonateTank(tanks, { x: 4, y: 2 });
+  assert.equal(boom.tanks, 2, 'the tank three squares off goes up with it');
+  assert.ok(!boom.cover['4,2'] && !boom.cover['7,2'], 'both are off the deck');
+  assert.equal(boom.cover['14,2'], 'tank', 'a tank across the void is left alone');
+  assert.equal(boom.hazards['4,2'], 'fire'); assert.equal(boom.hazards['10,2'], 'fire', 'the second blast reaches further');
+  assert.equal(boom.hazards['5,0'], 'void', 'fire does not fill a breach');
+  assert.ok(!boom.hazards['12,2'] && !boom.hazards['11,2'] || boom.hazards['11,2'] === 'fire', 'nothing off the deck burns');
+  assert.ok(!Object.keys(boom.hazards).some((k) => parseKey(k).x >= 13), 'the far room is untouched');
+  assert.equal(detonateTank(tanks, { x: 11, y: 2 }), null, 'crates do not go off');
+  const doored = readMap({ ...tanks, doors: { '6,0': { kind: 'bulkhead', state: 'closed' }, '2,0': { kind: 'bulkhead', state: 'open' } } });
+  const doorBoom = detonateTank(doored, { x: 4, y: 2 });
+  assert.ok(!doorBoom.hazards['6,0'], 'a shut door stops the fire');
+  assert.equal(doorBoom.hazards['2,0'], 'fire', 'an open one is just floor');
+  const shotTank = wearCover(tanks, { x: 14, y: 2 }, 6);
+  assert.ok(shotTank.blew && shotTank.hazards['14,2'] === 'fire', 'a tank shot through goes up');
+
+  // TURRETS. A 90-degree arc on its facing, cut at what it cannot see through.
+  const corridor = readMap({ cols: 20, rows: 12, floor: block(0, 0, 11, 4, block(12, 2, 15, 2)),
+    doors: { '12,2': { kind: 'bulkhead', state: 'closed' } },
+    markers: { '0,2': { type: 'turret', label: 'Sentry', facing: 2 } } });
+  assert.deepEqual([corridor.markers['0,2'].weapon, corridor.markers['0,2'].rangeM, corridor.markers['0,2'].state],
+    [TURRET_WEAPON.name, TURRET_WEAPON.rangeM, 'active'], 'an unarmed turret mounts the default gun, awake');
+  const arc = new Set(turretCells(corridor, { x: 0, y: 2 }).map((c) => `${c.x},${c.y}`));
+  assert.ok(arc.has('5,2') && arc.has('11,2'), 'facing east, it covers the corridor');
+  assert.ok(!arc.has('0,0') && !arc.has('0,4'), 'and not straight up or down it');
+  assert.ok(!arc.has('0,2'), 'nor its own square');
+  assert.ok(!arc.has('13,2') && !arc.has('14,2'), 'nor past a shut bulkhead');
+  assert.equal(turretAt(corridor, { x: 1, y: 2 }), null);
+  const turned = readMap({ ...corridor, ...setTurret(corridor, { x: 0, y: 2 }, { turn: 1 }) });
+  assert.equal(turned.markers['0,2'].facing, 3, 'one click is an eighth of a turn');
+  assert.equal(readMap({ ...corridor, ...setTurret(corridor, { x: 0, y: 2 }, { turn: -3 }) }).markers['0,2'].facing, 7, 'and wraps');
+  const off = readMap({ ...corridor, ...setDeckTurrets(corridor, 'off') });
+  assert.deepEqual(turretCells(off, { x: 0, y: 2 }), [], 'switched off, it covers nothing');
+  assert.equal(setDeckTurrets(deck(), 'off'), null, 'a deck with no turrets has nothing to switch');
+  // (On a square grid, so the turned deck fits.)
+  const square = readMap({ ...corridor, cols: 20, rows: 20 });
+  const spun = rotateMap(square, 1);
+  const spunAt = Object.keys(spun.markers).find((k) => spun.markers[k].type === 'turret');
+  assert.equal(spun.markers[spunAt].facing, 4, 'turning the deck a quarter turns the gun a quarter: east becomes south');
+  assert.equal(Object.values(rotateMap(square, 3).markers)[0].facing, 0, 'and anticlockwise, north');
+
+  // THE WARP SPREADS one square per rift, never onto holy ground; sealing takes all of a rift.
+  const rifts = deck({ hazards: { '2,2': 'warp', '3,2': 'warp', '9,2': 'warp' }, doors: { '2,1': { kind: 'bulkhead', state: 'open' } } });
+  const grown = spreadWarp(rifts, () => 0);
+  assert.equal(grown.grew, 2, 'each separate rift grows');
+  assert.equal(Object.values(grown.hazards).filter((v) => v === 'warp').length, 5);
+  assert.ok(!grown.hazards['2,1'], 'never into a doorway');
+  const blessed = deck({ hazards: { '5,2': 'warp' }, markers: { '6,2': { type: 'shrine', label: 'Shrine' } } });
+  assert.ok(sanctified(blessed).has('4,2') && sanctified(blessed).has('9,2') && !sanctified(blessed).has('10,2'),
+    'holy ground runs three metres from the shrine');
+  assert.equal(spreadWarp(blessed, () => 0), null, 'ringed by holy ground, a rift cannot grow');
+  const sealedRift = sealWarp(rifts, { x: 3, y: 2 });
+  assert.ok(!sealedRift.hazards['2,2'] && !sealedRift.hazards['3,2'], 'sealing one square seals the rift');
+  assert.equal(sealedRift.hazards['9,2'], 'warp', 'and only that rift');
+  assert.equal(sealWarp(rifts, { x: 5, y: 2 }), null);
+
+  // VENTS. The second links to the first; a crawl comes out the other end.
+  let vents = readMap({ ...deck(), fog: true, viewpoint: { x: 0, y: 0 },
+    floor: block(0, 0, 11, 4, block(14, 0, 18, 4)) });
+  vents = readMap({ ...vents, ...placeVent(vents, { x: 1, y: 1 }) });
+  assert.equal(vents.markers['1,1'].pair, null, 'the first end waits');
+  assert.equal(ventPartner(vents, { x: 1, y: 1 }), null);
+  vents = readMap({ ...vents, ...placeVent(vents, { x: 16, y: 3 }) });
+  assert.equal(vents.markers['1,1'].pair, vents.markers['16,3'].pair, 'the second joins it');
+  assert.deepEqual(ventPartner(vents, { x: 1, y: 1 }), { x: 16, y: 3 });
+  const crawled = crawlThrough(vents, { x: 1, y: 1 });
+  assert.deepEqual(crawled.viewpoint, { x: 16, y: 3 }, 'the party comes out the far end');
+  assert.ok(crawled.explored['18,0'], 'and sees the room it opens into');
+  vents = readMap({ ...vents, ...placeVent(vents, { x: 5, y: 0 }) });
+  vents = readMap({ ...vents, ...placeVent(vents, { x: 15, y: 0 }) });
+  assert.notEqual(vents.markers['5,0'].pair, vents.markers['1,1'].pair, 'a second pair is its own crawlway');
+  assert.deepEqual(ventPartner(vents, { x: 5, y: 0 }), { x: 15, y: 0 });
+  const lost = { ...vents.markers }; delete lost['16,3'];
+  vents = readMap({ ...vents, markers: lost });
+  assert.equal(crawlThrough(vents, { x: 1, y: 1 }), null, 'an end whose partner is gone leads nowhere');
+  vents = readMap({ ...vents, ...placeVent(vents, { x: 17, y: 4 }) });
+  assert.deepEqual(ventPartner(vents, { x: 1, y: 1 }), { x: 17, y: 4 }, 'until a new vent gives it one');
+  const turnedVents = rotateMap(readMap({ ...vents, cols: 20, rows: 20 }), 1);
+  const end = Object.keys(turnedVents.markers).find((k) => turnedVents.markers[k].pair === vents.markers['1,1'].pair);
+  assert.ok(ventPartner(turnedVents, parseKey(end)), 'a crawlway survives the deck being turned');
+
+  // BREACHES AND AIRLOCKS. Air runs to the hole; a shut door holds it.
+  const hull = readMap({ cols: 20, rows: 12, floor: block(1, 2, 14, 2),
+    hazards: { '1,2': 'void' }, doors: { '8,2': { kind: 'bulkhead', state: 'closed' } } });
+  const field = new Map(ventField(hull).map((c) => [`${c.x},${c.y}`, c]));
+  assert.deepEqual([field.get('3,2').dx, field.get('3,2').dy, field.get('3,2').d], [-1, 0, 2], 'dragged west, toward the breach');
+  assert.ok(field.has('7,2') && !field.has('8,2') && !field.has('9,2'), 'stopped at the shut door');
+  const opened = readMap({ ...hull, doors: { '8,2': { kind: 'bulkhead', state: 'open' } } });
+  assert.ok(new Map(ventField(opened).map((c) => [`${c.x},${c.y}`, c])).has('9,2'), 'open it and the pull goes on');
+  assert.ok(!ventField(opened).some((c) => c.d > VENT_REACH_SQUARES), 'out to a limit');
+  const lock = (state, at = '14,2') => readMap({ cols: 20, rows: 12, floor: block(1, 2, 14, 2),
+    doors: { [at]: { kind: 'airlock', state } } });
+  assert.equal(ventSources(lock('open')).length, 1, 'an airlock open on the hull is a hole');
+  assert.equal(ventSources(lock('closed')).length, 0, 'shut, it is not');
+  assert.equal(ventSources(lock('open', '8,2')).length, 0, 'nor is one open between two compartments');
+  assert.deepEqual(ventField(deck()), [], 'a sound hull pulls nothing');
+
+  // LIGHT, square by square, over the deck's own.
+  const lit = readMap({ ...deck(), lighting: 'dim', light: { '2,2': 'dark', '3,3': 'nonsense', 'x': 'dark' } });
+  assert.deepEqual(lit.light, { '2,2': 'dark' }, 'only real presets on real squares');
+  assert.equal(lightAt(lit, { x: 2, y: 2 }).id, 'dark');
+  assert.equal(lightAt(lit, { x: 5, y: 2 }).id, 'dim', 'unpainted squares are the deck\'s light');
+  assert.deepEqual(readMap(JSON.parse(JSON.stringify(packMap(lit)))).light, lit.light, 'and it is stored');
+  assert.equal(Object.values(rotateMap(readMap({ ...lit, cols: 20, rows: 20 }), 1).light)[0], 'dark', 'and turned with the deck');
 }
 
 console.log('battlemap.check.mjs: rotation passed');

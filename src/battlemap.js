@@ -312,6 +312,9 @@ export const EMPTY_MAP = {
   // party knows without having been there. Drawn under the fog as a
   // blueprint — walls and doors, nothing of what is in the rooms.
   mapped: {},           // { 'x,y': true }
+  // Light painted onto squares, over the deck's own `lighting`: a dark
+  // corridor in a lit ship, a smoke-filled room. { 'x,y': lightingId }
+  light: {},
   // Where they are now, set by the last reveal. What is DRAWN is `explored`
   // narrowed to what can still be walked to from here through open doors, so
   // shutting a bulkhead takes the room beyond it off the board and opening
@@ -415,7 +418,12 @@ export const DOOR_KINDS = [
   { id: 'bulkhead', name: 'Bulkhead', ap: 12,
     note: 'A powered blast door. Breaking one is a job, not an action.' },
   { id: 'hatch', name: 'Hatch', ap: 6,
-    note: 'A crawl-through access cover \u2014 maintenance ways, shafts, cargo holds.' }
+    note: 'A crawl-through access cover \u2014 maintenance ways, shafts, cargo holds.' },
+  /* An airlock is a door like the others until it is open on the hull: then
+     it is a hole in the ship, and everything behind it is pulled toward it
+     exactly as it would be toward a breach (see ventField). */
+  { id: 'airlock', name: 'Airlock', ap: 16,
+    note: 'Opened on the hull, it vents everything behind it like a breach.' }
 ];
 export const doorKindById = (id) =>
   DOOR_KINDS.find((d) => d.id === id) || DOOR_KINDS[0];
@@ -451,8 +459,15 @@ export const COVER_TYPES = [
     note: 'Stacked high enough to hide behind.' },
   { id: 'machinery', name: 'Machinery or plating', ap: 12, blocksSight: true, directional: false,
     note: 'Pipework, cogitator banks, loose hull plate.' },
-  { id: 'pillar', name: 'Structural pillar', ap: 16, blocksSight: true, directional: false,
-    note: 'Part of the ship. It does not move and it does not break.' }
+  { id: 'pillar', name: 'Structural pillar', ap: 16, blocksSight: true, directional: false, sturdy: true,
+    note: 'Part of the ship. It does not move and it does not break.' },
+  /* Cover that is also a bomb. `blastM` is how far the blast reaches when it
+     goes up — a house number: Rogue Trader gives a frag grenade Blast (4)
+     and a tank of promethium is at least that. Detonating it takes the tank
+     off the deck and sets everything in reach burning. */
+  { id: 'tank', name: 'Promethium tanks', ap: 6, blocksSight: true, directional: false,
+    volatile: true, blastM: 4,
+    note: 'Solid enough to hide behind, until it is hit hard enough. Right-click to set it off.' }
 ];
 export const coverById = (id) => COVER_TYPES.find((c) => c.id === id) || null;
 
@@ -494,13 +509,26 @@ export function readCover(v) {
     : (v && typeof v === 'object' ? v : null);
   const type = raw && coverById(raw.id);
   if (!type) return null;
-  return { id: raw.id, turn: type.directional ? lie(raw.turn) : 0 };
+  // WEAR: Armour Points shot off it. Never more than it had — at that point
+  // it is gone, and taking it off the deck is the caller's job (wearCover).
+  const w = Math.round(Number(raw.wear));
+  const wear = Number.isFinite(w) ? Math.max(0, Math.min(type.ap, w)) : 0;
+  return { id: raw.id, turn: type.directional ? lie(raw.turn) : 0, wear };
 }
 
-export const writeCover = (id, turn = 0) => {
+// Still the plain string for untouched cover, so a deck of a thousand crates
+// stores what it always stored; a record only where something is turned or
+// worn.
+export const writeCover = (id, turn = 0, wear = 0) => {
   const type = coverById(id);
-  if (!type || !type.directional) return id;
-  return lie(turn) ? { id, turn: 1 } : id;
+  if (!type) return id;
+  const t = type.directional ? lie(turn) : 0;
+  const w = Math.max(0, Math.min(type.ap, Math.round(Number(wear)) || 0));
+  if (!t && !w) return id;
+  const rec = { id };
+  if (t) rec.turn = 1;
+  if (w) rec.wear = w;
+  return rec;
 };
 
 
@@ -509,7 +537,10 @@ export const writeCover = (id, turn = 0) => {
 // and prices the Armour Points.
 export const coverAt = (v) => {
   const rec = readCover(v);
-  return rec ? coverById(rec.id) : null;
+  if (!rec) return null;
+  const type = coverById(rec.id);
+  // The cover as it stands NOW: worn cover gives what it has left.
+  return rec.wear ? { ...type, ap: type.ap - rec.wear, wear: rec.wear } : type;
 };
 
 /* ---------------------------- hazards ----------------------------
@@ -534,7 +565,10 @@ export const HAZARD_TYPES = [
      Psychic Phenomena, or Perils of the Warp. What it costs anyone who
      lingers is the GM's call, as radiation's is. */
   { id: 'warp', name: 'Warp rift', colour: '#b45cff', condition: null,
-    note: 'The veil is torn. Right-click it to roll Phenomena or Perils; the GM sets the toll on anyone who lingers.' }
+    note: 'The veil is torn. Right-click it to roll Phenomena or Perils, spread it, or seal it; the GM sets the toll on anyone who lingers.' },
+  // Gravity has failed. The rules for it are the GM's: this says where.
+  { id: 'zerog', name: 'Zero gravity', colour: '#9fd8ff', condition: null,
+    note: 'The gravity plating is dead. Movement is a drift and stopping takes an Agility Test, as the GM rules.' }
 ];
 export const hazardById = (id) => HAZARD_TYPES.find((h) => h.id === id) || null;
 
@@ -572,13 +606,23 @@ export const MARKER_TYPES = [
   { id: 'hazard', name: 'Hazard (fire, vacuum)', colour: '#e74c3c' },
   { id: 'deploy', name: 'Deployment point', colour: '#3498db' },
   // Not scenery: a thing the party can work. See TERMINAL_STATES below.
-  { id: 'cogitator', name: 'Cogitator terminal', colour: '#4dd6ff' }
+  { id: 'cogitator', name: 'Cogitator terminal', colour: '#4dd6ff' },
+  // A fixed gun with a facing and an arc; the deck's terminals can switch the
+  // whole defence grid off. See turretCells.
+  { id: 'turret', name: 'Sentry turret', colour: '#e67e22' },
+  // Holy ground round it: a warp rift cannot spread into it. See sanctified.
+  { id: 'shrine', name: 'Shrine (sanctified ground)', colour: '#f1c40f' },
+  // One end of a crawlway. Two vents share a `pair` and lead to each other.
+  { id: 'vent', name: 'Vent / crawlway', colour: '#95a5a6' }
 ];
 export const markerTypeById = (id) => MARKER_TYPES.find((m) => m.id === id) || MARKER_TYPES[0];
 /* A cogitator terminal's state: locked, accessed, or burnt out. Declared up
    here beside the marker kinds because readMap reads it, and readMap runs
    long before the terminal functions further down are reached. */
 export const TERMINAL_STATES = ['locked', 'open', 'dead'];
+// What a sentry turret mounts unless the GM says otherwise: a heavy stubber,
+// Heavy, 120m in the armoury. Declared here for the same reason.
+export const TURRET_WEAPON = { name: 'heavy stubber', rangeM: 120 };
 
 /* A TARGET is an Objective marker laid on a hostile to pick it out on the
    screen, and it carries a bonus to Ballistic Skill for whoever shoots at that
@@ -699,7 +743,7 @@ export function packLayer(layerObj) {
 
 // Layers that run into the thousands on a big deck. Doors, markers and
 // contacts are a handful of records each and stay as they are.
-const PACKED_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'explored', 'mapped'];
+const PACKED_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'explored', 'mapped', 'light'];
 const PACK_FROM = 64;     // below this a plain layer is smaller and easier to read
 
 /* The map as it should be stored or sent. Round-trips exactly through readMap.
@@ -767,7 +811,7 @@ export function readMap(m) {
       // untouched one keeps its bare string, so reading a map and writing it
       // back does not inflate every crate on the deck into a record.
       const c = readCover(v);
-      if (parseKey(k) && c) out[k] = writeCover(c.id, c.turn);
+      if (parseKey(k) && c) out[k] = writeCover(c.id, c.turn, c.wear);
     }
     return out;
   });
@@ -798,6 +842,13 @@ export function readMap(m) {
     for (const k of Object.keys(raw)) if (raw[k] && parseKey(k)) out[k] = true;
     return out;
   });
+  const light = layer(src.light, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (parseKey(k) && LIGHTING_PRESETS.some((p2) => p2.id === v)) out[k] = v;
+    }
+    return out;
+  });
   const mapped = layer(src.mapped, (raw) => {
     const out = {};
     for (const k of Object.keys(raw)) if (raw[k] && parseKey(k)) out[k] = true;
@@ -818,6 +869,15 @@ export function readMap(m) {
       if (!parseKey(k) || !v || typeof v !== 'object') continue;
       const rec = { type: markerTypeById(v.type).id, label: String(v.label || '') };
       if (rec.type === 'cogitator') rec.state = TERMINAL_STATES.includes(v.state) ? v.state : 'locked';
+      if (rec.type === 'turret') {
+        rec.state = v.state === 'off' ? 'off' : 'active';
+        const f = Math.round(Number(v.facing));
+        rec.facing = Number.isFinite(f) ? ((f % 8) + 8) % 8 : 0;
+        rec.weapon = typeof v.weapon === 'string' && v.weapon.trim() ? v.weapon.trim().slice(0, 60) : TURRET_WEAPON.name;
+        const r = Number(v.rangeM);
+        rec.rangeM = Number.isFinite(r) && r > 0 ? Math.min(1000, Math.round(r)) : TURRET_WEAPON.rangeM;
+      }
+      if (rec.type === 'vent') rec.pair = typeof v.pair === 'string' && v.pair ? v.pair.slice(0, 24) : null;
       // Only a number that means something rides along: a target's bonus.
       const bonus = Number(v.bonus);
       if (v.bonus != null && Number.isFinite(bonus)) {
@@ -872,7 +932,7 @@ export function readMap(m) {
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
       return floor[cellKey(x, y)] ? { x, y } : null;
     })(),
-    floor, doors, cover, hazards, obscuring, markers, explored, mapped, contacts, ground
+    floor, doors, cover, hazards, obscuring, markers, explored, mapped, light, contacts, ground
   };
 }
 
@@ -923,8 +983,12 @@ export function tokensNeeded(map) {
   }
   for (const [k, v] of Object.entries(m.hazards || {})) want(k, 'hazard', v);
   for (const [k, v] of Object.entries(m.obscuring || {})) want(k, 'obscure', v);
-  // A cogitator terminal is drawn as the ground's own machinery.
-  for (const [k, v] of Object.entries(m.markers || {})) if (v && v.type === 'cogitator') want(k, 'cover', 'machinery');
+  // A cogitator terminal is drawn as the ground's own machinery, a vent as its
+  // grating.
+  for (const [k, v] of Object.entries(m.markers || {})) {
+    if (v && v.type === 'cogitator') want(k, 'cover', 'machinery');
+    else if (v) want(k, 'marker', v.type);
+  }
   return [...out].sort();
 }
 
@@ -1253,6 +1317,358 @@ export function downloadSchematics(map) {
   const mapped = { ...m.mapped };
   for (const k of Object.keys(m.floor)) mapped[k] = true;
   return { mapped };
+}
+
+/* ============================ TERRAIN THAT DOES THINGS ============================
+   Everything below is a square, or a marker, that changes the fight while it
+   is going on rather than sitting there being scenery. Each one is a pure
+   function from the map to a patch, the way the doors and terminals are: the
+   map component decides when, these decide what. */
+
+/* -------------------------- cover that wears away --------------------------
+   Cover in Rogue Trader is shot through: a hit that crosses it loses the
+   cover's Armour Points, and the cover keeps what it did not spend. Recorded
+   as WEAR on the square, so a crate stack that has soaked three hits gives
+   five AP and not eight; worn down to nothing, it is gone. A structural
+   pillar is part of the ship and does not wear. Promethium tanks go up
+   instead of going away. `by` may be negative: patching cover back up. */
+export function wearCover(map, pos, by = 1) {
+  const m = readMap(map);
+  if (!pos) return null;
+  const k = cellKey(pos.x, pos.y);
+  const rec = readCover(m.cover[k]);
+  if (!rec) return null;
+  const type = coverById(rec.id);
+  if (type.sturdy) return null;
+  const wear = Math.max(0, rec.wear + (Math.round(Number(by)) || 0));
+  if (wear < type.ap) return { cover: { ...m.cover, [k]: writeCover(rec.id, rec.turn, wear) } };
+  if (type.volatile) return { ...detonateTank(m, pos), blew: true };
+  const cover = { ...m.cover };
+  delete cover[k];
+  return { cover, destroyed: true };
+}
+
+/* ---------------------------- promethium tanks ----------------------------
+   A tank that goes up: off the deck, and fire in every square its blast
+   reaches — through open floor, not through walls, shut doors or anything
+   solid standing in the way, the same rule a grenade's template follows.
+   Another tank inside the blast goes up with it. Fire does not overwrite the
+   void or the warp: a breach is still a breach with burning fuel in it. */
+const FIRE_KEEPS = new Set(['void', 'warp']);
+
+export function detonateTank(map, pos) {
+  let m = readMap(map);
+  if (!pos) return null;
+  const first = coverAt(m.cover[cellKey(pos.x, pos.y)]);
+  if (!first || !first.volatile) return null;
+  const cover = { ...m.cover };
+  const hazards = { ...m.hazards };
+  const burnt = new Set();
+  const queue = [{ x: pos.x, y: pos.y }];
+  let tanks = 0;
+  while (queue.length) {
+    const at = queue.shift();
+    const k = cellKey(at.x, at.y);
+    const tank = coverAt(cover[k]);
+    if (!tank || !tank.volatile) continue;
+    delete cover[k];
+    tanks++;
+    m = { ...m, cover };
+    const caught = unobstructed(m, at, onDeck(m, areaCells(m, at, tank.blastM)));
+    for (const c of caught) {
+      const ck = cellKey(c.x, c.y);
+      // A shut door takes the blast and stops it; it does not burn.
+      const door = m.doors[ck];
+      if (door && doorBlocks(door.state)) continue;
+      burnt.add(ck);
+      if (!FIRE_KEEPS.has(hazards[ck])) hazards[ck] = 'fire';
+      const next = coverAt(cover[ck]);
+      if (next && next.volatile) queue.push(c);
+    }
+  }
+  return { cover, hazards, burnt: [...burnt].map(parseKey), tanks };
+}
+
+/* ------------------------------ sentry turrets ------------------------------
+   A gun on a mount, watching a quarter of the compass. FACING is eighths of a
+   turn, 0 north and counted clockwise, so one click of the mount is 45
+   degrees; the deck turning a quarter adds two (rotateMap). What it covers is
+   its 90-degree arc out to its weapon's reach, cut at whatever it cannot see
+   through — a turret behind a bulkhead watches the bulkhead.
+
+   The reach drawn is capped: a heavy stubber's 120m standard range is longer
+   than most decks, and walking that many lines on every redraw for a fan
+   nobody needs past the far wall is the cost to avoid. */
+export const TURRET_ARC_DEG = 90;
+export const TURRET_MAX_SQUARES = 30;
+
+export function turretAt(map, pos) {
+  const m = readMap(map);
+  if (!pos) return null;
+  const t = m.markers[cellKey(pos.x, pos.y)];
+  return t && t.type === 'turret' ? t : null;
+}
+
+export function turretCells(map, pos) {
+  const m = readMap(map);
+  const t = turretAt(m, pos);
+  if (!t || t.state !== 'active') return [];
+  const a = (t.facing * 45 - 90) * Math.PI / 180;
+  const towards = { x: pos.x + Math.cos(a) * 10, y: pos.y + Math.sin(a) * 10 };
+  const reachM = Math.min(t.rangeM, TURRET_MAX_SQUARES * (m.metresPerSquare || 1));
+  return onDeck(m, coneCells(m, pos, towards, reachM, TURRET_ARC_DEG / 2))
+    .filter((c) => !(c.x === pos.x && c.y === pos.y) && !walkLine(m, pos, c));
+}
+
+// `patch` is any of state, facing (absolute) or turn (relative, in eighths).
+export function setTurret(map, pos, { state, facing, turn } = {}) {
+  const m = readMap(map);
+  const t = turretAt(m, pos);
+  if (!t) return null;
+  const next = { ...t };
+  if (state === 'active' || state === 'off') next.state = state;
+  let f = facing != null ? Math.round(Number(facing)) : t.facing;
+  if (turn != null) f += Math.round(Number(turn)) || 0;
+  next.facing = Number.isFinite(f) ? ((f % 8) + 8) % 8 : t.facing;
+  return { markers: { ...m.markers, [cellKey(pos.x, pos.y)]: next } };
+}
+
+/* The whole defence grid at once, from a terminal the party has got into.
+   Null when the deck has no turrets to switch. */
+export function setDeckTurrets(map, state) {
+  const m = readMap(map);
+  if (state !== 'active' && state !== 'off') return null;
+  const markers = { ...m.markers };
+  let n = 0;
+  for (const [k, v] of Object.entries(m.markers)) {
+    if (v.type !== 'turret') continue;
+    markers[k] = { ...v, state };
+    n++;
+  }
+  return n ? { markers } : null;
+}
+
+/* -------------------------- the warp, spreading --------------------------
+   A rift is a hazard square, and a rift that is not closed grows. Each turn
+   the GM says so, every separate rift on the deck reaches one square further
+   into the floor beside it: not through walls, not into a doorway (a door is
+   where a party seals a rift off) and never onto sanctified ground. Which
+   square is the dice's business — `rng` is passed in so the checks can hold
+   it still. Null when nothing can grow. */
+const warpPatches = (m) => {
+  const seen = new Set();
+  const out = [];
+  for (const [k, v] of Object.entries(m.hazards)) {
+    if (v !== 'warp' || seen.has(k)) continue;
+    const patch = [];
+    const queue = [parseKey(k)];
+    seen.add(k);
+    while (queue.length) {
+      const c = queue.shift();
+      patch.push(c);
+      for (const [dx, dy] of ORTHO) {
+        const nk = cellKey(c.x + dx, c.y + dy);
+        if (seen.has(nk) || m.hazards[nk] !== 'warp') continue;
+        seen.add(nk);
+        queue.push({ x: c.x + dx, y: c.y + dy });
+      }
+    }
+    out.push(patch);
+  }
+  return out;
+};
+
+export function spreadWarp(map, rng = Math.random) {
+  const m = readMap(map);
+  const holy = sanctified(m);
+  const hazards = { ...m.hazards };
+  let grew = 0;
+  for (const patch of warpPatches(m)) {
+    const edge = [];
+    const listed = new Set();
+    for (const c of patch) {
+      for (const [dx, dy] of ORTHO) {
+        const x = c.x + dx, y = c.y + dy;
+        const k = cellKey(x, y);
+        if (listed.has(k) || !m.floor[k] || m.doors[k] || hazards[k] === 'warp' || holy.has(k)) continue;
+        listed.add(k);
+        edge.push(k);
+      }
+    }
+    if (!edge.length) continue;
+    // Sorted so the same roll picks the same square whatever order the
+    // squares happened to be stored in.
+    edge.sort();
+    const pick = edge[Math.min(edge.length - 1, Math.floor((Number(rng()) || 0) * edge.length))];
+    hazards[pick] = 'warp';
+    grew++;
+  }
+  return grew ? { hazards, grew } : null;
+}
+
+// Closing a rift closes all of it: every warp square joined to this one.
+export function sealWarp(map, pos) {
+  const m = readMap(map);
+  if (!pos || m.hazards[cellKey(pos.x, pos.y)] !== 'warp') return null;
+  const hazards = { ...m.hazards };
+  const k0 = cellKey(pos.x, pos.y);
+  for (const patch of warpPatches(m)) {
+    if (!patch.some((c) => cellKey(c.x, c.y) === k0)) continue;
+    for (const c of patch) delete hazards[cellKey(c.x, c.y)];
+  }
+  return { hazards };
+}
+
+/* ------------------------------ shrines ------------------------------
+   Holy ground round a shrine, out to SHRINE_RADIUS_M and not through walls.
+   The warp cannot spread onto it. What else it does — a bonus to Willpower
+   against the warp, a daemon that will not cross — is the GM's; the radius is
+   a house number for the same reason. */
+export const SHRINE_RADIUS_M = 3;
+
+export function sanctified(map) {
+  const m = readMap(map);
+  const out = new Set();
+  for (const [k, v] of Object.entries(m.markers)) {
+    if (v.type !== 'shrine') continue;
+    const at = parseKey(k);
+    for (const c of unobstructed(m, at, onDeck(m, areaCells(m, at, SHRINE_RADIUS_M)))) out.add(cellKey(c.x, c.y));
+  }
+  return out;
+}
+
+/* --------------------------- vents and crawlways ---------------------------
+   Two vents with the same `pair` are the two ends of one crawlway. The pair is
+   an id on the marker rather than a pointer to the other square, so turning or
+   cropping the deck cannot leave one end pointing at the wrong place: a vent
+   whose partner was cropped away simply has no partner.
+
+   Placing a vent links it to the end that is waiting for one, if there is
+   one; otherwise it waits. */
+const ventEnds = (m) => {
+  const byPair = new Map();
+  for (const [k, v] of Object.entries(m.markers)) {
+    if (v.type !== 'vent' || !v.pair) continue;
+    if (!byPair.has(v.pair)) byPair.set(v.pair, []);
+    byPair.get(v.pair).push(k);
+  }
+  return byPair;
+};
+
+export function placeVent(map, pos, label = '') {
+  const m = readMap(map);
+  if (!pos) return null;
+  const k = cellKey(pos.x, pos.y);
+  const ends = ventEnds(m);
+  // The waiting end: a vent with no pair, or a pair whose other end is gone.
+  let waiting = null;
+  for (const [vk, v] of Object.entries(m.markers)) {
+    if (vk === k || v.type !== 'vent') continue;
+    if (!v.pair || (ends.get(v.pair) || []).length < 2) { waiting = vk; break; }
+  }
+  const markers = { ...m.markers };
+  if (!waiting) {
+    markers[k] = { type: 'vent', label, pair: null };
+    return { markers };
+  }
+  let n = 1;
+  while (ends.has('d' + n)) n++;
+  const pair = 'd' + n;
+  markers[waiting] = { ...markers[waiting], pair };
+  markers[k] = { type: 'vent', label, pair };
+  return { markers };
+}
+
+export function ventPartner(map, pos) {
+  const m = readMap(map);
+  if (!pos) return null;
+  const k = cellKey(pos.x, pos.y);
+  const v = m.markers[k];
+  if (!v || v.type !== 'vent' || !v.pair) return null;
+  const other = (ventEnds(m).get(v.pair) || []).find((o) => o !== k);
+  return other ? parseKey(other) : null;
+}
+
+/* The party goes in one end and comes out of the other: they stand at the far
+   end from now on, and with fog on, the room it opens into comes into view. */
+export function crawlThrough(map, pos) {
+  const m = readMap(map);
+  const to = ventPartner(m, pos);
+  if (!to || !m.floor[cellKey(to.x, to.y)]) return null;
+  const patch = { viewpoint: { x: to.x, y: to.y } };
+  if (m.fog) patch.explored = revealArea(m, to);
+  return patch;
+}
+
+/* ------------------------- breaches and airlocks -------------------------
+   Where the air goes. A vacuum breach is a hole in the ship, and so is an
+   airlock standing open on the hull — open, and with deck on one side of it
+   and nothing on the other. Air rushes to them from everywhere it can reach
+   through open floor and open doors, out to VENT_REACH_SQUARES; shut a door
+   and what is behind it stops moving.
+
+   Returned as one arrow per square, pointing at the next square on the way to
+   the nearest hole, which is what anything loose in that square is dragged
+   along. The pull is strongest by the hole (`d` is how far off it is). On a
+   deck with no hole in it this is empty and costs one look at each layer. */
+export const VENT_REACH_SQUARES = 8;
+
+export function ventSources(map) {
+  const m = readMap(map);
+  const out = [];
+  for (const [k, v] of Object.entries(m.hazards)) {
+    if (v === 'void' && m.floor[k]) out.push(parseKey(k));
+  }
+  for (const [k, d] of Object.entries(m.doors)) {
+    if (d.kind !== 'airlock' || d.state !== 'open' || !m.floor[k]) continue;
+    const p = parseKey(k);
+    // On the hull: deck on one side of it and none on the other, across
+    // either axis. An inner door has deck on both sides (and wall on both of
+    // the others), which is the same on each axis.
+    const hasDeck = (dx, dy) => Boolean(m.floor[cellKey(p.x + dx, p.y + dy)]);
+    if (hasDeck(1, 0) !== hasDeck(-1, 0) || hasDeck(0, 1) !== hasDeck(0, -1)) out.push(p);
+  }
+  return out;
+}
+
+export function ventField(map) {
+  const m = readMap(map);
+  const sources = ventSources(m);
+  if (!sources.length) return [];
+  const seen = new Map();
+  const queue = [];
+  for (const s of sources) {
+    seen.set(cellKey(s.x, s.y), { x: s.x, y: s.y, dx: 0, dy: 0, d: 0 });
+    queue.push(s);
+  }
+  while (queue.length) {
+    const cur = queue.shift();
+    const here = seen.get(cellKey(cur.x, cur.y));
+    if (here.d >= VENT_REACH_SQUARES) continue;
+    for (const [dx, dy] of ORTHO) {
+      const x = cur.x + dx, y = cur.y + dy;
+      const k = cellKey(x, y);
+      if (seen.has(k) || !m.floor[k]) continue;
+      // A shut door holds the air behind it.
+      const door = m.doors[k];
+      if (door && doorBlocks(door.state)) continue;
+      seen.set(k, { x, y, dx: -dx || 0, dy: -dy || 0, d: here.d + 1 });
+      queue.push({ x, y });
+    }
+  }
+  return [...seen.values()].filter((c) => c.d > 0);
+}
+
+/* ------------------------------ light by the room ------------------------------
+   The deck has one light (`lighting`), and any square can be painted with
+   another: a corridor whose lumens are out in a lit ship, a hold full of
+   smoke. What a square is fought in is its own light if it has one, the
+   deck's if not. */
+export function lightAt(map, pos) {
+  const m = readMap(map);
+  if (!pos) return lightingById(m.lighting);
+  const own = m.light[cellKey(pos.x, pos.y)];
+  return lightingById(own || m.lighting);
 }
 
 /* ------------------------- starting and running a crawl -------------------------
@@ -1592,7 +2008,7 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   const h = int(rows, src.rows, MIN_GRID, MAX_GRID);
   const sw = src.cols, sh = src.rows;
 
-  const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {}, ground = {}, obscuring = {};
+  const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {}, ground = {}, obscuring = {}, light = {};
   for (let x = 0; x < w; x++) {
     // Which copy this column falls in, and whether that copy is flipped.
     const lx = (mirror && Math.floor(x / sw) % 2) ? sw - 1 - (x % sw) : x % sw;
@@ -1612,6 +2028,8 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
       if (src.ground[from]) ground[to] = src.ground[from];
       // Foliage and smoke belong to the terrain, and repeat with it.
       if (src.obscuring[from]) obscuring[to] = src.obscuring[from];
+      // And so does the light it is lit by.
+      if (src.light[from]) light[to] = src.light[from];
     }
   }
 
@@ -1632,14 +2050,14 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   return {
     ...src,
     cols: w, rows: h,
-    floor, cover, hazards, doors, markers, ground, obscuring,
+    floor, cover, hazards, doors, markers, ground, obscuring, light,
     explored, mapped, contacts, viewpoint, start
   };
 }
 
 /* The layers a GM paints (deck, terrain, cover, hazards, foliage, doors,
    markers, contacts) — the "created map", as opposed to the grid it sits in. */
-const PAINT_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'doors', 'markers', 'contacts'];
+const PAINT_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'doors', 'markers', 'contacts', 'light'];
 
 /* The smallest box holding everything painted, or null for an empty deck. */
 export function paintBounds(map) {
@@ -1731,13 +2149,14 @@ function turnContent(m, t) {
        along. */
     cover: move(m.cover, (v) => {
       const c = readCover(v);
-      return c ? writeCover(c.id, c.turn + t) : v;
+      return c ? writeCover(c.id, c.turn + t, c.wear) : v;
     }),
     hazards: move(m.hazards),
     obscuring: move(m.obscuring), ground: move(m.ground), explored: move(m.explored),
-    mapped: move(m.mapped),
+    mapped: move(m.mapped), light: move(m.light),
     doors: move(m.doors, (d) => ({ ...d })),
-    markers: move(m.markers, (v) => ({ ...v })),
+    markers: move(m.markers, (v) => (v.type === 'turret'
+      ? { ...v, facing: (((v.facing || 0) + 2 * t) % 8 + 8) % 8 } : { ...v })),
     contacts: move(m.contacts, (c) => ({ ...c })),
     viewpoint: vp && inGrid(vp) ? vp : null,
     start: st && inGrid(st) ? st : null

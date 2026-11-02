@@ -16,8 +16,12 @@ import {
   terminalAt, setTerminal, workRoomDoors, downloadSchematics,
   OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText, lineBlocked, LOS_MAX_SQUARES, keepClean,
   weaponOverlay, calibrationBar, deploymentRows,
-  setStartRoom, startPlay, playDoor, regionAt
+  setStartRoom, startPlay, playDoor, regionAt, coverAt,
+  wearCover, detonateTank, turretAt, turretCells, setTurret, setDeckTurrets,
+  spreadWarp, sealWarp, sanctified, placeVent, ventPartner, crawlThrough, ventField, VENT_REACH_SQUARES,
+  lightAt, lightingById
 } from './battlemap.js';
+import { SITUATION_MODIFIERS } from './groundcombat.js';
 import { NOISE, noiseById, noisePing } from './awareness.js';
 import { GEAR } from './gear.js';
 import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
@@ -59,6 +63,7 @@ const MODES = [
   { id: 'cover', label: 'Cover', icon: 'cover' },
   { id: 'hazard', label: 'Hazard', icon: 'hazard' },
   { id: 'obscure', label: 'Foliage / smoke', icon: 'foliage' },
+  { id: 'light', label: 'Light', icon: 'light' },
   { id: 'contact', label: 'Contacts', icon: 'contact' },
   { id: 'noise', label: 'Noise', icon: 'noise' },
   { id: 'start', label: 'Starting room', icon: 'flag' },
@@ -76,8 +81,15 @@ const MODES = [
 /* The starting room is set at the table, not at the drawing board: it is where
    the party ARRIVES, which is a thing about the session rather than about the
    deck. It lives on Play only. */
-const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'cover', 'hazard', 'obscure', 'marker', 'measure'];
-const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'overlay', 'measure'];
+/* Light is on both: a deck is built with its dark corridors, and the lumens
+   go out mid-session. */
+const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'cover', 'hazard', 'obscure', 'light', 'marker', 'measure'];
+const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'light', 'overlay', 'measure'];
+
+/* Markers that are part of the deck rather than laid on it mid-session: a
+   click in play WORKS them (or leaves them be), it never lifts them. */
+const FIXTURES = new Set(['cogitator', 'turret', 'shrine', 'vent']);
+const FACINGS = ['North', 'North-east', 'East', 'South-east', 'South', 'South-west', 'West', 'North-west'];
 const toolsOf = (tab) => MODES.filter((x) => (tab === 'play' ? PLAY_TOOLS : BUILD_TOOLS).includes(x.id));
 
 /* WHAT ELSE CAN BE POINTED AT THE DECK, beside the guns.
@@ -190,6 +202,7 @@ const ICONS = {
   fog: <><path d="M3 8h12M6 12h15M3 16h10M9 20h12" /></>,
   marker: <><path d="M12 21s-7-6-7-11a7 7 0 0114 0c0 5-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></>,
   flag: <><path d="M6 21V4" /><path d="M6 4h11l-2.5 4L17 12H6" /></>,
+  light: <><path d="M9 17h6M10 20.5h4" /><path d="M8.5 14a5.5 5.5 0 117 0c-.8.7-1 1.6-1 3h-5c0-1.4-.2-2.3-1-3z" /></>,
   overlay: <><circle cx="12" cy="12" r="6" /><path d="M12 2v5M12 17v5M2 12h5M17 12h5" /></>,
   measure: <><path d="M3 17L17 3l4 4L7 21z" /><path d="M7 13l2 2M10 10l2 2M13 7l2 2" /></>,
   undo: <><path d="M9 14L4 9l5-5" /><path d="M4 9h10a6 6 0 010 12h-3" /></>,
@@ -334,6 +347,176 @@ function drawTerminal(ctx, x0, y0, px, state, tok) {
   const o = ctx.lineWidth / 2;
   ctx.strokeRect(x0 + o, y0 + o, px - ctx.lineWidth, px - ctx.lineWidth);
   ctx.setLineDash([]);
+}
+
+/* ---- terrain that does things, drawn ----
+   None of these has a picture on the sheets, so each is drawn the way the
+   terminal is: simple shapes that say what the thing is from across a table. */
+
+/* Promethium tanks, from above: two drums in a hazard-striped cradle. The
+   stripes are the point — this is the cover that explodes. */
+function drawTank(ctx, x0, y0, px) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(28,24,18,0.92)';
+  ctx.fillRect(x0 + px * 0.08, y0 + px * 0.08, px * 0.84, px * 0.84);
+  ctx.beginPath(); ctx.rect(x0 + px * 0.08, y0 + px * 0.08, px * 0.84, px * 0.84); ctx.clip();
+  ctx.strokeStyle = 'rgba(241,196,15,0.85)';
+  ctx.lineWidth = Math.max(2, px * 0.07);
+  for (let o = -px; o < px * 2; o += px * 0.22) {
+    ctx.beginPath(); ctx.moveTo(x0 + o, y0 + px); ctx.lineTo(x0 + o + px, y0); ctx.stroke();
+  }
+  ctx.restore();
+  for (const [fx, fy] of [[0.34, 0.36], [0.64, 0.62]]) {
+    const cx = x0 + px * fx, cy = y0 + px * fy, r = px * 0.24;
+    const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.35, r * 0.1, cx, cy, r);
+    g.addColorStop(0, 'rgb(236,120,60)');
+    g.addColorStop(0.7, 'rgb(150,48,22)');
+    g.addColorStop(1, 'rgb(70,20,10)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(20,10,5,0.9)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = 'rgba(40,40,40,0.95)';
+    ctx.beginPath(); ctx.arc(cx, cy, r * 0.28, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+/* Cover with hits in it: cracks across the art, and what it has left in the
+   corner, so the next shot is priced off the screen. */
+function drawWear(ctx, x0, y0, px, apLeft) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,90,60,0.85)';
+  ctx.lineWidth = Math.max(1, px * 0.03);
+  ctx.beginPath();
+  ctx.moveTo(x0 + px * 0.2, y0 + px * 0.25); ctx.lineTo(x0 + px * 0.42, y0 + px * 0.45);
+  ctx.lineTo(x0 + px * 0.36, y0 + px * 0.62); ctx.lineTo(x0 + px * 0.58, y0 + px * 0.8);
+  ctx.moveTo(x0 + px * 0.42, y0 + px * 0.45); ctx.lineTo(x0 + px * 0.66, y0 + px * 0.38);
+  ctx.stroke();
+  const tag = String(apLeft);
+  const fs = Math.max(8, Math.round(px * 0.26));
+  ctx.font = `bold ${fs}px sans-serif`;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+  ctx.lineWidth = 3; ctx.strokeStyle = '#000';
+  ctx.strokeText(tag, x0 + px - 3, y0 + px - 2);
+  ctx.fillStyle = '#ffb199';
+  ctx.fillText(tag, x0 + px - 3, y0 + px - 2);
+  ctx.restore();
+}
+
+/* A sentry turret: a mount and a gun on it, pointed where it is facing
+   (eighths of a turn, 0 north). Awake, it glows orange with a red eye;
+   switched off, it is grey and the barrel droops to nothing. */
+function drawTurret(ctx, x0, y0, px, facing, state) {
+  const cx = x0 + px / 2, cy = y0 + px / 2;
+  const live = state === 'active';
+  ctx.save();
+  ctx.fillStyle = 'rgba(25,28,32,0.95)';
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = Math.PI / 8 + (i * Math.PI) / 4;
+    const r = px * 0.44;
+    if (i === 0) ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    else ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = live ? 'rgba(230,126,34,0.95)' : 'rgba(130,130,130,0.8)';
+  ctx.lineWidth = Math.max(1.5, px * 0.05);
+  ctx.stroke();
+  ctx.translate(cx, cy);
+  ctx.rotate((facing * Math.PI) / 4);
+  ctx.fillStyle = live ? 'rgb(120,126,132)' : 'rgb(80,82,85)';
+  const bw = px * 0.09;
+  ctx.fillRect(-bw * 1.4, -px * 0.46, bw, px * (live ? 0.34 : 0.22));
+  ctx.fillRect(bw * 0.4, -px * 0.46, bw, px * (live ? 0.34 : 0.22));
+  ctx.beginPath(); ctx.arc(0, 0, px * 0.2, 0, Math.PI * 2);
+  ctx.fillStyle = live ? 'rgb(96,100,106)' : 'rgb(64,66,68)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(10,10,10,0.9)'; ctx.lineWidth = 1; ctx.stroke();
+  if (live) {
+    ctx.fillStyle = 'rgba(255,59,48,0.95)';
+    ctx.beginPath(); ctx.arc(0, -px * 0.08, px * 0.055, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/* A shrine: a gold halo and the double-headed eagle reduced to three strokes.
+   The holy ground round it is drawn separately, as a faint gold wash. */
+function drawShrine(ctx, x0, y0, px) {
+  const cx = x0 + px / 2, cy = y0 + px / 2;
+  ctx.save();
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, px * 0.48);
+  g.addColorStop(0, 'rgba(255,230,140,0.75)');
+  g.addColorStop(1, 'rgba(241,196,15,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(x0, y0, px, px);
+  ctx.strokeStyle = 'rgba(241,196,15,0.95)';
+  ctx.lineWidth = Math.max(1.5, px * 0.06);
+  ctx.beginPath(); ctx.arc(cx, cy, px * 0.36, 0, Math.PI * 2); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,240,190,0.95)';
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - px * 0.22); ctx.lineTo(cx, cy + px * 0.22);
+  ctx.moveTo(cx, cy - px * 0.05);
+  ctx.quadraticCurveTo(cx - px * 0.18, cy - px * 0.2, cx - px * 0.26, cy - px * 0.02);
+  ctx.moveTo(cx, cy - px * 0.05);
+  ctx.quadraticCurveTo(cx + px * 0.18, cy - px * 0.2, cx + px * 0.26, cy - px * 0.02);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* One end of a crawlway: the ground's own grating where it has one, slats in a
+   frame where not. */
+function drawVent(ctx, x0, y0, px, tok) {
+  if (tok) { drawToken(ctx, tok, x0, y0, px); }
+  else {
+    ctx.fillStyle = 'rgba(20,22,26,0.95)';
+    ctx.fillRect(x0 + px * 0.15, y0 + px * 0.15, px * 0.7, px * 0.7);
+    ctx.strokeStyle = 'rgba(150,160,165,0.9)';
+    ctx.lineWidth = Math.max(1, px * 0.05);
+    for (let i = 1; i <= 4; i++) {
+      const y = y0 + px * (0.15 + i * 0.14);
+      ctx.beginPath(); ctx.moveTo(x0 + px * 0.2, y); ctx.lineTo(x0 + px * 0.8, y); ctx.stroke();
+    }
+  }
+  ctx.strokeStyle = 'rgba(149,165,166,0.95)';
+  ctx.lineWidth = Math.max(1.5, px * 0.05);
+  ctx.strokeRect(x0 + px * 0.12, y0 + px * 0.12, px * 0.76, px * 0.76);
+}
+
+/* The light a square was painted with, over everything standing in it. Only
+   painted squares are drawn: the deck's own light is a number for the dice,
+   and darkening a whole projected deck would hide the table's own map. */
+function drawLight(ctx, x0, y0, px, id) {
+  if (id === 'dark') { ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(x0, y0, px, px); return; }
+  if (id === 'dim') { ctx.fillStyle = 'rgba(8,12,22,0.38)'; ctx.fillRect(x0, y0, px, px); return; }
+  if (id === 'smoke') {
+    ctx.fillStyle = 'rgba(110,112,116,0.32)'; ctx.fillRect(x0, y0, px, px);
+    return;
+  }
+  if (id === 'rain') {
+    ctx.fillStyle = 'rgba(40,60,90,0.25)'; ctx.fillRect(x0, y0, px, px);
+    ctx.strokeStyle = 'rgba(170,200,230,0.35)'; ctx.lineWidth = 1;
+    for (const f of [0.2, 0.5, 0.8]) {
+      ctx.beginPath(); ctx.moveTo(x0 + px * f, y0 + px * 0.1); ctx.lineTo(x0 + px * (f - 0.12), y0 + px * 0.9); ctx.stroke();
+    }
+    return;
+  }
+  // Lit: a square with its lumens working in a darker deck.
+  ctx.fillStyle = 'rgba(255,226,150,0.12)'; ctx.fillRect(x0, y0, px, px);
+}
+
+/* Air on its way out of the ship: a chevron per square pointing along the
+   pull, brighter close to the hole. */
+function drawDrag(ctx, x0, y0, px, dx, dy, d, reach) {
+  const cx = x0 + px / 2, cy = y0 + px / 2;
+  const a = Math.atan2(dy, dx);
+  const s = px * 0.22;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(a);
+  ctx.strokeStyle = `rgba(150,200,255,${0.25 + 0.6 * (1 - (d - 1) / reach)})`;
+  ctx.lineWidth = Math.max(1.5, px * 0.06);
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.6, -s); ctx.lineTo(s * 0.5, 0); ctx.lineTo(-s * 0.6, s);
+  ctx.stroke();
+  ctx.restore();
 }
 
 /* Draws one prop picture into its square, turned a quarter at a time where
@@ -773,6 +956,17 @@ export default function BattleMap({
      has to turn whatever is on it. */
   const [coverTurn, setCoverTurn] = useState(0);
   const [hazardType, setHazardType] = useState('fire');
+  // The Light tool: which light, and whether a click lights the room or the
+  // brush paints squares. A Play tool, so shared with the control panel the
+  // way the weapon is: picked there, it is what a click on the map lays.
+  const [lightTypeOwn, setLightTypeOwn] = useState('dark');
+  const [lightScopeOwn, setLightScopeOwn] = useState('room');
+  const lightType = shared && shared.lightType ? shared.lightType : lightTypeOwn;
+  const setLightType = shared && shared.setLightType ? shared.setLightType : setLightTypeOwn;
+  const lightScope = shared && shared.lightScope ? shared.lightScope : lightScopeOwn;
+  const setLightScope = shared && shared.setLightScope ? shared.setLightScope : setLightScopeOwn;
+  // Which way the next sentry turret is set facing, in eighths of a turn.
+  const [turretFacing, setTurretFacing] = useState(0);
   const [obscureType, setObscureType] = useState('medium');
   const [noiseKind, setNoiseKind] = useState('shot');
   const [contactEnc, setContactEnc] = useState('');
@@ -1342,6 +1536,24 @@ export default function BattleMap({
     });
   }, [measureFrom, measureTo, m, weapon]);
 
+  /* What the target's square adds to the shot beyond its range: the cover it
+     is behind, as it stands after the hits it has taken, and the light it is
+     standing in, with what that costs to hit (SITUATION_MODIFIERS). */
+  const targetConditions = (shot, to) => {
+    if (!shot || !to) return '';
+    const bits = [];
+    if (shot.cover) {
+      bits.push(`behind ${shot.cover.name.toLowerCase()}, ${shot.cover.ap} AP`
+        + (shot.cover.wear ? ` (${shot.cover.wear} shot off)` : ''));
+    }
+    const lit = lightAt(m, to);
+    if (lit.situationIds.length) {
+      const mod = lit.situationIds.reduce((n, id) => n + ((SITUATION_MODIFIERS.find((x) => x.id === id) || {}).mod || 0), 0);
+      bits.push(`${lit.name.toLowerCase()} there, ${mod} to hit`);
+    }
+    return bits.length ? ' \u00b7 ' + bits.join(' \u00b7 ') : '';
+  };
+
   /* ---- input ---- */
 
   // Which square a pointer event is over. Worked out from where the stage is
@@ -1382,7 +1594,7 @@ export default function BattleMap({
     const k = cellKey(pos.x, pos.y);
     // A terminal is part of the deck, not something laid mid-session: it is
     // worked by a click, never lifted by one.
-    if (m.markers[k] && m.markers[k].type !== 'cogitator') { const markers = { ...m.markers }; delete markers[k]; return { markers }; }
+    if (m.markers[k] && !FIXTURES.has(m.markers[k].type)) { const markers = { ...m.markers }; delete markers[k]; return { markers }; }
     if (m.hazards[k]) { const hazards = { ...m.hazards }; delete hazards[k]; return { hazards }; }
     const density = m.obscuring[k];
     if (density) {
@@ -1436,12 +1648,13 @@ export default function BattleMap({
       const hazards = { ...m.hazards };
       const ground = { ...m.ground };
       const obscuring = { ...m.obscuring };
+      const light = { ...m.light };
       for (const c of cells) {
         const ck = cellKey(c.x, c.y);
         delete doors[ck]; delete markers[ck]; delete cover[ck]; delete hazards[ck];
-        delete ground[ck]; delete obscuring[ck];
+        delete ground[ck]; delete obscuring[ck]; delete light[ck];
       }
-      patch({ floor: paintCells(m.floor, cells, false), doors, markers, cover, hazards, ground, obscuring });
+      patch({ floor: paintCells(m.floor, cells, false), doors, markers, cover, hazards, ground, obscuring, light });
       return;
     }
     // Foliage and smoke are laid down by dragging, like the deck itself, and
@@ -1455,6 +1668,24 @@ export default function BattleMap({
         if (lifting) delete obscuring[ck]; else obscuring[ck] = obscureType;
       }
       patch({ obscuring });
+      return;
+    }
+    /* LIGHT. A click lights the room it lands in, which is what "the lumens
+       are out in there" means at the table; on the brush instead, a drag
+       paints squares. The deck's own light is the absence of paint, as the
+       deck's own ground is, so choosing it is how paint comes off. */
+    if (mode === 'light') {
+      const byRoom = lightScope === 'room';
+      if (byRoom && dragging) return;
+      const cells = byRoom ? regionAt(m, pos) : onDeck(m, brushCells(pos, brush, m));
+      if (!cells.length) return;
+      const light = { ...m.light };
+      const lifting = lightType === m.lighting || (!dragging && light[k] === lightType);
+      for (const c of cells) {
+        const ck = cellKey(c.x, c.y);
+        if (lifting) delete light[ck]; else light[ck] = lightType;
+      }
+      patch({ light });
       return;
     }
     // Revealing is a drag as well as a click: a corridor is swept, not
@@ -1575,6 +1806,14 @@ export default function BattleMap({
         if (term.state !== 'dead') patch(setTerminal(m, pos, term.state === 'open' ? 'locked' : 'open'));
         return;
       }
+      // A turret is switched off and on, as a terminal is got into.
+      const tur = turretAt(m, pos);
+      if (tur) { patch(setTurret(m, pos, { state: tur.state === 'active' ? 'off' : 'active' })); return; }
+      // A vent with a far end is gone through: the party comes out there.
+      if (m.markers[k] && m.markers[k].type === 'vent') {
+        const crawl = crawlThrough(m, pos);
+        if (crawl) { patch(crawl); return; }
+      }
       // A square holding a target, a fire or a cloud of smoke is clicked OUT:
       // those are laid mid-session from the menu and are lifted the same way,
       // without going back to the menu. Click the room beside it to reveal.
@@ -1596,7 +1835,11 @@ export default function BattleMap({
       // places and removes. A target set from the right-click menu goes with a
       // click, without choosing its kind first.
       if (markers[k]) delete markers[k];
-      else markers[k] = { type: markerType, label: markerTypeById(markerType).name };
+      // A vent joins the end that is waiting for one; see placeVent.
+      else if (markerType === 'vent') { patch(placeVent(m, pos, markerTypeById('vent').name)); return; }
+      else if (markerType === 'turret') {
+        markers[k] = { type: 'turret', label: markerTypeById('turret').name, facing: turretFacing };
+      } else markers[k] = { type: markerType, label: markerTypeById(markerType).name };
       patch({ markers });
       return;
     }
@@ -2013,6 +2256,29 @@ export default function BattleMap({
      fifteen times a second to move a colour. Off for anyone whose system asks
      for reduced motion: the colours are still the warp's, just still. */
   const warpOnDeck = useMemo(() => Object.values(m.hazards).includes('warp'), [m.hazards]);
+
+  /* What reaches past its own square, worked out when the deck changes rather
+     than every frame: a turret's arc walks a line to every square in it, and
+     the air's way out of a breach walks the deck. */
+  const turretFans = useMemo(() => {
+    const out = [];
+    for (const [k, v] of Object.entries(m.markers)) {
+      if (v.type === 'turret' && v.state === 'active') out.push(...turretCells(m, parseKey(k)));
+    }
+    return out;
+  }, [m]);
+  const holyGround = useMemo(() => [...sanctified(m)].map(parseKey), [m]);
+  const dragField = useMemo(() => ventField(m), [m]);
+  // The two ends of each crawlway, for the line drawn between them on Build.
+  const ductLines = useMemo(() => {
+    const ends = new Map();
+    for (const [k, v] of Object.entries(m.markers)) {
+      if (v.type !== 'vent' || !v.pair) continue;
+      if (!ends.has(v.pair)) ends.set(v.pair, []);
+      ends.get(v.pair).push(parseKey(k));
+    }
+    return [...ends.values()].filter((e) => e.length === 2);
+  }, [m.markers]);
   const warpInHand = mode === 'overlay' && Boolean(origin) && Boolean(weapon)
     && weapon.power === 'psy' && !weapon.fire;
   useEffect(() => {
@@ -2058,7 +2324,7 @@ export default function BattleMap({
     }
     for (const [k, id] of Object.entries(m.cover)) {
       const p = parseKey(k);
-      if (p && coverById(id)) { g.fillStyle = '#7d8991'; g.fillRect(p.x, p.y, 1, 1); }
+      if (p && coverAt(id)) { g.fillStyle = '#7d8991'; g.fillRect(p.x, p.y, 1, 1); }
     }
     for (const [k, id] of Object.entries(m.obscuring)) {
       const p = parseKey(k); const ob = obscuringById(id);
@@ -2245,6 +2511,40 @@ export default function BattleMap({
         ctx.strokeRect(x0 + 1, y0 + 1, px - 2, px - 2);
       });
 
+      // 3b2. What reaches past its own square: holy ground, a turret's field
+      //      of fire, and the air running to a breach. Over the deck, under
+      //      the props, and under the fog like everything else on it.
+      // Each with its edge drawn: a tint alone is lost on a rusty floor.
+      const outline = (cells, colour, dash = []) => {
+        const inSet = new Set(cells.map((c) => c.x + ',' + c.y));
+        ctx.save();
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = Math.max(1.5, px * 0.06);
+        ctx.setLineDash(dash);
+        ctx.beginPath();
+        for (const c of cells) {
+          const x0 = c.x * px, y0 = c.y * px;
+          if (!inSet.has(c.x + ',' + (c.y - 1))) { ctx.moveTo(x0, y0); ctx.lineTo(x0 + px, y0); }
+          if (!inSet.has(c.x + ',' + (c.y + 1))) { ctx.moveTo(x0, y0 + px); ctx.lineTo(x0 + px, y0 + px); }
+          if (!inSet.has((c.x - 1) + ',' + c.y)) { ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + px); }
+          if (!inSet.has((c.x + 1) + ',' + c.y)) { ctx.moveTo(x0 + px, y0); ctx.lineTo(x0 + px, y0 + px); }
+        }
+        ctx.stroke();
+        ctx.restore();
+      };
+      if (holyGround.length) {
+        fill(holyGround, 'rgba(241,196,15,0.12)');
+        outline(holyGround, 'rgba(241,196,15,0.7)', [px * 0.15, px * 0.1]);
+      }
+      if (turretFans.length) {
+        fill(turretFans, 'rgba(230,126,34,0.22)');
+        outline(turretFans, 'rgba(255,140,40,0.85)');
+      }
+      for (const c of dragField) {
+        if (c.x < c0 || c.x > c1 || c.y < r0 || c.y > r1) continue;
+        drawDrag(ctx, c.x * px, c.y * px, px, c.dx, c.dy, c.d, VENT_REACH_SQUARES);
+      }
+
       // 3c. Cover. Sight-blocking cover fills its square; cover you can shoot
       //     over is drawn as a low bar, so the two are told apart at a glance
       //     from across the table rather than by remembering which is which.
@@ -2253,10 +2553,13 @@ export default function BattleMap({
         const cv = rec && coverById(rec.id);
         if (!cv) return;
         const x0 = cx * px, y0 = cy * px;
+        // Shot-up cover says what it has left, whatever it is drawn as.
+        const worn = () => { if (rec.wear) drawWear(ctx, x0, y0, px, cv.ap - rec.wear); };
+        if (cv.volatile) { drawTank(ctx, x0, y0, px); worn(); return; }
         /* The art says which cover this is and roughly how tall it stands,
            which is the distinction the grey boxes were drawing by hand. */
         const tok = tokenAt('cover', rec.id, null, cx, cy, rec.turn);
-        if (tok) { drawToken(ctx, tok, x0, y0, px); return; }
+        if (tok) { drawToken(ctx, tok, x0, y0, px); worn(); return; }
         /* No picture for it: the flat drawing, and a barrier drawn flat
            follows its own direction too — a bar along the bottom edge when it
            lies across the square, down the right-hand edge when it stands. */
@@ -2284,6 +2587,7 @@ export default function BattleMap({
           ctx.lineWidth = 1;
           ctx.strokeRect(...bar);
         }
+        worn();
       });
 
       // 3d. Foliage and smoke: a green wash, denser where sight stops sooner.
@@ -2328,9 +2632,24 @@ export default function BattleMap({
            the same leaf and the difference decides whether the party can walk
            through. So the state keeps its colour, as a frame around the art
            rather than the bar that was the whole drawing before. */
+        /* An airlock is a door that can open onto nothing, and it is ringed in
+           hazard stripes so nobody opens one by mistake. */
+        const lockStripes = () => {
+          if (kind !== 'airlock') return;
+          ctx.save();
+          ctx.lineWidth = Math.max(2, px * 0.08);
+          const o = px * 0.14;
+          ctx.strokeStyle = 'rgba(241,196,15,0.95)';
+          ctx.strokeRect(x0 + o, y0 + o, px - o * 2, px - o * 2);
+          ctx.strokeStyle = 'rgba(15,15,15,0.95)';
+          ctx.setLineDash([px * 0.1, px * 0.1]);
+          ctx.strokeRect(x0 + o, y0 + o, px - o * 2, px - o * 2);
+          ctx.restore();
+        };
         const tok = tokenAt('door', kind, state, cx, cy);
         if (tok) {
           drawToken(ctx, tok, x0, y0, px);
+          lockStripes();
           ctx.strokeStyle = stateColour;
           ctx.lineWidth = Math.max(1.5, px * 0.05);
           ctx.globalAlpha = 0.9;
@@ -2356,6 +2675,7 @@ export default function BattleMap({
           ctx.lineWidth = hatch ? 1 : 2;
           ctx.strokeRect(x0 + inset, y0 + px / 2 - bh / 2, px - inset * 2, bh);
         }
+        lockStripes();
       });
 
       // 6. Markers.
@@ -2365,6 +2685,9 @@ export default function BattleMap({
           drawTerminal(ctx, cx * px, cy * px, px, mk.state, tokenAt('cover', 'machinery', null, cx, cy));
           return;
         }
+        if (mk.type === 'turret') { drawTurret(ctx, cx * px, cy * px, px, mk.facing, mk.state); return; }
+        if (mk.type === 'shrine') { drawShrine(ctx, cx * px, cy * px, px); return; }
+        if (mk.type === 'vent') { drawVent(ctx, cx * px, cy * px, px, tokenAt('marker', 'vent', null, cx, cy)); return; }
         ctx.fillStyle = markerTypeById(mk.type).colour;
         ctx.globalAlpha = 0.55;
         ctx.beginPath(); ctx.arc(mx, my, px * 0.36, 0, Math.PI * 2); ctx.fill();
@@ -2391,6 +2714,29 @@ export default function BattleMap({
         }
       });
 
+
+      // 6. Light painted on the deck, over everything standing in it. A square
+      //    painted with what is now the deck's own light draws as the rest do.
+      each(m.light, (cx, cy, id) => {
+        if (id !== m.lighting && m.floor[cx + ',' + cy]) drawLight(ctx, cx * px, cy * px, px, id);
+      });
+
+      // 6. The crawlways, while the deck is being built: a dashed line from
+      //    each vent to the one it leads to. In play the party finds out by
+      //    going in.
+      if (tab === 'build' && ductLines.length) {
+        ctx.save();
+        ctx.setLineDash([px * 0.2, px * 0.15]);
+        ctx.strokeStyle = 'rgba(149,165,166,0.8)';
+        ctx.lineWidth = Math.max(1.5, px * 0.06);
+        for (const [a, b] of ductLines) {
+          ctx.beginPath();
+          ctx.moveTo(a.x * px + px / 2, a.y * px + px / 2);
+          ctx.lineTo(b.x * px + px / 2, b.y * px + px / 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
 
       // 6a. Where the party starts: the GM's own note on the deck, never on the
       //     projector. While the starting-room tool is in hand the whole room
@@ -2676,6 +3022,8 @@ export default function BattleMap({
             : 'rgba(46,204,113,0.4)');
     } else if (hover && mode === 'obscure') {
       fill(brushCells(hover, brush, m), 'rgba(95,159,85,0.45)');
+    } else if (hover && mode === 'light' && lightScope === 'brush') {
+      fill(onDeck(m, brushCells(hover, brush, m)), 'rgba(255,226,150,0.3)');
     } else if (hover && mode === 'noise' && !projecting) {
       // How far this sound carries, as the GM lines it up.
       const n = noiseById(noiseKind);
@@ -2735,7 +3083,7 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick,
-      tokenTick, noiseKind, zoom, showOptions, startCells]);
+      tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab]);
 
   // Scrolling and resizing the stage move the window over the deck.
   useEffect(() => {
@@ -2956,7 +3304,7 @@ export default function BattleMap({
     if (!await confirmInMap({
       title: 'Clear the deck?',
       body: 'Everything drawn on this deck goes: the floor and its walls, the doors,'
-        + ' cover, hazards, foliage, markers, contacts, painted terrain and what the'
+        + ' cover, hazards, foliage, markers, contacts, painted terrain and light, and what the'
         + ' party has explored. The grid size, the ground and the calibration stay.',
       yes: 'Clear it'
     })) return;
@@ -2969,7 +3317,7 @@ export default function BattleMap({
        photographs of crates it reads as the deck not having cleared at all. */
     patch({
       floor: {}, doors: {}, markers: {}, cover: {}, hazards: {}, obscuring: {},
-      contacts: {}, ground: {}, explored: {}, mapped: {}, viewpoint: null
+      contacts: {}, ground: {}, explored: {}, mapped: {}, light: {}, viewpoint: null
     });
     originRef.current = null; measureRef.current = null;
     setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
@@ -3301,7 +3649,18 @@ export default function BattleMap({
     if (mode === 'stamp') {
       add('tile', 'Tile', TILE_CATALOG.map((t) => radio(t.id, `${t.name} (${t.w}\u00d7${t.h})`, tileId === t.id, () => setTileId(t.id))));
     }
-    if (['paint', 'erase', 'ground', 'obscure'].includes(mode)) {
+    if (mode === 'light') {
+      add('lighttype', 'Light', LIGHTING_PRESETS.map((lp) => radio('lt' + lp.id,
+        lp.id === m.lighting ? `${lp.name} (the deck\u2019s own \u2014 lifts paint)` : lp.name, lightType === lp.id, () => setLightType(lp.id))));
+      add('lightscope', 'A click lights', [
+        radio('room', 'The whole room', lightScope === 'room', () => setLightScope('room')),
+        radio('brush', 'Squares, with the brush', lightScope === 'brush', () => setLightScope('brush'))
+      ]);
+    }
+    if (mode === 'marker' && markerType === 'turret') {
+      add('facing', 'Turret faces', FACINGS.map((f, i) => radio('f' + i, f, turretFacing === i, () => setTurretFacing(i))));
+    }
+    if (['paint', 'erase', 'ground', 'obscure'].includes(mode) || (mode === 'light' && lightScope === 'brush')) {
       add('brush', 'Brush size', [1, 2, 3, 5, 7, 10].map((n) => radio('b' + n, `${n}\u00d7${n}`, brush === n, () => setBrush(n))));
     }
     if (mode === 'ground') {
@@ -3344,7 +3703,7 @@ export default function BattleMap({
           radio(i.key, `${i.label} \u00b7 ${g.group}`, weaponKey === i.key, () => setWeaponKey(i.key)))) : [])
       ]);
     }
-    add('light', 'Light', LIGHTING_PRESETS.map((p) => radio(p.id, p.name, m.lighting === p.id, () => patch({ lighting: p.id }))));
+    add('light', 'The deck\u2019s light', LIGHTING_PRESETS.map((p) => radio(p.id, p.name, m.lighting === p.id, () => patch({ lighting: p.id }))));
     return out;
   };
   const menuActions = () => {
@@ -3387,7 +3746,61 @@ export default function BattleMap({
         a.push(doorsTo('jammed', 'Lock every door in this room'));
         a.push({ key: 'term-plan', label: 'Download the deck plan', run: () => patch(downloadSchematics(m)) });
         a.push({ key: 'term-sweep', label: 'Auspex sweep from the terminal', run: () => patch({ contacts: auspexSweep(m, at, auspexM) }) });
+        // The deck's defence grid, when it has one.
+        const guns = Object.values(m.markers).filter((v) => v.type === 'turret');
+        if (guns.length) {
+          if (guns.some((v) => v.state === 'active')) {
+            a.push({ key: 'term-guns-off', label: 'Shut down the deck\u2019s turrets', run: () => patch(setDeckTurrets(m, 'off')) });
+          }
+          if (guns.some((v) => v.state === 'off')) {
+            a.push({ key: 'term-guns-on', label: 'Wake the deck\u2019s turrets', run: () => patch(setDeckTurrets(m, 'active')) });
+          }
+        }
       }
+    }
+    /* A TURRET UNDER THE POINTER: turned an eighth at a time, and switched off
+       or woken. A click in play does the switching too. */
+    const gun = at ? turretAt(m, at) : null;
+    if (gun) {
+      a.push({ key: 'tur-on', label: 'Turret active', checked: gun.state === 'active', run: () => patch(setTurret(m, at, { state: 'active' })) });
+      a.push({ key: 'tur-off', label: 'Turret switched off', checked: gun.state === 'off', run: () => patch(setTurret(m, at, { state: 'off' })) });
+      a.push({ key: 'tur-left', label: `Turn it left (now facing ${FACINGS[gun.facing].toLowerCase()})`, run: () => patch(setTurret(m, at, { turn: -1 })) });
+      a.push({ key: 'tur-right', label: 'Turn it right', run: () => patch(setTurret(m, at, { turn: 1 })) });
+    }
+    /* COVER UNDER THE POINTER. A hit that gets through it costs it an Armour
+       Point; a GM who wants it back patches it. Promethium goes up. */
+    const cov = at ? readCover(m.cover[cellKey(at.x, at.y)]) : null;
+    const covType = cov && coverById(cov.id);
+    if (covType) {
+      const left = covType.ap - cov.wear;
+      const blowUp = (p) => {
+        if (!p) return;
+        patch({ cover: p.cover, hazards: p.hazards });
+        confirmInMap({
+          title: 'The tanks go up',
+          body: `${p.tanks === 1 ? 'The tank goes' : `${p.tanks} tanks go`} up. ${p.burnt.length} squares are burning.`,
+          yes: 'Done', info: true
+        });
+      };
+      if (!covType.sturdy) {
+        a.push({
+          key: 'cov-hit', label: left > 1 ? `Shot through: \u22121 AP (${left - 1} left)` : (covType.volatile ? 'Shot through: it goes up' : 'Shot through: it is gone'),
+          run: () => {
+            const p = wearCover(m, at, 1);
+            if (p && p.blew) blowUp(p); else if (p) patch({ cover: p.cover });
+          }
+        });
+      }
+      if (cov.wear) a.push({ key: 'cov-fix', label: `Patch it up (back to ${covType.ap} AP)`, run: () => patch(wearCover(m, at, -cov.wear)) });
+      if (covType.volatile) a.push({ key: 'cov-boom', label: 'Set the tanks off', run: () => blowUp(detonateTank(m, at)) });
+    }
+    /* A VENT UNDER THE POINTER: into it and out of the far end, if it has one. */
+    const mkAt = at ? m.markers[cellKey(at.x, at.y)] : null;
+    if (mkAt && mkAt.type === 'vent') {
+      const far = ventPartner(m, at);
+      a.push(far
+        ? { key: 'vent-go', label: `Crawl through to the other end (${far.x},${far.y})`, run: () => patch(crawlThrough(m, at)) }
+        : { key: 'vent-none', label: 'This vent leads nowhere yet: lay a second to join it', disabled: true, run: () => {} });
     }
     /* A WARP RIFT UNDER THE POINTER: the warp's own tables, rolled where it
        happened. Phenomena of 75 or more escalates to Perils, as the rules
@@ -3415,21 +3828,20 @@ export default function BattleMap({
           confirmInMap({ title: 'Perils of the Warp', body: `${roll}: ${say(perilsResult(roll))}`, yes: 'Done', info: true });
         }
       });
+      // The GM's lever for a rift left open: once a round, or when the dice say.
+      a.push({
+        key: 'warp-spread', label: 'Spread the warp (every rift grows a square)',
+        run: () => {
+          const p = spreadWarp(m);
+          if (p) patch({ hazards: p.hazards });
+          else confirmInMap({ title: 'The warp is held', body: 'No rift on the deck has anywhere to grow: walls, doors and holy ground hold it.', yes: 'Done', info: true });
+        }
+      });
+      a.push({ key: 'warp-seal', label: 'Seal this rift', run: () => patch(sealWarp(m, at)) });
     }
     if (library) {
       a.push({ key: 'library', label: 'Library\u2026 (decks, environments, files)', icon: 'save',
         run: () => { setLibOpen(true); setShowOptions(true); } });
-    }
-    // The door that was right-clicked, set to any of its states directly: the
-    // click cycles, and a GM who wants it jammed should not have to step
-    // through the others to get there.
-    const dc = menu && menu.cell;
-    const dr = dc ? m.doors[cellKey(dc.x, dc.y)] : null;
-    if (dr) {
-      const noun = dr.kind === 'hatch' ? 'Hatch' : 'Door';
-      a.push({ key: 'd-open', label: `${noun}: open it`, checked: dr.state === 'open', run: () => clickDoor(dc, 'open') });
-      a.push({ key: 'd-closed', label: `${noun}: close it`, checked: dr.state === 'closed', run: () => clickDoor(dc, 'closed') });
-      a.push({ key: 'd-jammed', label: `${noun}: jam it`, checked: dr.state === 'jammed', run: () => clickDoor(dc, 'jammed') });
     }
     if (mode === 'stamp') a.push({ key: 'rot', label: `Rotate the tile (now ${rotation}\u00b0)`, hint: 'R', run: () => setRotation((r) => (r + 90) % 360) });
     if (mode === 'ground') {
@@ -3495,6 +3907,20 @@ export default function BattleMap({
       patch({ obscuring });
     })));
     add('h-cloud', 'Cloud size', [1, 3, 5, 7].map((n) => radio('cl' + n, `${n}\u00d7${n}`, cloud === n, () => setCloud(n))));
+    /* The light in the room this square is in: the lumens failing in one
+       compartment, a hold filling with smoke. The deck's own light lifts it. */
+    if (m.floor[hereKey]) {
+      const roomLight = m.light[hereKey] || m.lighting;
+      add('h-light', 'Light in this room', LIGHTING_PRESETS.map((lp) => radio('lt-' + lp.id,
+        lp.id === m.lighting ? `${lp.name} (the deck\u2019s own)` : lp.name, roomLight === lp.id, () => {
+          const light = { ...m.light };
+          for (const c of regionAt(m, hereCell)) {
+            const ck = cellKey(c.x, c.y);
+            if (lp.id === m.lighting) delete light[ck]; else light[ck] = lp.id;
+          }
+          patch({ light });
+        })));
+    }
     /* A target is an Objective that carries a bonus to hit. The plain kinds
        below it are the scenery the Marker tool lays, with no bonus. */
     const mkHere = m.markers[hereKey] || null;
@@ -3510,7 +3936,10 @@ export default function BattleMap({
         Boolean(mkHere && mkHere.type === t.id && !Number.isFinite(mkHere.bonus)), () => {
           const markers = { ...m.markers };
           if (markers[hereKey] && markers[hereKey].type === t.id && !Number.isFinite(markers[hereKey].bonus)) delete markers[hereKey];
-          else markers[hereKey] = { type: t.id, label: markerTypeById(t.id).name };
+          else if (t.id === 'vent') { patch(placeVent({ ...m, markers }, hereCell, t.name)); return; }
+          else markers[hereKey] = t.id === 'turret'
+            ? { type: 'turret', label: t.name, facing: turretFacing }
+            : { type: t.id, label: markerTypeById(t.id).name };
           patch({ markers });
         }))
     ]);
@@ -3568,7 +3997,8 @@ export default function BattleMap({
         key: 'ov-info', disabled: true,
         label: `From ${origin.x},${origin.y}${name ? ` with ${name}` : ''}`
           + (shot ? ` \u00b7 here ${shot.metres} m, ${shot.band.replace('_', ' ')}, `
-            + (shot.total === null ? 'out of range' : `${sign(shot.total)} to hit${shot.marked ? ' (target)' : ''}`) : '')
+            + (shot.total === null ? 'out of range' : `${sign(shot.total)} to hit${shot.marked ? ' (target)' : ''}`)
+            + targetConditions(shot, hereCell) : '')
       });
       a.push({ key: 'ov-aim', label: 'Aim at here', icon: 'overlay', run: () => { openOverlay(); setAim(hereCell); } });
     }
@@ -4284,7 +4714,7 @@ export default function BattleMap({
             onClick={() => setRotation((r) => (r + 90) % 360)}>Rotate {rotation}° (R)</button>
         </>)}
 
-        {(mode === 'paint' || mode === 'erase' || mode === 'ground') && (
+        {(mode === 'paint' || mode === 'erase' || mode === 'ground' || (mode === 'light' && lightScope === 'brush')) && (
           <label className="rt-bm-num">
             <span>Brush</span>
             <select value={String(brush)} onChange={(e) => setBrush(Number(e.target.value))}>
@@ -4331,11 +4761,59 @@ export default function BattleMap({
           </span>
         </>)}
 
-        {mode === 'marker' && (
+        {mode === 'marker' && (<>
           <select value={markerType} onChange={(e) => setMarkerType(e.target.value)}>
             {MARKER_TYPES.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
-        )}
+          {markerType === 'turret' && (
+            <label className="rt-bm-num">
+              <span>Faces</span>
+              <select value={turretFacing} onChange={(e) => setTurretFacing(Number(e.target.value))}>
+                {FACINGS.map((f, i) => <option key={f} value={i}>{f}</option>)}
+              </select>
+            </label>
+          )}
+          {markerType === 'turret' && (
+            <span className="rt-bm-hint">
+              A heavy stubber watching a 90{'\u00b0'} arc, cut at walls and shut doors. Right-click it to turn
+              it or switch it off; in play a click switches it, and a terminal the party is into can shut
+              down every turret on the deck.
+            </span>
+          )}
+          {markerType === 'shrine' && (
+            <span className="rt-bm-hint">
+              Sanctified ground for 3 m round it, drawn in gold. A warp rift cannot spread onto it.
+            </span>
+          )}
+          {markerType === 'vent' && (
+            <span className="rt-bm-hint">
+              Lay two: the second joins the first, and the line between them shows on Build. In play,
+              click one (or right-click it) and the party comes out of the other.
+            </span>
+          )}
+        </>)}
+
+        {mode === 'light' && (<>
+          <select value={lightType} onChange={(e) => setLightType(e.target.value)}>
+            {LIGHTING_PRESETS.map((lp) => (
+              <option key={lp.id} value={lp.id}>
+                {lp.name}{lp.id === m.lighting ? ' (the deck\u2019s own \u2014 lifts paint)' : ''}
+              </option>
+            ))}
+          </select>
+          <label className="rt-bm-num">
+            <span>A click lights</span>
+            <select value={lightScope} onChange={(e) => setLightScope(e.target.value)}>
+              <option value="room">The whole room</option>
+              <option value="brush">Squares, with the brush</option>
+            </select>
+          </label>
+          <span className="rt-bm-hint">
+            Over the deck{'\u2019'}s own light ({lightingById(m.lighting).name.toLowerCase()}): a dark corridor
+            in a lit ship, a hold full of smoke. Click again to lift it. The ruler and the overlay give the
+            light at the target and what it costs to hit.
+          </span>
+        </>)}
 
         {mode === 'door' && (<>
           <select value={doorKind} onChange={(e) => setDoorKind(e.target.value)}>
@@ -4570,6 +5048,7 @@ export default function BattleMap({
                     {overlay.shot.blocked ? (
                       <strong> · blocked by {blockedText(overlay.shot.blocked)}</strong>
                     ) : null}
+                    {targetConditions(overlay.shot, overlay.target)}
                   </span>
                 ) : null}
                 {weapon && weapon.isField ? (
@@ -4599,6 +5078,7 @@ export default function BattleMap({
           {measurement.blocked && (
             <span> · blocked by {blockedText(measurement.blocked)} at {measurement.blocked.x},{measurement.blocked.y}</span>
           )}
+          <span>{targetConditions(measurement, measureTo)}</span>
         </div>
       )}
 
@@ -4620,7 +5100,8 @@ export default function BattleMap({
             const pos = posFromEvent(e);
             setHover(pos);
             if (spaceRef.current || panOnRef.current || rHeldRef.current) return;   // panning, or turning the map
-            if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure')) {
+            if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure'
+              || (mode === 'light' && lightScope === 'brush'))) {
               applyAt(pos, true);
             }
           }}

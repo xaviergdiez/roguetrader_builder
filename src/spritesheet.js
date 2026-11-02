@@ -159,6 +159,9 @@ export function spriteRole(kind, id, state = null, at = null) {
     if (id === 'low') return 'barrier';
     return null;
   }
+  // Markers that are a piece of the deck draw as one: a crawlway's mouth is
+  // the ground's own grating.
+  if (kind === 'marker') return id === 'vent' ? 'grate' : null;
   if (kind === 'hazard') {
     if (id === 'fire') return 'fire';
     if (id === 'toxic') return 'gas';

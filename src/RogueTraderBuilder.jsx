@@ -3192,13 +3192,17 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [mapLos, setMapLos] = useState(true);
   const [mapRings, setMapRings] = useState(true);
   const [mapCone, setMapCone] = useState(30);   // the whole cone, not the half
+  const [mapPsyRating, setMapPsyRating] = useState(3);
+  const [mapPsyMode, setMapPsyMode] = useState('unfettered');
   const sharedMapTools = useMemo(() => ({
     tab: mapTab, setTab: setMapTab, mode: mapMode, setMode: setMapMode,
     weaponKey: mapWeapon, setWeaponKey: setMapWeapon,
     showLos: mapLos, setShowLos: setMapLos,
     showRings: mapRings, setShowRings: setMapRings,
-    coneAngle: mapCone, setConeAngle: setMapCone
-  }), [mapTab, mapMode, mapWeapon, mapLos, mapRings, mapCone]);
+    coneAngle: mapCone, setConeAngle: setMapCone,
+    psyRating: mapPsyRating, setPsyRating: setMapPsyRating,
+    psyMode: mapPsyMode, setPsyMode: setMapPsyMode
+  }), [mapTab, mapMode, mapWeapon, mapLos, mapRings, mapCone, mapPsyRating, mapPsyMode]);
   const [mapErr, setMapErr] = useState('');
   // The void chart's window, owned here for the same reason. voidShot is a
   // shot lined up on the chart waiting to be read by the gunnery panel: it

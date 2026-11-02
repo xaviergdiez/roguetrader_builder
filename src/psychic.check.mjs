@@ -6,7 +6,7 @@ import {
   thoughtSendingKm, disciplineSlots, describePower,
   phenomenaResult, perilsResult, escalatesToPerils,
   DISCIPLINES, MODES, PSY_RATINGS, PHENOMENA, PERILS, ALL_TECHNIQUES,
-  MAX_PUSH, PERILS_THRESHOLD, modeInfo
+  MAX_PUSH, PERILS_THRESHOLD, modeInfo, powerRule, powerShape
 } from './psychic.js';
 
 /* --- the two rules an earlier summary had backwards --------------------- */
@@ -207,6 +207,35 @@ assert.equal(m.target, 20, '40 - 20');
 m = manifest({ psyRating: 2, mode: 'unfettered', willpower: 40, modifier: -10, sustained: 2, rng: scripted(34) });
 assert.equal(m.modifier, -20);
 assert.equal(m.target, 20);
+
+/* ---- a power's shape on the battle map, read off its range line ---- */
+{
+  const at = (name, pr = 3) => powerShape(powerRule(name).range, pr);
+  assert.deepEqual(at('Psychic Scream'), { shape: 'cone', metres: 15, coneDeg: 30 }, '5 m x PR cone');
+  assert.deepEqual(at('Holocaust / Incinerate'), { shape: 'radius', metres: 15 }, '5 m x PR radius');
+  assert.deepEqual(at('Wall of Fire'), { shape: 'line', metres: 30 }, '10 m x PR line');
+  assert.deepEqual(at('Force Bolt'), { shape: 'bolt', metres: 90 }, '30 m x PR at one target');
+  assert.deepEqual(at('Thought Sending'), { shape: 'bolt', metres: 3000 }, 'kilometres are metres too');
+  assert.deepEqual(at('Mind Probe'), { shape: 'touch', metres: 5 }, 'Touch / 5 m');
+  assert.equal(at('Iron Arm').shape, 'personal');
+  assert.equal(at('Psychic Sight').shape, 'personal', 'sight through walls is still about the psyker');
+  assert.equal(at('Scrying').shape, 'sight', 'line of sight, no figure');
+  // PR is the rating CHANNELLED: fettered halves it, and the range follows.
+  assert.equal(powerShape('20 m × PR', effectivePsyRating(4, 'fettered')).metres, 40);
+  assert.equal(powerShape('20 m × PR', effectivePsyRating(4, 'push', 2)).metres, 120);
+  // Every technique the app knows has a shape the map can draw: an unparsed
+  // range would silently draw as "on the psyker alone".
+  const odd = ALL_TECHNIQUES.filter((n) => {
+    const r = powerRule(n);
+    if (!r) return true;
+    const sh = powerShape(r.range, 3);
+    return sh.shape === 'personal' && !/personal|depth/i.test(r.range);
+  });
+  assert.deepEqual(odd, [], 'every power reads as the shape its range says: ' + odd.join(', '));
+  // Junk does not throw.
+  assert.equal(powerShape(null, 3).shape, 'personal');
+  assert.equal(powerShape('10 m × PR', 0).metres, 0);
+}
 
 console.log('psychic: all checks passed (%d disciplines, %d techniques, %d phenomena, %d perils)',
   DISCIPLINES.length, ALL_TECHNIQUES.length, PHENOMENA.length, PERILS.length);

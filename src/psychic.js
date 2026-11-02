@@ -288,6 +288,41 @@ const POWER_RULES = {
   }
 };
 
+/* The rules entry for one power, for anything that needs the parts rather
+   than the sentence — the battle map reads `range` to draw the power. */
+export const powerRule = (name) => POWER_RULES[String(name || '').trim()] || null;
+
+/* WHAT A POWER LOOKS LIKE ON A MAP, read off its range line.
+
+   The ranges above are written for people — "5 m × PR cone", "10 m × PR line",
+   "Touch / 5 m", "Personal" — and every one of them already says the shape as
+   well as the distance, so the map reads them rather than keeping a second
+   table that could drift from this one. `pr` is the rating actually
+   channelled (see effectivePsyRating), because that is what the "× PR" means.
+
+   shape: 'bolt' (one target, within range), 'cone', 'radius' (centred on the
+   psyker), 'line', 'touch', 'personal', or 'sight' (line of sight, no figure).
+   A cone's angle is 30 degrees: it is the only one written down (Psychic
+   Scream), so it is the one used. */
+export function powerShape(range, pr = 1) {
+  const text = String(range || '');
+  const rating = Math.max(0, Number(pr) || 0);
+  if (/personal/i.test(text) || /PR\s*×\s*[\d.]+\s*m\s*depth/i.test(text)) return { shape: 'personal', metres: 0 };
+  const touch = /touch(?:\s*\/\s*([\d.]+)\s*m)?/i.exec(text);
+  if (touch) return { shape: 'touch', metres: touch[1] ? Number(touch[1]) : 1 };
+  const scaled = /([\d.]+)\s*(km|m)\s*×\s*PR\s*(cone|radius|line)?/i.exec(text);
+  if (scaled) {
+    const metres = Number(scaled[1]) * (scaled[2].toLowerCase() === 'km' ? 1000 : 1) * rating;
+    const kind = (scaled[3] || '').toLowerCase();
+    if (kind === 'cone') return { shape: 'cone', metres, coneDeg: 30 };
+    if (kind === 'radius') return { shape: 'radius', metres };
+    if (kind === 'line') return { shape: 'line', metres };
+    return { shape: 'bolt', metres };
+  }
+  if (/line of sight/i.test(text)) return { shape: 'sight', metres: null };
+  return { shape: 'personal', metres: 0 };
+}
+
 export function describePower(name) {
   const n = String(name || '').trim();
   if (!n) return '';

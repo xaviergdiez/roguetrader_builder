@@ -25,6 +25,7 @@ import { generateDeck, growDeck as buildAroundDeck, newSeed, DECK_STYLES, styleB
 import {
   spriteRole, spriteTurn, SHEET_FOR_THEME, SPRITE_SLOTS, cellRect, keyBlack
 } from './spritesheet.js';
+import { DISCIPLINES, powerRule, powerShape, effectivePsyRating } from './psychic.js';
 import { generateTerrain, readTerrainPrompt, TERRAIN_SIZES, TERRAIN_SCOPES } from './terrain.js';
 import { ENVIRONMENTS, CONDITIONS, MAX_DESCRIBE } from '../lib/mapprompt.js';
 import MapLibrary from './MapLibrary.jsx';
@@ -74,6 +75,89 @@ const MODES = [
 const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'cover', 'hazard', 'obscure', 'marker', 'measure'];
 const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'overlay', 'measure'];
 const toolsOf = (tab) => MODES.filter((x) => (tab === 'play' ? PLAY_TOOLS : BUILD_TOOLS).includes(x.id));
+
+/* WHAT ELSE CAN BE POINTED AT THE DECK, beside the guns.
+
+   Every psychic technique the app knows, by discipline — the map reads each
+   one's range line ("5 m × PR cone", "10 m × PR line", "Personal") to know its
+   shape (powerShape in psychic.js), so nothing here restates a rule.
+
+   And the Navigator's third eye. Only the gazes that matter in a fight are
+   listed: Seek the Path and the rest read the warp, not a boarding deck. The
+   app records no range for them, so a gaze is drawn as what it plainly is —
+   the Navigator's line of sight — and the GM applies the rest at the table. */
+const NAV_GAZES = [
+  { id: 'lidless', name: 'Lidless Stare', all: false,
+    note: 'Opposed Willpower against one target who meets the gaze.' },
+  { id: 'held', name: 'Held in the Gaze', all: false,
+    note: 'One target who meets the gaze is pinned in place.' },
+  { id: 'unveiled', name: 'Third Eye Unveiled', all: true,
+    note: 'Everyone who can see the Navigator is struck by the unveiled eye.' }
+];
+const POWER_GROUPS = [
+  ...DISCIPLINES.map((d) => ({
+    group: `Psychic \u2014 ${d.name}`,
+    items: [d.basic, ...d.techniques].map((n) => ({ key: 'psy:' + n, label: n }))
+  })),
+  { group: 'Navigator \u2014 the third eye', items: NAV_GAZES.map((g) => ({ key: 'nav:' + g.id, label: g.name })) }
+];
+const powerLabel = (key) => {
+  for (const g of POWER_GROUPS) for (const i of g.items) if (i.key === key) return i.label;
+  return '';
+};
+// The psychic mode, as one choice: Push carries its own size.
+const PSY_MODES = [
+  { id: 'fettered', name: 'Fettered' },
+  { id: 'unfettered', name: 'Unfettered' },
+  { id: 'push1', name: 'Push +1' },
+  { id: 'push2', name: 'Push +2' },
+  { id: 'push3', name: 'Push +3' }
+];
+const channelled = (pr, mode) => (String(mode).startsWith('push')
+  ? effectivePsyRating(pr, 'push', Number(String(mode).slice(4)) || 1)
+  : effectivePsyRating(pr, mode));
+
+/* The overlay's own description of a power, in the same fields a weapon uses
+   so the drawing code needs to learn as little as possible. */
+function powerOverlay(key, psyRating, psyMode) {
+  if (key.startsWith('nav:')) {
+    const g = NAV_GAZES.find((x) => 'nav:' + x.id === key);
+    if (!g) return null;
+    return { power: 'nav', name: g.name, overlayKind: 'gaze', gazeAll: g.all, note: g.note, range: null };
+  }
+  const name = key.slice(4);
+  const rule = powerRule(name);
+  const pr = channelled(psyRating, psyMode);
+  const sh = powerShape(rule && rule.range, pr);
+  const base = { power: 'psy', name, pr, rangeText: rule ? rule.range : '', test: rule ? rule.test : '', range: null };
+  if (sh.shape === 'cone') return { ...base, overlayKind: 'cone', range: sh.metres, coneDeg: sh.coneDeg };
+  if (sh.shape === 'radius') return { ...base, overlayKind: 'burst', burstM: sh.metres };
+  if (sh.shape === 'line') return { ...base, overlayKind: 'line', lineM: sh.metres };
+  if (sh.shape === 'personal') return { ...base, overlayKind: 'personal' };
+  if (sh.shape === 'sight') return { ...base, overlayKind: 'bolt', reachM: Infinity };
+  return { ...base, overlayKind: 'bolt', reachM: sh.metres, touch: sh.shape === 'touch' };
+}
+
+// One set of options for both weapon pickers, so they cannot list different
+// things. Powers only where they mean something: Measure reads a weapon's
+// range bands, and a power has none.
+function WeaponOptions({ powers = true }) {
+  return (<>
+    <option value="">No weapon</option>
+    {['Pistol', 'Basic', 'Heavy', 'Thrown', 'Melee', 'Field'].map((kind) => (
+      <optgroup key={kind} label={kind}>
+        {ARMED.filter((a) => a.kind === kind).map((a) => (
+          <option key={a.key} value={a.key}>{a.label}</option>
+        ))}
+      </optgroup>
+    ))}
+    {powers && POWER_GROUPS.map((g) => (
+      <optgroup key={g.group} label={g.group}>
+        {g.items.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}
+      </optgroup>
+    ))}
+  </>);
+}
 
 // Only things with a combat line are worth drawing an overlay for.
 const ARMED = Object.entries(GEAR)
@@ -347,13 +431,18 @@ function drawShield(ctx, cx, cy, radiusPx) {
 // A flame cone: hottest at the nozzle, fading to the limit of its reach,
 // with the edges and the end arc drawn so the template has a readable
 // boundary rather than dissolving into haze.
-function drawCone(ctx, ox, oy, aimRad, reachPx, halfRad) {
+// Flame by default; `warp` for a psychic cone, which is a scream through the
+// warp and should not be mistaken across the table for a flamer.
+const CONE_FLAME = ['255,241,180', '255,170,40', '231,76,60', '255,170,60', '255,220,130'];
+const CONE_WARP = ['245,215,255', '200,110,255', '120,60,200', '200,130,255', '230,190,255'];
+function drawCone(ctx, ox, oy, aimRad, reachPx, halfRad, warp = false) {
   if (reachPx <= 0) return;
+  const c = warp ? CONE_WARP : CONE_FLAME;
   const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, reachPx);
-  g.addColorStop(0, 'rgba(255,241,180,0.75)');
-  g.addColorStop(0.35, 'rgba(255,170,40,0.55)');
-  g.addColorStop(0.8, 'rgba(231,76,60,0.25)');
-  g.addColorStop(1, 'rgba(231,76,60,0)');
+  g.addColorStop(0, `rgba(${c[0]},0.75)`);
+  g.addColorStop(0.35, `rgba(${c[1]},0.55)`);
+  g.addColorStop(0.8, `rgba(${c[2]},0.25)`);
+  g.addColorStop(1, `rgba(${c[2]},0)`);
   ctx.fillStyle = g;
   ctx.beginPath();
   ctx.moveTo(ox, oy);
@@ -364,7 +453,7 @@ function drawCone(ctx, ox, oy, aimRad, reachPx, halfRad) {
   // Thin edges down both sides and an arc across the mouth: the gradient
   // fades out before the weapon's range does, so without these the template
   // appears to stop short of where it actually reaches.
-  ctx.strokeStyle = 'rgba(255,170,60,0.75)';
+  ctx.strokeStyle = `rgba(${c[3]},0.75)`;
   ctx.lineWidth = 1;
   for (const s of [-1, 1]) {
     ctx.beginPath();
@@ -373,7 +462,7 @@ function drawCone(ctx, ox, oy, aimRad, reachPx, halfRad) {
       oy + Math.sin(aimRad + s * halfRad) * reachPx);
     ctx.stroke();
   }
-  ctx.strokeStyle = 'rgba(255,220,130,0.9)';
+  ctx.strokeStyle = `rgba(${c[4]},0.9)`;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.arc(ox, oy, reachPx, aimRad - halfRad, aimRad + halfRad);
@@ -488,7 +577,7 @@ function drawShot(ctx, px, from, to, blocked, style = {}) {
     if (style.scatter) { drawSpread(ctx, x1, y1, x2, y2); return; }
     if (style.burst) { drawBurst(ctx, x1, y1, x2, y2); return; }
     if (style.thrown) { drawLob(ctx, x1, y1, x2, y2); return; }
-    drawBeam(ctx, x1, y1, x2, y2, style.heavy ? '255,170,80' : '168,130,255',
+    drawBeam(ctx, x1, y1, x2, y2, style.rgb || (style.heavy ? '255,170,80' : '168,130,255'),
       style.heavy ? 2 : style.accurate ? 0.6 : 1);
     if (style.accurate) {
       // A marksman's weapon puts a mark on what it is pointed at.
@@ -761,6 +850,14 @@ export default function BattleMap({
   const setShowRings = shared ? shared.setShowRings : setShowRingsOwn;
   const coneAngle = shared ? shared.coneAngle : coneAngleOwn;
   const setConeAngle = shared ? shared.setConeAngle : setConeAngleOwn;
+  // The psyker's rating and how they channel it: what "× PR" means for the
+  // power in hand. Shared like the weapon, for the same reason.
+  const [psyRatingOwn, setPsyRatingOwn] = useState(3);
+  const [psyModeOwn, setPsyModeOwn] = useState('unfettered');
+  const psyRating = shared && shared.psyRating != null ? shared.psyRating : psyRatingOwn;
+  const setPsyRating = shared && shared.setPsyRating ? shared.setPsyRating : setPsyRatingOwn;
+  const psyMode = shared && shared.psyMode ? shared.psyMode : psyModeOwn;
+  const setPsyMode = shared && shared.setPsyMode ? shared.setPsyMode : setPsyModeOwn;
 
   // A clean map: every toolbar and readout hidden, only the deck left. The
   // overlays, templates and fog still draw, because those are the map.
@@ -962,6 +1059,7 @@ export default function BattleMap({
   const px = m.pxPerSquare;
 
   const weapon = useMemo(() => {
+    if (/^(psy|nav):/.test(weaponKey)) return powerOverlay(weaponKey, psyRating, psyMode);
     const entry = GEAR[weaponKey];
     // The kind and the name as well as the numbers: a sword's stat line does
     // not say it is a sword, and the overlay has to know that to draw it as
@@ -969,7 +1067,7 @@ export default function BattleMap({
     return entry
       ? weaponOverlay(entry.stats, { kind: entry.kind, name: weaponKey, perSquare: m.metresPerSquare })
       : null;
-  }, [weaponKey, m.metresPerSquare]);
+  }, [weaponKey, m.metresPerSquare, psyRating, psyMode]);
 
   /* Every ground this deck draws with — its own, plus any painted onto
      individual squares. Joined to a string so the effects below re-run when
@@ -1611,7 +1709,9 @@ export default function BattleMap({
     // wedge. A grenade keeps the beam too — it is still thrown at a point,
     // and the line is what shows whether the throw lane is clear.
     const kind = overlayKindFor(weapon);
-    const shot = target && (kind === 'beam' || kind === 'melee')
+    const aimed = kind === 'beam' || kind === 'melee' || kind === 'bolt'
+      || (kind === 'gaze' && !weapon.gazeAll);
+    const shot = target && aimed
       ? reachBetween({ from: origin, to: target, map: m, weaponRangeM: weapon.range })
       : null;
     /* A TEMPLATE: THE SQUARES IT CATCHES, AND WHAT ITS ART IS CLIPPED TO.
@@ -1652,8 +1752,31 @@ export default function BattleMap({
     };
     const blastT = weapon && weapon.blastM && target
       ? template(target, areaCells(m, target, weapon.blastM)) : null;
-    const coneT = weapon && weapon.isFlame && target
-      ? template(origin, coneCells(m, origin, target, weapon.range, coneAngle / 2)) : null;
+    // A flamer's cone is as wide as the GM sets it; a psychic cone is as wide
+    // as its rule says.
+    const coneT = weapon && (weapon.isFlame || kind === 'cone') && target
+      ? template(origin, coneCells(m, origin, target, weapon.range, (weapon.coneDeg || coneAngle) / 2)) : null;
+    // A power that bursts around the psyker: the same template as a grenade,
+    // centred on the one who made it.
+    const burstT = kind === 'burst' ? template(origin, areaCells(m, origin, weapon.burstM)) : null;
+    /* A power laid along a line — Wall of Fire. From the psyker toward the
+       aim, as long as the power says, and stopped by the first wall: fire
+       conjured along a line does not run through a bulkhead either. */
+    let line = [];
+    if (kind === 'line' && target && !(target.x === origin.x && target.y === origin.y)) {
+      const per = m.metresPerSquare || 1;
+      const len = weapon.lineM / per;
+      const d = Math.hypot(target.x - origin.x, target.y - origin.y);
+      const ux = (target.x - origin.x) / d, uy = (target.y - origin.y) / d;
+      const seen = new Set();
+      const ray = [];
+      for (let t = 0.5; t <= len + 1e-9; t += 0.5) {
+        const c = { x: Math.round(origin.x + ux * t), y: Math.round(origin.y + uy * t) };
+        const k = cellKey(c.x, c.y);
+        if (!seen.has(k)) { seen.add(k); ray.push(c); }
+      }
+      line = onDeck(m, unobstructed(m, origin, ray));
+    }
     const auraT = kind === 'field'
       ? template(origin, areaCells(m, origin, weapon.auraM)) : null;
 
@@ -1661,7 +1784,10 @@ export default function BattleMap({
       kind,
       shot,
       target,
-      rings: showRings && weapon && !weapon.isField && !weapon.isMelee ? rangeRings(weapon.range, m) : [],
+      // Range bands are a shooting thing: a sword has none, and neither does a
+      // power, which is in range or is not.
+      rings: showRings && weapon && !weapon.isField && !weapon.isMelee && !weapon.power
+        ? rangeRings(weapon.range, m) : [],
       blast: blastT ? blastT.cells : [],
       blastClip: blastT ? blastT.clip : [],
       cone: coneT ? coneT.cells : [],
@@ -1672,8 +1798,14 @@ export default function BattleMap({
       // Trimmed like any other template: you cannot stab through a bulkhead.
       threat: kind === 'melee'
         ? onDeck(m, unobstructed(m, origin, areaCells(m, origin, weapon.reachM))) : [],
-      // Whether the thing being pointed at is actually within reach of it.
-      reaches: kind === 'melee' && shot ? meleeReaches(weapon, shot.metres) : null
+      // Whether the thing being pointed at is actually within reach of it: a
+      // sword's reach, or a power's range.
+      reaches: !shot ? null
+        : kind === 'melee' ? meleeReaches(weapon, shot.metres)
+          : kind === 'bolt' ? shot.metres <= weapon.reachM + 1e-9 : null,
+      burst: burstT ? burstT.cells : [],
+      burstClip: burstT ? burstT.clip : [],
+      line
     };
   }, [mode, origin, aim, hover, weapon, showRings, coneAngle, m]);
 
@@ -1768,7 +1900,8 @@ export default function BattleMap({
      drawn and remembered. Working out every square a weapon might see used to
      be done up front, on every move of the pointer. */
   const seeable = useMemo(() => {
-    if (mode !== 'overlay' || !origin || !showLos) return null;
+    const gaze = weapon && weapon.overlayKind === 'gaze';
+    if (mode !== 'overlay' || !origin || !(showLos || gaze)) return null;
     const per = m.metresPerSquare || 1;
     const reach = weapon && weapon.range ? (weapon.range * 3) / per : Infinity;
     const limit = Math.min(reach, LOS_MAX_SQUARES);
@@ -2255,8 +2388,9 @@ export default function BattleMap({
       // exactly which squares are in it, and a gradient edge alone is a
       // thing to argue over.
       fill(overlay.aura, 'rgba(0,229,255,0.10)');
-      fill(overlay.cone, 'rgba(255,170,40,0.12)');
+      fill(overlay.cone, weapon.power ? 'rgba(200,110,255,0.14)' : 'rgba(255,170,40,0.12)');
       fill(overlay.blast, 'rgba(231,76,60,0.12)');
+      fill(overlay.burst, 'rgba(255,120,40,0.14)');
 
       const target = aim || hover;
       const inSquares = (metres) => (metres / (m.metresPerSquare || 1)) * px;
@@ -2270,9 +2404,31 @@ export default function BattleMap({
           ctx, ox, oy,
           Math.atan2(target.y - origin.y, target.x - origin.x),
           inSquares(weapon.range),
-          (coneAngle / 2) * Math.PI / 180
+          ((weapon.coneDeg || coneAngle) / 2) * Math.PI / 180,
+          weapon.power === 'psy'
         ));
       }
+      // A power bursting round the psyker: the blast art, centred on them.
+      if (overlay.burst.length) {
+        clipToCells(ctx, overlay.burstClip, px, () => drawBlast(ctx, ox, oy, inSquares(weapon.burstM)));
+      }
+      // A wall of warp-fire along a line: the caught squares lit, and a
+      // burning seam down the middle of them so it reads as one wall.
+      if (overlay.line.length) {
+        fill(overlay.line, 'rgba(255,120,40,0.32)');
+        const end = overlay.line[overlay.line.length - 1];
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = 'rgba(255,170,60,0.55)';
+        ctx.lineWidth = px * 0.55;
+        ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(end.x * px + px / 2, end.y * px + px / 2); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,240,190,0.9)';
+        ctx.lineWidth = Math.max(1.5, px * 0.08);
+        ctx.stroke();
+        ctx.restore();
+      }
+      // A personal power: a glow round the psyker's own square.
+      if (overlay.kind === 'personal') drawShield(ctx, ox, oy, px * 0.85);
       if (overlay.blast.length && target) {
         clipToCells(ctx, overlay.blastClip.length ? overlay.blastClip : overlay.blast, px, () => drawBlast(
           ctx, target.x * px + px / 2, target.y * px + px / 2,
@@ -2316,8 +2472,20 @@ export default function BattleMap({
         ctx.arc(ox, oy, (weapon.reachM / (m.metresPerSquare || 1)) * px + px * 0.42, 0, Math.PI * 2);
         ctx.stroke();
       }
+      if (overlay.kind === 'bolt' && Number.isFinite(weapon.reachM) && weapon.reachM > 0) {
+        ctx.strokeStyle = overlay.reaches === false ? 'rgba(231,76,60,0.85)' : 'rgba(200,110,255,0.85)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.arc(ox, oy, inSquares(weapon.reachM), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       if (overlay.shot && overlay.target) {
         drawShot(ctx, px, origin, overlay.target, overlay.shot.blocked, {
+          // A power or a gaze is a stream of the warp, not a round: its own
+          // colour, so nobody reads a psychic bolt as a lasgun shot.
+          rgb: weapon.power === 'nav' ? '120,255,200' : weapon.power === 'psy' ? '220,110,255' : null,
           scatter: weapon.isScatter,
           burst: Boolean(weapon.burst) && !weapon.isScatter,
           thrown: weapon.isThrown,
@@ -3015,7 +3183,9 @@ export default function BattleMap({
     if (mode === 'overlay' || mode === 'measure') {
       add('weapon', 'Weapon', [
         radio('none', 'No weapon', !weaponKey, () => setWeaponKey('')),
-        ...ARMED.map((a) => radio(a.key, `${a.label} \u00b7 ${a.kind}`, weaponKey === a.key, () => setWeaponKey(a.key)))
+        ...ARMED.map((a) => radio(a.key, `${a.label} \u00b7 ${a.kind}`, weaponKey === a.key, () => setWeaponKey(a.key))),
+        ...(mode === 'overlay' ? POWER_GROUPS.flatMap((g) => g.items.map((i) =>
+          radio(i.key, `${i.label} \u00b7 ${g.group}`, weaponKey === i.key, () => setWeaponKey(i.key)))) : [])
       ]);
     }
     add('light', 'Light', LIGHTING_PRESETS.map((p) => radio(p.id, p.name, m.lighting === p.id, () => patch({ lighting: p.id }))));
@@ -3210,10 +3380,12 @@ export default function BattleMap({
     if (!hereCell || mode === 'overlay' || mode === 'measure') return [];
     return [{
       id: 'h-weapon', title: 'Weapon',
-      current: (ARMED.find((x) => x.key === weaponKey) || {}).label || '',
+      current: (ARMED.find((x) => x.key === weaponKey) || {}).label || powerLabel(weaponKey),
       items: [
         radio('none', 'No weapon', !weaponKey, () => setWeaponKey('')),
-        ...ARMED.map((x) => radio(x.key, `${x.label} \u00b7 ${x.kind}`, weaponKey === x.key, () => setWeaponKey(x.key)))
+        ...ARMED.map((x) => radio(x.key, `${x.label} \u00b7 ${x.kind}`, weaponKey === x.key, () => setWeaponKey(x.key))),
+        ...POWER_GROUPS.flatMap((g) => g.items.map((i) =>
+          radio(i.key, `${i.label} \u00b7 ${g.group}`, weaponKey === i.key, () => setWeaponKey(i.key))))
       ]
     }];
   };
@@ -3302,16 +3474,9 @@ export default function BattleMap({
           way to clear it. */}
       {!showOptions && mode === 'overlay' && (
         <div className="rt-bm-aim">
-          <select value={weaponKey} aria-label="Weapon for the overlay"
+          <select value={weaponKey} aria-label="Weapon or power for the overlay"
             onChange={(e) => setWeaponKey(e.target.value)}>
-            <option value="">No weapon</option>
-            {['Pistol', 'Basic', 'Heavy', 'Thrown', 'Melee', 'Field'].map((kind) => (
-              <optgroup key={kind} label={kind}>
-                {ARMED.filter((a) => a.kind === kind).map((a) => (
-                  <option key={a.key} value={a.key}>{a.label}</option>
-                ))}
-              </optgroup>
-            ))}
+            <WeaponOptions />
           </select>
           {origin && (
             <button type="button" className="rt-btn ghost"
@@ -4097,24 +4262,26 @@ export default function BattleMap({
 
         {(mode === 'overlay' || mode === 'measure') && (
           <select value={weaponKey} onChange={(e) => setWeaponKey(e.target.value)}>
-            <option value="">No weapon</option>
-            {['Pistol', 'Basic', 'Heavy', 'Thrown', 'Melee', 'Field'].map((kind) => (
-              <optgroup key={kind} label={kind}>
-                {ARMED.filter((a) => a.kind === kind).map((a) => (
-                  <option key={a.key} value={a.key}>{a.label}</option>
-                ))}
-              </optgroup>
-            ))}
+            <WeaponOptions powers={mode === 'overlay'} />
           </select>
         )}
 
         {mode === 'overlay' && (<>
           {/* A force field has no range bands, so the toggle for them is not
               offered rather than sitting there doing nothing. */}
-          {!(weapon && weapon.isField) && (
+          {!(weapon && (weapon.isField || weapon.power)) && (
             <label className="rt-bm-num"><input type="checkbox" checked={showRings}
               onChange={(e) => setShowRings(e.target.checked)} /><span>Range bands</span></label>
           )}
+          {/* What "× PR" means for the power in hand: the psyker's rating, and
+              how they channel it — Fettered halves it, a Push adds to it. */}
+          {weapon && weapon.power === 'psy' && (<>
+            {num('Psy Rating', psyRating, setPsyRating, 1, 10, 1)}
+            <select value={psyMode} aria-label="How the power is channelled"
+              onChange={(e) => setPsyMode(e.target.value)}>
+              {PSY_MODES.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select>
+          </>)}
           <label className="rt-bm-num"><input type="checkbox" checked={showLos}
             onChange={(e) => setShowLos(e.target.checked)} /><span>Line of sight</span></label>
           {weapon && weapon.isFlame && num('Cone, whole °', coneAngle, setConeAngle, 10, 180, 5)}
@@ -4126,8 +4293,41 @@ export default function BattleMap({
       {mode === 'overlay' && (
         <div className="rt-bm-measure">
           {!origin
-            ? 'Click the square the firer is standing in. Click it again to clear.'
-            : <>
+            ? (weapon && weapon.power
+              ? `Click the square the ${weapon.power === 'nav' ? 'Navigator' : 'psyker'} is standing in. Click it again to clear.`
+              : 'Click the square the firer is standing in. Click it again to clear.')
+            : weapon && weapon.power ? (
+              /* A power reads differently from a gun: in range or not, in
+                 sight or not, and no range bands — the Focus Power Test is
+                 its own roll. */
+              <>
+                <strong>{weapon.power === 'nav' ? 'Gazing' : 'Manifesting'} from {origin.x},{origin.y}</strong>
+                <span> · {weapon.name}</span>
+                {weapon.power === 'psy' && (
+                  <span> · PR {weapon.pr} · {weapon.rangeText}{weapon.test ? ` · test ${weapon.test}` : ''}</span>
+                )}
+                {weapon.power === 'nav' && <span> · {weapon.note}</span>}
+                {overlay && overlay.kind === 'personal' && <span> · on the psyker alone</span>}
+                {overlay && overlay.kind === 'burst' && <span> · {weapon.burstM} m all round</span>}
+                {overlay && overlay.kind === 'cone' && <span> · {weapon.coneDeg}° cone, {weapon.range} m{!overlay.target ? ' \u2014 click to aim' : ''}</span>}
+                {overlay && overlay.kind === 'line' && <span> · a line {weapon.lineM} m long{!overlay.target ? ' \u2014 click to lay it' : ''}</span>}
+                {overlay && overlay.kind === 'gaze' && weapon.gazeAll && (
+                  <span> · the lit squares can see the Navigator; the shaded ones cannot</span>
+                )}
+                {overlay && overlay.shot ? (
+                  <span>
+                    {' · '}{overlay.shot.metres} m
+                    {overlay.kind === 'bolt' && (overlay.reaches
+                      ? (Number.isFinite(weapon.reachM) ? ` \u2014 in range (${weapon.reachM} m)` : ' \u2014 in sight')
+                      : ` \u2014 OUT OF RANGE (${weapon.reachM} m)`)}
+                    {overlay.kind === 'gaze' && (overlay.shot.blocked ? '' : ' \u2014 meets the gaze')}
+                    {overlay.shot.blocked ? (
+                      <strong> · {overlay.kind === 'gaze' ? 'OUT OF SIGHT' : 'no line of sight'}: blocked by {blockedText(overlay.shot.blocked)}</strong>
+                    ) : null}
+                  </span>
+                ) : null}
+              </>
+            ) : <>
                 <strong>{weapon && weapon.isMelee ? 'Fighting from' : 'Firing from'} {origin.x},{origin.y}</strong>
                 {weapon && weapon.range ? <span> · range {weapon.range} m</span> : null}
                 {weapon && weapon.isMelee

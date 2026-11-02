@@ -2086,6 +2086,8 @@ export function weaponOverlay(stats, meta = {}) {
    a chance to say it wrong in front of the table. */
 export function overlayKindFor(ov) {
   if (!ov) return null;
+  // A psychic power or a gaze says its own shape (see powerShape).
+  if (ov.overlayKind) return ov.overlayKind;
   if (ov.isField) return 'field';
   if (ov.isFlame) return 'cone';
   // A sword threatens the squares around its bearer, not a lane across the

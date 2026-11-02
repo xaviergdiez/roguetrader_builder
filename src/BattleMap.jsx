@@ -1587,18 +1587,28 @@ export default function BattleMap({
 
   /* What the fog shows, worked out when the deck changes, not on every redraw.
 
-     THE BUILD TAB SEES THROUGH IT, and only on the GM's own screen. You
-     cannot draw a deck you cannot see, and feeling about in the dark to place
-     a crate was the reason the fog had to be turned off to build — which
-     threw away what the party had found and could not be undone by turning it
-     back on.
+     TWO THINGS SEE THROUGH IT.
+
+     The Build tab, because you cannot draw a deck you cannot see: feeling
+     about in the dark to place a crate was the reason the fog had to be
+     switched off to build, which threw away what the party had found.
+
+     And the starting-room tool, wherever it is used, because choosing the
+     room the party arrives in means looking at the rooms. Picking one through
+     the fog is picking a black square and hoping.
+
+     IN EVERY WINDOW, including the popped-out one. An earlier version refused
+     this to the popped-out copy, on the reasoning that it is the projector
+     and the table must not see what the GM does. That was wrong about how the
+     window is used: it is the GM's own workspace, the one they build in, so
+     refusing it there refused it exactly where it was wanted. The table is
+     not shown a deck by accident either way — Build and the flag are things
+     a GM does, and neither is reached by playing.
 
      Nothing is stored and nothing is revealed: this is the drawing mask, not
      the explored record, so stepping back to Play shows exactly the fog the
-     party had left. The projector's copy is never let through, because the
-     whole point of the GM having a second window is that what they do in it
-     does not reach the table. */
-  const seeAll = tab === 'build' && !projecting;
+     party had left. */
+  const seeAll = tab === 'build' || mode === 'start';
   const shown = useMemo(
     () => (m.fog && !seeAll ? visibleExplored(m) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -14,7 +14,7 @@ import {
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
   OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText, lineBlocked, LOS_MAX_SQUARES, keepClean,
   weaponOverlay, calibrationBar, deploymentRows,
-  setStartRoom, startPlay, playDoor, regionAt, roomsOf, doorsOf, roomFog
+  setStartRoom, startPlay, playDoor, regionAt
 } from './battlemap.js';
 import { NOISE, noiseById, noisePing } from './awareness.js';
 import { GEAR } from './gear.js';
@@ -68,7 +68,7 @@ const MODES = [
    tools that make the deck; Play holds the ones that run it, with the fog and
    the doors in one place, clickable. Measure is wanted in both. */
 const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'cover', 'hazard', 'obscure', 'start', 'marker', 'measure'];
-const PLAY_TOOLS = ['fog', 'contact', 'noise', 'overlay', 'measure'];
+const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'overlay', 'measure'];
 const toolsOf = (tab) => MODES.filter((x) => (tab === 'play' ? PLAY_TOOLS : BUILD_TOOLS).includes(x.id));
 
 // Only things with a combat line are worth drawing an overlay for.
@@ -511,8 +511,11 @@ export default function BattleMap({
   tabRef.current = tab;
   modeRef.current = mode;
   // The tool last used on each tab, so going back to one finds it as it was.
-  const lastToolRef = useRef({ build: 'stamp', play: 'fog' });
-  const [found, setFound] = useState(null);
+  /* The tool each tab was last left on. Play starts on NOTHING rather than on
+     the fog, so the first visit can choose by what the deck needs — the flag
+     when it has no starting room yet, the fog once it has one. After that the
+     GM's own last choice wins, which is what this is for. */
+  const lastToolRef = useRef({ build: 'stamp', play: null });
   const [tileId, setTileId] = useState('corridor_1x5');
   const [rotation, setRotation] = useState(0);
   const [markerType, setMarkerType] = useState('objective');
@@ -1580,7 +1583,11 @@ export default function BattleMap({
     lastToolRef.current[from] = modeRef.current;
     const ids = t === 'play' ? PLAY_TOOLS : BUILD_TOOLS;
     const want = lastToolRef.current[t];
-    const next = ids.includes(want) ? want : ids[0];
+    /* A deck with no starting room opens on the flag, because that is the one
+       thing that has to be set before it is played: without it a published
+       deck opens in the dark. With one already set, Play opens on the fog. */
+    const next = ids.includes(want) ? want
+      : (t === 'play' && !(mapRef.current && mapRef.current.start) ? 'start' : ids[0]);
     if (t === from && modeRef.current === next) return;
     tabRef.current = t;
     modeRef.current = next;
@@ -1598,40 +1605,6 @@ export default function BattleMap({
   // The fog going on over the map already here is the same thing: it is being
   // played now, and the first click on a door must not lay floor over it.
   useEffect(() => { if (m.fog) chooseTab('play'); }, [m.fog]);   // eslint-disable-line react-hooks/exhaustive-deps
-
-  /* What the Play tab lists. Worked out only while that tab is showing: on a
-     500-square deck it walks every square. */
-  const playing = tab === 'play' && showOptions;
-  const roomList = useMemo(
-    () => (playing ? roomsOf(m) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [playing, m.floor, m.doors]);
-  const doorList = useMemo(
-    () => (playing ? doorsOf(m, roomList) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [playing, roomList, m.doors]);
-  const startRoom = useMemo(() => {
-    if (!m.start) return -1;
-    const k = cellKey(m.start.x, m.start.y);
-    return roomList.findIndex((r) => r.keys.includes(k));
-  }, [roomList, m.start]);
-
-  // Brings a square to the middle of the screen and rings it for a moment.
-  const findCell = (c) => {
-    const el = stageRef.current;
-    if (el) {
-      const cx = (c.x * px + px / 2) * zoom, cy = (c.y * px + px / 2) * zoom;
-      el.scrollTo({ left: Math.max(0, cx - el.clientWidth / 2), top: Math.max(0, cy - el.clientHeight / 2), behavior: 'smooth' });
-    }
-    setFound({ x: c.x, y: c.y });
-    (win || window).setTimeout(() => setFound(null), 1800);
-  };
-  // A room's fog by hand, from the list: reveal it and put the party in it, or
-  // take it back.
-  const toggleRoom = (r, fog) => {
-    if (fog === 'lit') patch({ explored: concealArea(m, r.rep) });
-    else patch({ explored: revealArea(m, r.rep), viewpoint: { x: r.rep.x, y: r.rep.y } });
-  };
 
   /* Dead ground for the sight overlay, asked of a square the first time it is
      drawn and remembered. Working out every square a weapon might see used to
@@ -2012,14 +1985,6 @@ export default function BattleMap({
         }
       });
 
-      // A square the GM asked to be shown: ringed for a moment, on their own
-      // screen only.
-      if (found && !projecting) {
-        ctx.save();
-        ctx.strokeStyle = '#4dd6ff'; ctx.lineWidth = Math.max(2, px * 0.09);
-        ctx.beginPath(); ctx.arc(found.x * px + px / 2, found.y * px + px / 2, px * 0.62, 0, Math.PI * 2); ctx.stroke();
-        ctx.restore();
-      }
 
       // 6a. Where the party starts: the GM's own note on the deck, never on the
       //     projector. While the starting-room tool is in hand the whole room
@@ -2268,7 +2233,7 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick,
-      tokenTick, noiseKind, zoom, showOptions, found, startCells]);
+      tokenTick, noiseKind, zoom, showOptions, startCells]);
 
   // Scrolling and resizing the stage move the window over the deck.
   useEffect(() => {
@@ -3936,77 +3901,6 @@ export default function BattleMap({
             onClick={() => { originRef.current = null; setOrigin(null); setAim(null); }}>Clear overlay</button>
         </>)}
       </div>
-
-      {/* THE PLAY TAB'S LISTS. The doors and the rooms of the deck, each one a
-          click away without finding it on the map: a door sets to any of its
-          three states, a room is revealed or taken back, and the flag says
-          where the party starts. They do what clicking on the map does. */}
-      {tab === 'play' && (
-        <div className="rt-bm-play">
-          <div className="rt-bm-playcol">
-            <div className="rt-bm-playh">Doors <span>{doorList.length}</span></div>
-            {doorList.length === 0 ? (
-              <p className="rt-bm-hint">This deck has no doors. Draw some on the Build tab.</p>
-            ) : (
-              <ul className="rt-bm-doors">
-                {doorList.map((d) => {
-                  const onBoard = !shown || Boolean(shown[d.key]);
-                  return (
-                    <li key={d.key} className={'rt-bm-door' + (onBoard ? '' : ' away')}>
-                      <button type="button" className="rt-bm-find" onClick={() => findCell(d)}
-                        title={onBoard ? 'Find it on the map' : 'Not on the board yet. Find it on the map'}>
-                        {d.kind === 'hatch' ? 'Hatch' : 'Door'} {d.x},{d.y}
-                      </button>
-                      <span className="rt-bm-joins">
-                        {d.joins.length ? d.joins.map((j) => j + 1).join(' \u2194 ') : ''}
-                      </span>
-                      {DOOR_STATES.map((st) => (
-                        <button key={st} type="button" aria-pressed={d.state === st}
-                          className={'rt-bm-st ' + st + (d.state === st ? ' on' : '')}
-                          title={st === 'open' ? 'Open it, and light what it joins'
-                            : st === 'jammed' ? 'Jam it: it blocks like a shut door'
-                              : 'Shut it'}
-                          onClick={() => clickDoor({ x: d.x, y: d.y }, st)}>{st}</button>
-                      ))}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-          <div className="rt-bm-playcol">
-            <div className="rt-bm-playh">Rooms <span>{roomList.length}</span></div>
-            {roomList.length === 0 ? (
-              <p className="rt-bm-hint">Nothing drawn yet.</p>
-            ) : (
-              <ul className="rt-bm-rooms">
-                {roomList.map((r, i) => {
-                  const fog = m.fog ? roomFog(r, m.explored) : 'lit';
-                  const isStart = startRoom === i;
-                  return (
-                    <li key={i}>
-                      <button type="button" className={'rt-bm-room ' + fog}
-                        title={fog === 'lit' ? 'Take this room off the board' : 'Reveal this room and put the party in it'}
-                        onClick={() => toggleRoom(r, fog)}>
-                        <span>Room {i + 1}</span>
-                        <em>{!m.fog ? 'fog is off' : fog === 'lit' ? 'revealed' : fog === 'part' ? 'part revealed' : 'dark'}</em>
-                      </button>
-                      <button type="button" className={'rt-ico-btn rt-bm-flag' + (isStart ? ' on' : '')}
-                        aria-pressed={isStart} aria-label={isStart ? `Room ${i + 1} is the start` : `Make room ${i + 1} the start`}
-                        title={isStart ? 'The party starts here. Click to clear it' : 'The party starts here'}
-                        onClick={() => patch({ start: isStart ? null : { x: r.rep.x, y: r.rep.y } })}>
-                        <Icon name="flag" size={15} />
-                      </button>
-                      <button type="button" className="rt-bm-find" onClick={() => findCell(r.rep)}
-                        title="Find it on the map">find</button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </div>
-      )}
 
       {mode === 'overlay' && (
         <div className="rt-bm-measure">

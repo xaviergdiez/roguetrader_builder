@@ -1201,14 +1201,25 @@ export function playDoor(map, pos, to = null) {
       .map(([dx, dy]) => ({ x: pos.x + dx, y: pos.y + dy }))
       .filter((c) => m.floor[cellKey(c.x, c.y)] && !m.doors[cellKey(c.x, c.y)]);
     const near = sides.filter((c) => reach.has(cellKey(c.x, c.y)));
-    const far = sides.filter((c) => !reach.has(cellKey(c.x, c.y)));
     if (near.length === 0 && sides.length) {
       // Nowhere the party can see touches this door, so lighting it would show
       // nothing: the party is taken to be on one side of it.
       patch.viewpoint = sides[0];
-    } else if (near.length && far.length === 1 && !m.explored[cellKey(far[0].x, far[0].y)]) {
-      patch.viewpoint = far[0];
     }
+    /* OPENING A DOOR NO LONGER WALKS THE PARTY THROUGH IT.
+
+       It used to move them to the far side, on the reasoning that a door is
+       opened in order to go through it. The cost only showed when the door
+       was shut again: with the party now standing in the new room, shutting
+       it took the corridor they came along off the board and left the room
+       they had just opened lit — backwards. Shutting a door should take back
+       what opening it revealed, which it now does, because the party is still
+       on the side they opened it from and what lies beyond a shut door is not
+       in sight from there.
+
+       Moving the party is the GM's to do, by revealing a square, and it was
+       never anything the door knew for certain anyway: a door is opened to
+       look through it at least as often as to walk through it. */
   }
   return patch;
 }

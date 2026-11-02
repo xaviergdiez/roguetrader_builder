@@ -2077,31 +2077,41 @@ console.log('battlemap.check.mjs: pack round trips passed');
   assert.ok(open1.explored['6,2'] && open1.explored['9,4'], 'and the room beyond is explored');
   assert.ok(open1.explored['10,3'], 'as far as the next doorway');
   assert.ok(!open1.explored['11,3'], 'and no further');
-  assert.deepEqual(open1.viewpoint, { x: 6, y: 3 }, 'the party goes through, into somewhere new');
+  /* OPENING A DOOR DOES NOT WALK THE PARTY THROUGH IT. It used to, and the
+     cost only showed on shutting it again: with the party standing in the new
+     room, shutting the door took the corridor they came along off the board
+     and left the room they had just opened lit, which is backwards. */
+  assert.equal(open1.viewpoint, undefined, 'the party is not moved: the patch does not touch them');
   const m1 = readMap({ ...live, ...open1 });
   assert.ok(seen(m1, 2, 3) && seen(m1, 7, 3), 'both rooms are visible while the door is open');
   assert.ok(!seen(m1, 12, 3), 'the one past the next door is not');
 
-  // the next door: the far room comes in, the party moves on
+  // the next door along: its room comes in too, seen through the first.
   const open2 = playDoor(m1, { x: 10, y: 3 });
   const m2 = readMap({ ...m1, ...open2 });
-  assert.deepEqual(open2.viewpoint, { x: 11, y: 3 });
+  assert.equal(open2.viewpoint, undefined, 'nor by the next door');
   assert.ok(seen(m2, 12, 3) && seen(m2, 7, 3) && seen(m2, 2, 3), 'the whole crawl is visible through open doors');
 
-  // shutting the first behind them hides the way they came, and nothing else
-  const shut = playDoor(m2, { x: 5, y: 3 });
-  assert.equal(shut.doors['5,3'].state, 'open' === m2.doors['5,3'].state ? 'jammed' : 'closed');
-  const m3 = readMap({ ...m2, ...playDoor(m2, { x: 5, y: 3 }, 'closed') });
-  assert.equal(m3.doors['5,3'].state, 'closed');
-  assert.ok(!seen(m3, 2, 3), 'the room behind a shut door is off the board');
-  assert.ok(seen(m3, 7, 3) && seen(m3, 12, 3), 'the rooms the party is in and just left are still there');
-  assert.ok(m3.explored['2,3'], 'but it is not forgotten');
-  assert.equal(playDoor(m2, { x: 5, y: 3 }, 'closed').explored, undefined, 'shutting a door explores nothing');
+  /* SHUTTING A DOOR TAKES BACK WHAT OPENING IT REVEALED, and nothing on the
+     near side: the party pulls it to and what is beyond goes dark, while the
+     way they came stays exactly as lit as it was. */
+  const shut = playDoor(m2, { x: 10, y: 3 });
+  assert.equal(shut.doors['10,3'].state, 'open' === m2.doors['10,3'].state ? 'jammed' : 'closed');
+  const m3 = readMap({ ...m2, ...playDoor(m2, { x: 10, y: 3 }, 'closed') });
+  assert.equal(m3.doors['10,3'].state, 'closed');
+  assert.ok(!seen(m3, 12, 3), 'the room it opened onto goes back into the dark');
+  assert.ok(seen(m3, 2, 3) && seen(m3, 7, 3), 'and the way they came is untouched');
+  assert.ok(m3.explored['12,3'], 'but it is not forgotten');
+  assert.equal(playDoor(m2, { x: 10, y: 3 }, 'closed').explored, undefined, 'shutting a door explores nothing');
 
-  // jamming blocks as well; opening it again brings the room back, and the party stays put
+  // Opening it again brings that room straight back.
+  assert.ok(seen(readMap({ ...m3, ...playDoor(m3, { x: 10, y: 3 }, 'open') }), 12, 3),
+    'and opening it again shows it once more');
+
+  // jamming blocks as well
   const m4 = readMap({ ...m3, ...playDoor(m3, { x: 5, y: 3 }, 'jammed') });
   assert.equal(m4.doors['5,3'].state, 'jammed');
-  assert.ok(!seen(m4, 2, 3), 'a jammed door blocks like a closed one');
+  assert.ok(!seen(m4, 7, 3), 'a jammed door blocks like a closed one');
   const reopened = playDoor(m4, { x: 5, y: 3 }, 'open');
   assert.equal(reopened.viewpoint, undefined, 'reopening somewhere already seen does not move the party');
   assert.ok(seen(readMap({ ...m4, ...reopened }), 2, 3), 'and the room is back, as it was');

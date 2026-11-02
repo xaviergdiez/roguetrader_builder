@@ -2205,38 +2205,6 @@ const CSS = `
 /* ---- the Play tab ---- */
 .rt-bm-tabs{padding-right:10px;}
 .rt-bm-tab{min-width:64px;}
-.rt-bm-play{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:12px;margin:2px 0 8px;
-  padding:8px 10px;background:var(--panel);border:1px solid var(--brass-dim);}
-.rt-bm-playcol{min-width:0;}
-.rt-bm-playh{font-family:var(--display);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
-  color:var(--brass-lit);margin-bottom:4px;}
-.rt-bm-playh span{font-family:var(--mono);color:var(--dim);margin-left:4px;letter-spacing:0;}
-.rt-bm-doors,.rt-bm-rooms{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px;
-  max-height:168px;overflow-y:auto;}
-.rt-bm-door{display:flex;align-items:center;gap:4px;}
-.rt-bm-door.away .rt-bm-find{color:var(--dim);}
-.rt-bm-find{flex:1 1 auto;min-width:0;text-align:left;padding:3px 7px;font:inherit;font-size:12px;cursor:pointer;
-  background:var(--well);color:var(--text);border:1px solid var(--brass-dim);white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;}
-.rt-bm-find:hover{border-color:var(--brass-lit);}
-.rt-bm-joins{font-family:var(--mono);font-size:10.5px;color:var(--dim);min-width:34px;text-align:center;}
-.rt-bm-st{padding:3px 7px;font:inherit;font-size:11.5px;cursor:pointer;text-transform:capitalize;
-  background:var(--well);color:var(--dim);border:1px solid var(--brass-dim);}
-.rt-bm-st:hover{border-color:var(--brass-lit);color:var(--text);}
-.rt-bm-st.closed.on{background:#5a2420;color:#ffd9d4;border-color:#e74c3c;}
-.rt-bm-st.open.on{background:#1d4a2e;color:#d4ffe3;border-color:#2ecc71;}
-.rt-bm-st.jammed.on{background:#5a3d14;color:#ffe9c4;border-color:#f39c12;}
-.rt-bm-rooms li{display:flex;align-items:stretch;gap:4px;}
-.rt-bm-rooms .rt-bm-find{flex:0 0 auto;}
-.rt-bm-room{flex:1 1 auto;display:flex;justify-content:space-between;gap:8px;text-align:left;padding:3px 7px;
-  font:inherit;font-size:12px;cursor:pointer;background:var(--well);color:var(--text);
-  border:1px solid var(--brass-dim);}
-.rt-bm-room em{font-style:normal;font-size:10.5px;color:var(--dim);}
-.rt-bm-room.lit{border-color:var(--brass-lit);background:var(--panel-lit);}
-.rt-bm-room.part{border-style:dashed;}
-.rt-bm-flag{width:28px;height:auto;flex:0 0 28px;}
-.rt-bm-flag.on{color:#f3c96e;border-color:#f3c96e;}
-@media (max-width:760px){.rt-bm-play{grid-template-columns:1fr;}}
 /* ---- the map library ---- */
 .rt-ml{display:flex;flex-direction:column;gap:8px;}
 .rt-ml-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}

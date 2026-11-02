@@ -1120,13 +1120,47 @@ export function openReach(map, from) {
   return out;
 }
 
+/* What of the explored deck is on the board right now.
+
+   Measured from TWO places: where the party is, and the starting room. The
+   start is the anchor the whole crawl is counted out from — room one — so the
+   way back to it is never taken off the board just because the party is
+   standing somewhere a shut door can cut off. Before this, sight flowed only
+   from a single viewpoint, and a party left standing in a one-square passage
+   between two doors lost the entire deck the moment the second door shut. */
 export function visibleExplored(map) {
   const m = readMap(map);
-  if (!m.viewpoint) return m.explored;
+  if (!m.viewpoint && !m.start) return m.explored;
   const reach = openReach(m, m.viewpoint);
+  for (const k of openReach(m, m.start)) reach.add(k);
   const out = {};
   for (const k of Object.keys(m.explored)) if (reach.has(k)) out[k] = true;
   return out;
+}
+
+/* Which side of a door is the way back, once it is shut.
+
+   The side the starting room is on, when there is a start; failing that, the
+   side with more of the explored deck in reach, which is where a party that
+   has been exploring came from. Returns that side's square, or null when the
+   two sides still meet some other way (a loop, a second open door) and so
+   neither is cut off from the other. */
+function wayBack(shut, pos, start) {
+  const sides = ORTHO
+    .map(([dx, dy]) => ({ x: pos.x + dx, y: pos.y + dy }))
+    .filter((c) => shut.floor[cellKey(c.x, c.y)] && !shut.doors[cellKey(c.x, c.y)]);
+  if (sides.length < 2) return null;
+  const reaches = sides.map((c) => openReach(shut, c));
+  if (reaches[0].has(cellKey(sides[1].x, sides[1].y))) return null;
+  const sk = start ? cellKey(start.x, start.y) : null;
+  let best = 0;
+  if (sk && reaches.some((r) => r.has(sk))) best = reaches.findIndex((r) => r.has(sk));
+  else {
+    const known = (r) => { let n = 0; for (const k of r) if (shut.explored[k]) n++; return n; };
+    const counts = reaches.map(known);
+    best = counts.indexOf(Math.max(...counts));
+  }
+  return { side: sides[best], reach: reaches[best] };
 }
 
 /* The mirror of revealArea, for a place the GM wants taken back by hand. */
@@ -1198,6 +1232,20 @@ export function playDoor(map, pos, to = null) {
   if (state === door.state) return {};
   const doors = { ...m.doors, [k]: { ...door, state } };
   const patch = { doors };
+
+  /* SHUTTING A DOOR IS BACKTRACKING. What lies beyond it, counted from the
+     start, goes back into the dark; the way back stays lit. If the party was
+     standing on the far side — which is where opening a door further in left
+     them — they came back through it before they shut it, and are put on the
+     near side. Without this, a party left in a one-square passage between two
+     doors was walled off by shutting the second, and the whole deck vanished
+     with them. Explored squares are not forgotten: open the door again and
+     everything beyond it is back exactly as it was. */
+  if (door.state === 'open' && state !== 'open' && m.fog && m.viewpoint) {
+    const back = wayBack({ ...m, doors }, pos, m.start);
+    if (back && !back.reach.has(cellKey(m.viewpoint.x, m.viewpoint.y))) patch.viewpoint = back.side;
+    return patch;
+  }
   if (state !== 'open' || !m.fog) return patch;
 
   const opened = { ...m, doors };

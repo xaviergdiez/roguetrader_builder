@@ -1993,6 +1993,77 @@ console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   assert.equal(noRange.length, 0, 'every gun has a range: ' + noRange.map(([k]) => k).join(', '));
 }
 
+
+/* ---- shutting doors is backtracking, counted from the start ----
+   The case that blanked the deck: a top room behind door A, a one-square
+   passage C between A and door B, the start room S below B, and a side room R
+   off S behind door D. Open D, then B, then A — which leaves the party at A,
+   standing in C. Shut A: the top room goes. Shut B: the passage goes. Before
+   this the whole deck went with it, because sight flowed only from where the
+   party stood and C was all that was left in reach. */
+{
+  const floor = {};
+  const room = (x0, y0, x1, y1) => { for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) floor[`${x},${y}`] = true; };
+  room(0, 0, 4, 2);                    // T, the top room
+  floor['2,3'] = true;                 // door A
+  floor['2,4'] = true;                 // C, the passage
+  floor['2,5'] = true;                 // door B
+  room(0, 6, 4, 9);                    // S, the start room
+  floor['5,8'] = true;                 // door D
+  room(6, 6, 9, 9);                    // R, the side room
+  const shut = { kind: 'bulkhead', state: 'closed' };
+  // startPlay hands back a patch, not a deck: laid over the deck it came from.
+  const fresh = (start) => {
+    const base = readMap({
+      cols: 12, rows: 12, fog: true, floor, start,
+      doors: { '2,3': { ...shut }, '2,5': { ...shut }, '5,8': { ...shut } },
+      // Without a start, the GM has revealed S by hand: the same opening state.
+      explored: start ? {} : Object.fromEntries(Object.keys(floor).filter((k) => {
+        const [x, y] = k.split(',').map(Number); return y >= 6 && x <= 4; }).map((k) => [k, true])),
+      viewpoint: start ? null : { x: 2, y: 7 }
+    });
+    return start ? readMap({ ...base, ...startPlay(base) }) : base;
+  };
+  const seen = (mm, x, y) => Boolean(visibleExplored(mm)[`${x},${y}`]);
+  const step = (mm, x, y, to) => readMap({ ...mm, ...playDoor(mm, { x, y }, to) });
+
+  for (const [label, start] of [['with a start', { x: 2, y: 7 }], ['with no start', null]]) {
+    let mm = fresh(start);
+    mm = step(mm, 5, 8, 'open');
+    mm = step(mm, 2, 5, 'open');
+    mm = step(mm, 2, 3, 'open');
+    assert.ok(seen(mm, 2, 1) && seen(mm, 2, 4) && seen(mm, 2, 7) && seen(mm, 7, 7),
+      `${label}: everything opened is on the board`);
+    assert.deepEqual(mm.viewpoint, { x: 2, y: 4 }, `${label}: and the party is at A, in the passage`);
+
+    mm = step(mm, 2, 3, 'closed');
+    assert.ok(!seen(mm, 2, 1), `${label}: shutting A takes the top room back`);
+    assert.ok(seen(mm, 2, 4) && seen(mm, 2, 7) && seen(mm, 7, 7), `${label}: and nothing else`);
+
+    mm = step(mm, 2, 5, 'closed');
+    assert.ok(!seen(mm, 2, 4), `${label}: shutting B takes the passage back`);
+    assert.ok(seen(mm, 2, 7) && seen(mm, 7, 7),
+      `${label}: and the start room and the side room stay — the deck does not vanish`);
+    assert.deepEqual(mm.viewpoint, { x: 2, y: 6 }, `${label}: the party backtracked through B`);
+
+    // Opening them again brings each back as it was, in order.
+    mm = step(mm, 2, 5, 'open');
+    assert.ok(seen(mm, 2, 4) && !seen(mm, 2, 1), `${label}: B again: the passage, not yet the top room`);
+    mm = step(mm, 2, 3, 'open');
+    assert.ok(seen(mm, 2, 1), `${label}: A again: the top room, never forgotten`);
+  }
+
+  // A room still reachable through a second open door is not cut off.
+  const loopFloor = { ...floor, '5,1': true };
+  for (let y = 1; y <= 7; y++) loopFloor[`6,${y}`] = true;      // a corridor from T round to R
+  const loopBase = readMap({ cols: 12, rows: 12, fog: true, floor: loopFloor, start: { x: 2, y: 7 },
+    doors: { '2,3': { ...shut }, '2,5': { ...shut }, '5,8': { ...shut } } });
+  let lp = readMap({ ...loopBase, ...startPlay(loopBase) });
+  for (const [x, y] of [[5, 8], [2, 5], [2, 3]]) lp = readMap({ ...lp, ...playDoor(lp, { x, y }, 'open') });
+  lp = readMap({ ...lp, ...playDoor(lp, { x: 2, y: 3 }, 'closed') });
+  assert.ok(seen(lp, 2, 1), 'a room with another open way in stays lit when one door shuts');
+}
+
 console.log('battlemap.check.mjs: rotation passed');
 
 /* ---- big decks: packed storage and clean layers ---- */
@@ -2227,14 +2298,20 @@ console.log('battlemap.check.mjs: pack round trips passed');
   assert.ok(seen(readMap({ ...m3, ...playDoor(m3, { x: 10, y: 3 }, 'open') }), 12, 3),
     'and opening it again shows it once more');
 
-  // Jamming blocks as well, and is set by name rather than clicked into.
+  /* Jamming blocks as well, and is set by name rather than clicked into.
+     Shutting OR jamming is backtracking, counted from the start: the door
+     between the party and the start room is jammed, so they came back through
+     it first — they are on the start side, the start room stays lit, and the
+     room they left goes dark behind the jammed door. (This used to take the
+     START room off the board and leave the party where they stood.) */
   const m4 = readMap({ ...m3, ...playDoor(m3, { x: 5, y: 3 }, 'jammed') });
   assert.equal(m4.doors['5,3'].state, 'jammed');
-  assert.ok(!seen(m4, 2, 3), 'a jammed door blocks like a closed one');
-  assert.ok(seen(m4, 7, 3), 'and the room the party is in is untouched by it');
+  assert.deepEqual(m4.viewpoint, { x: 4, y: 3 }, 'the party backtracked through it');
+  assert.ok(seen(m4, 2, 3), 'the way back to the start is never taken off the board');
+  assert.ok(!seen(m4, 7, 3), 'a jammed door blocks like a closed one');
   const reopened = playDoor(m4, { x: 5, y: 3 }, 'open');
-  assert.deepEqual(reopened.viewpoint, { x: 6, y: 3 }, 'reopening brings them to its near side');
-  assert.ok(seen(readMap({ ...m4, ...reopened }), 2, 3), 'and the room is back, as it was');
+  assert.deepEqual(reopened.viewpoint, { x: 4, y: 3 }, 'reopening keeps them at its near side');
+  assert.ok(seen(readMap({ ...m4, ...reopened }), 7, 3), 'and the room beyond is back, as it was');
 
   /* Clicking a door only ever opens or shuts it. Four clicks used to walk
      closed -> open -> jammed -> closed -> open, leaving it jammed half the

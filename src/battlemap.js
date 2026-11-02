@@ -308,6 +308,10 @@ export const EMPTY_MAP = {
   // map is drawn with it. The two are separate so turning fog off to check
   // something does not throw away what was explored.
   explored: {},         // { 'x,y': true } — everywhere the party has EVER seen
+  // The deck's PLAN, downloaded from a cogitator: squares whose layout the
+  // party knows without having been there. Drawn under the fog as a
+  // blueprint — walls and doors, nothing of what is in the rooms.
+  mapped: {},           // { 'x,y': true }
   // Where they are now, set by the last reveal. What is DRAWN is `explored`
   // narrowed to what can still be walked to from here through open doors, so
   // shutting a bulkhead takes the room beyond it off the board and opening
@@ -566,9 +570,15 @@ export const MARKER_TYPES = [
   { id: 'breach', name: 'Torpedo breach', colour: '#ff5722' },
   { id: 'objective', name: 'Objective', colour: '#f1c40f' },
   { id: 'hazard', name: 'Hazard (fire, vacuum)', colour: '#e74c3c' },
-  { id: 'deploy', name: 'Deployment point', colour: '#3498db' }
+  { id: 'deploy', name: 'Deployment point', colour: '#3498db' },
+  // Not scenery: a thing the party can work. See TERMINAL_STATES below.
+  { id: 'cogitator', name: 'Cogitator terminal', colour: '#4dd6ff' }
 ];
 export const markerTypeById = (id) => MARKER_TYPES.find((m) => m.id === id) || MARKER_TYPES[0];
+/* A cogitator terminal's state: locked, accessed, or burnt out. Declared up
+   here beside the marker kinds because readMap reads it, and readMap runs
+   long before the terminal functions further down are reached. */
+export const TERMINAL_STATES = ['locked', 'open', 'dead'];
 
 /* A TARGET is an Objective marker laid on a hostile to pick it out on the
    screen, and it carries a bonus to Ballistic Skill for whoever shoots at that
@@ -689,7 +699,7 @@ export function packLayer(layerObj) {
 
 // Layers that run into the thousands on a big deck. Doors, markers and
 // contacts are a handful of records each and stay as they are.
-const PACKED_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'explored'];
+const PACKED_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'explored', 'mapped'];
 const PACK_FROM = 64;     // below this a plain layer is smaller and easier to read
 
 /* The map as it should be stored or sent. Round-trips exactly through readMap.
@@ -788,6 +798,11 @@ export function readMap(m) {
     for (const k of Object.keys(raw)) if (raw[k] && parseKey(k)) out[k] = true;
     return out;
   });
+  const mapped = layer(src.mapped, (raw) => {
+    const out = {};
+    for (const k of Object.keys(raw)) if (raw[k] && parseKey(k)) out[k] = true;
+    return out;
+  });
   const contacts = layer(src.contacts, (raw) => {
     const out = {};
     for (const [k, v] of Object.entries(raw)) {
@@ -802,6 +817,7 @@ export function readMap(m) {
     for (const [k, v] of Object.entries(raw)) {
       if (!parseKey(k) || !v || typeof v !== 'object') continue;
       const rec = { type: markerTypeById(v.type).id, label: String(v.label || '') };
+      if (rec.type === 'cogitator') rec.state = TERMINAL_STATES.includes(v.state) ? v.state : 'locked';
       // Only a number that means something rides along: a target's bonus.
       const bonus = Number(v.bonus);
       if (v.bonus != null && Number.isFinite(bonus)) {
@@ -856,7 +872,7 @@ export function readMap(m) {
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
       return floor[cellKey(x, y)] ? { x, y } : null;
     })(),
-    floor, doors, cover, hazards, obscuring, markers, explored, contacts, ground
+    floor, doors, cover, hazards, obscuring, markers, explored, mapped, contacts, ground
   };
 }
 
@@ -907,6 +923,8 @@ export function tokensNeeded(map) {
   }
   for (const [k, v] of Object.entries(m.hazards || {})) want(k, 'hazard', v);
   for (const [k, v] of Object.entries(m.obscuring || {})) want(k, 'obscure', v);
+  // A cogitator terminal is drawn as the ground's own machinery.
+  for (const [k, v] of Object.entries(m.markers || {})) if (v && v.type === 'cogitator') want(k, 'cover', 'machinery');
   return [...out].sort();
 }
 
@@ -1178,6 +1196,65 @@ export function concealArea(map, pos) {
   return explored;
 }
 
+/* ------------------------------ cogitator terminals ------------------------------
+
+   A terminal is a marker the party can WORK. Locked until someone gets in —
+   the Tech-Use test is the table's, the map only records the result —
+   accessed once they have, or burnt out, which is how a GM says the
+   saboteurs got there first. An accessed terminal can work the doors of the
+   room it stands in, hand the party the deck's plan, or sweep for contacts.
+
+   "The room it stands in" is the fog's own idea of a room: floor that can be
+   walked without passing a door, and the doors round its edge. */
+export function terminalAt(map, pos) {
+  const m = readMap(map);
+  if (!pos) return null;
+  const t = m.markers[cellKey(pos.x, pos.y)];
+  return t && t.type === 'cogitator' ? t : null;
+}
+
+export function setTerminal(map, pos, state) {
+  const m = readMap(map);
+  const k = cellKey(pos.x, pos.y);
+  const t = m.markers[k];
+  if (!t || t.type !== 'cogitator' || !TERMINAL_STATES.includes(state)) return null;
+  return { markers: { ...m.markers, [k]: { ...t, state } } };
+}
+
+// The doors round the room a terminal stands in.
+export function roomDoors(map, pos) {
+  const m = readMap(map);
+  return regionAt(m, pos).filter((c) => m.doors[cellKey(c.x, c.y)]);
+}
+
+/* Every door of the terminal's room set to one state, as one patch. Opening
+   them goes through playDoor, door by door, so the fog behaves exactly as if
+   the party had opened each one — the rooms beyond come into view, and
+   shutting them backtracks the same way a hand on the door would. */
+export function workRoomDoors(map, pos, state) {
+  let m = readMap(map);
+  const doorsHere = roomDoors(m, pos);
+  if (!doorsHere.length) return null;
+  const patch = {};
+  for (const d of doorsHere) {
+    const p = playDoor(m, d, state);
+    if (!p || !p.doors) continue;
+    Object.assign(patch, p);
+    m = readMap({ ...m, ...p });
+  }
+  return Object.keys(patch).length ? patch : null;
+}
+
+/* The deck's plan, downloaded. Every square of deck is MAPPED: its walls and
+   doors are known, nothing in it is. Explored squares are not touched — a
+   plan is not a sighting. */
+export function downloadSchematics(map) {
+  const m = readMap(map);
+  const mapped = { ...m.mapped };
+  for (const k of Object.keys(m.floor)) mapped[k] = true;
+  return { mapped };
+}
+
 /* ------------------------- starting and running a crawl -------------------------
    Three small things make a published deck playable without the GM having to
    open the fog tool and click the first room by hand.
@@ -1207,11 +1284,11 @@ export function setStartRoom(map, pos) {
 export function startPlay(map) {
   const m = readMap(map);
   if (!m.start || !m.floor[cellKey(m.start.x, m.start.y)]) {
-    return { fog: true, explored: {}, viewpoint: null };
+    return { fog: true, explored: {}, mapped: {}, viewpoint: null };
   }
   const explored = {};
   for (const c of regionAt(m, m.start)) explored[cellKey(c.x, c.y)] = true;
-  return { fog: true, explored, viewpoint: { x: m.start.x, y: m.start.y } };
+  return { fog: true, explored, mapped: {}, viewpoint: { x: m.start.x, y: m.start.y } };
 }
 
 /* What a click on a door does in play: the patch to write, or null when there
@@ -1411,7 +1488,11 @@ export function publishMap(saved) {
     ...startPlay(s.map),
     contacts: Object.fromEntries(
       Object.entries(s.map.contacts).map(([k, c]) => [k, { ...c, state: 'hidden' }])
-    )
+    ),
+    // A terminal the party broke into last session is locked again; one the
+    // GM drew burnt out stays burnt out.
+    markers: Object.fromEntries(Object.entries(s.map.markers).map(([k, v]) =>
+      [k, v.type === 'cogitator' && v.state === 'open' ? { ...v, state: 'locked' } : v]))
   };
 }
 
@@ -1540,6 +1621,8 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   };
   const explored = {};
   for (const k of Object.keys(src.explored)) if (inside(k)) explored[k] = true;
+  const mapped = {};
+  for (const k of Object.keys(src.mapped)) if (inside(k)) mapped[k] = true;
   const contacts = {};
   for (const [k, v] of Object.entries(src.contacts)) if (inside(k)) contacts[k] = v;
   const viewpoint = src.viewpoint && inside(cellKey(src.viewpoint.x, src.viewpoint.y))
@@ -1550,7 +1633,7 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
     ...src,
     cols: w, rows: h,
     floor, cover, hazards, doors, markers, ground, obscuring,
-    explored, contacts, viewpoint, start
+    explored, mapped, contacts, viewpoint, start
   };
 }
 
@@ -1652,6 +1735,7 @@ function turnContent(m, t) {
     }),
     hazards: move(m.hazards),
     obscuring: move(m.obscuring), ground: move(m.ground), explored: move(m.explored),
+    mapped: move(m.mapped),
     doors: move(m.doors, (d) => ({ ...d })),
     markers: move(m.markers, (v) => ({ ...v })),
     contacts: move(m.contacts, (c) => ({ ...c })),

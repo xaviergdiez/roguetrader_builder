@@ -6,6 +6,7 @@ import {
   distanceSquares, distanceMetres, reachBetween, deploymentRows, calibrationBar,
   rangeRings, areaCells, coneCells, visibleCells, weaponOverlay, unobstructed,
   meleeReachM, meleeReaches,
+  terminalAt, setTerminal, roomDoors, workRoomDoors, downloadSchematics,
   overlayKindFor, onDeck,
   DOOR_KINDS, doorKindById, readDoor, COVER_TYPES, coverById, coverBetween,
   HAZARD_TYPES, hazardById,
@@ -2062,6 +2063,61 @@ console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   for (const [x, y] of [[5, 8], [2, 5], [2, 3]]) lp = readMap({ ...lp, ...playDoor(lp, { x, y }, 'open') });
   lp = readMap({ ...lp, ...playDoor(lp, { x: 2, y: 3 }, 'closed') });
   assert.ok(seen(lp, 2, 1), 'a room with another open way in stays lit when one door shuts');
+}
+
+
+/* ---- cogitator terminals ---- */
+{
+  const floor = {};
+  const room = (x0, y0, x1, y1) => { for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) floor[`${x},${y}`] = true; };
+  room(0, 0, 4, 4);                         // the terminal's room
+  floor['5,2'] = true; room(6, 0, 9, 4);    // a door east, a room beyond
+  floor['2,5'] = true; room(0, 6, 4, 9);    // a door south, a room beyond
+  const doors = { '5,2': { kind: 'bulkhead', state: 'closed' }, '2,5': { kind: 'hatch', state: 'closed' } };
+  const base = readMap({ cols: 12, rows: 12, floor, doors, start: { x: 1, y: 1 },
+    markers: { '1,1': { type: 'cogitator', label: 'Cogitator', state: 'nonsense' } } });
+  const play = readMap({ ...base, ...startPlay(base) });
+
+  assert.equal(base.markers['1,1'].state, 'locked', 'a terminal with no sensible state reads as locked');
+  assert.equal(terminalAt(base, { x: 1, y: 1 }).type, 'cogitator');
+  assert.equal(terminalAt(base, { x: 2, y: 2 }), null, 'a bare square is no terminal');
+  assert.equal(setTerminal(base, { x: 2, y: 2 }, 'open'), null);
+  assert.equal(setTerminal(base, { x: 1, y: 1 }, 'nonsense'), null, 'only the three states');
+  const opened = readMap({ ...play, ...setTerminal(play, { x: 1, y: 1 }, 'open') });
+  assert.equal(opened.markers['1,1'].state, 'open');
+
+  // Its room's doors are the two round its edge, and working them works the fog.
+  assert.deepEqual(roomDoors(opened, { x: 1, y: 1 }).map((c) => `${c.x},${c.y}`).sort(), ['2,5', '5,2']);
+  const all = readMap({ ...opened, ...workRoomDoors(opened, { x: 1, y: 1 }, 'open') });
+  assert.equal(all.doors['5,2'].state, 'open'); assert.equal(all.doors['2,5'].state, 'open');
+  const lit = visibleExplored(all);
+  assert.ok(lit['7,2'] && lit['2,7'], 'opening them from the terminal lights both rooms beyond');
+  const sealed = readMap({ ...all, ...workRoomDoors(all, { x: 1, y: 1 }, 'closed') });
+  assert.ok(!visibleExplored(sealed)['7,2'] && !visibleExplored(sealed)['2,7'], 'sealing them takes both back');
+  assert.ok(visibleExplored(sealed)['1,1'], 'and the terminal room stays lit');
+  const locked = readMap({ ...all, ...workRoomDoors(all, { x: 1, y: 1 }, 'jammed') });
+  assert.equal(locked.doors['5,2'].state, 'jammed', 'locking jams them');
+  assert.equal(workRoomDoors(readMap({ cols: 6, rows: 6, floor: { '1,1': true } }), { x: 1, y: 1 }, 'open'), null,
+    'a room with no doors gives nothing to work');
+
+  // The plan: every square of deck mapped, nothing explored by it.
+  const planned = readMap({ ...opened, ...downloadSchematics(opened) });
+  assert.equal(Object.keys(planned.mapped).length, Object.keys(floor).length, 'the whole deck is mapped');
+  assert.deepEqual(planned.explored, opened.explored, 'a plan is not a sighting');
+  assert.deepEqual(readMap(JSON.parse(JSON.stringify(packMap(planned)))).mapped, planned.mapped,
+    'the plan survives being stored');
+  assert.deepEqual(startPlay(planned).mapped, {}, 'a fresh session starts with no plan');
+
+  // A new session: a terminal the party broke into is locked again; a burnt
+  // out one stays burnt out.
+  const deadToo = readMap({ ...planned, markers: { ...planned.markers, '8,8': { type: 'cogitator', label: 'x', state: 'dead' } } });
+  const pub = publishMap({ id: 't', name: 't', map: deadToo });
+  assert.equal(pub.markers['1,1'].state, 'locked');
+  assert.equal(pub.markers['8,8'].state, 'dead');
+  assert.deepEqual(pub.mapped, {}, 'and nobody walks in with last session\'s plan');
+
+  // A terminal is drawn as its ground's machinery, so that token is fetched.
+  assert.ok(tokensNeeded(base).some((k) => k.endsWith('/machinery')));
 }
 
 console.log('battlemap.check.mjs: rotation passed');

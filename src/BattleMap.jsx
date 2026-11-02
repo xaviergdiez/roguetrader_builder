@@ -13,6 +13,7 @@ import {
   DOOR_KINDS, doorKindById, COVER_TYPES, coverById, readCover, writeCover,
   HAZARD_TYPES, hazardById,
   nextContactState, auspexSweep, AUSPEX_RANGE_M,
+  terminalAt, setTerminal, workRoomDoors, downloadSchematics,
   OBSCURING, obscuringById, LIGHTING_PRESETS, blockedText, lineBlocked, LOS_MAX_SQUARES, keepClean,
   weaponOverlay, calibrationBar, deploymentRows,
   setStartRoom, startPlay, playDoor, regionAt
@@ -306,6 +307,33 @@ function sliceSheet(img) {
     out[s.role] = c;
   }
   return out;
+}
+
+/* A cogitator terminal: the ground's own machinery token where there is one,
+   a plain console where there is not, and its state as a frame and a lit
+   screen — red locked, green accessed, a dead grey for burnt out — so the
+   table can see at a glance which ones are worth fighting over. */
+const TERMINAL_COLOUR = { locked: '231,76,60', open: '46,204,113', dead: '120,120,120' };
+function drawTerminal(ctx, x0, y0, px, state, tok) {
+  const rgb = TERMINAL_COLOUR[state] || TERMINAL_COLOUR.locked;
+  if (tok) drawToken(ctx, tok, x0, y0, px);
+  else {
+    ctx.fillStyle = 'rgba(30,38,44,0.95)';
+    ctx.fillRect(x0 + px * 0.14, y0 + px * 0.2, px * 0.72, px * 0.6);
+  }
+  // The screen.
+  ctx.fillStyle = state === 'dead' ? 'rgba(40,40,40,0.9)' : `rgba(${rgb},0.85)`;
+  ctx.fillRect(x0 + px * 0.3, y0 + px * 0.32, px * 0.4, px * 0.22);
+  if (state !== 'dead') {
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    for (let i = 0; i < 3; i++) ctx.fillRect(x0 + px * 0.34, y0 + px * (0.36 + i * 0.055), px * (0.32 - i * 0.07), Math.max(1, px * 0.025));
+  }
+  ctx.strokeStyle = `rgba(${rgb},0.95)`;
+  ctx.lineWidth = Math.max(1.5, px * 0.05);
+  if (state === 'dead') ctx.setLineDash([3, 3]);
+  const o = ctx.lineWidth / 2;
+  ctx.strokeRect(x0 + o, y0 + o, px - ctx.lineWidth, px - ctx.lineWidth);
+  ctx.setLineDash([]);
 }
 
 /* Draws one prop picture into its square, turned a quarter at a time where
@@ -1352,7 +1380,9 @@ export default function BattleMap({
      clicked square, and only the smoke of that density. */
   const liftEnvironmentAt = (pos) => {
     const k = cellKey(pos.x, pos.y);
-    if (m.markers[k]) { const markers = { ...m.markers }; delete markers[k]; return { markers }; }
+    // A terminal is part of the deck, not something laid mid-session: it is
+    // worked by a click, never lifted by one.
+    if (m.markers[k] && m.markers[k].type !== 'cogitator') { const markers = { ...m.markers }; delete markers[k]; return { markers }; }
     if (m.hazards[k]) { const hazards = { ...m.hazards }; delete hazards[k]; return { hazards }; }
     const density = m.obscuring[k];
     if (density) {
@@ -1537,6 +1567,14 @@ export default function BattleMap({
       // A door is clicked as a door: it steps to its next state, and opening
       // it lights what it joins.
       if (m.doors[k]) { clickDoor(pos); return; }
+      // A terminal is clicked as a terminal: in, or locked out again. The
+      // Tech-Use test is the table's; this records how it went. A burnt-out
+      // one does nothing — that is what burnt out means.
+      const term = terminalAt(m, pos);
+      if (term) {
+        if (term.state !== 'dead') patch(setTerminal(m, pos, term.state === 'open' ? 'locked' : 'open'));
+        return;
+      }
       // A square holding a target, a fire or a cloud of smoke is clicked OUT:
       // those are laid mid-session from the menu and are lifted the same way,
       // without going back to the menu. Click the room beside it to reveal.
@@ -2323,6 +2361,10 @@ export default function BattleMap({
       // 6. Markers.
       each(m.markers, (cx, cy, mk) => {
         const mx = cx * px + px / 2, my = cy * px + px / 2;
+        if (mk.type === 'cogitator') {
+          drawTerminal(ctx, cx * px, cy * px, px, mk.state, tokenAt('cover', 'machinery', null, cx, cy));
+          return;
+        }
         ctx.fillStyle = markerTypeById(mk.type).colour;
         ctx.globalAlpha = 0.55;
         ctx.beginPath(); ctx.arc(mx, my, px * 0.36, 0, Math.PI * 2); ctx.fill();
@@ -2390,6 +2432,37 @@ export default function BattleMap({
           for (let y = r0; y <= r1; y++) {
             if (!shown[x + ',' + y]) ctx.fillRect(x * px, y * px, px, px);
           }
+        }
+        /* A DOWNLOADED PLAN, as a blueprint under the fog. A mapped square
+           the party has not seen shows its walls and its doors in a thin
+           cyan line and nothing else: they know where the rooms are, not
+           what is in them. Drawn after the fog so it sits on top of it. */
+        // Asked with a loop that stops at the first key: a whole deck's plan
+        // can be a quarter of a million squares, and this runs every frame.
+        let planned = false;
+        for (const _k in m.mapped) { planned = true; break; }
+        if (planned) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(90,200,255,0.6)';
+          ctx.lineWidth = Math.max(1, px * 0.04);
+          for (let x = c0; x <= c1; x++) {
+            for (let y = r0; y <= r1; y++) {
+              const k = x + ',' + y;
+              if (shown[k] || !m.mapped[k] || !m.floor[k]) continue;
+              const x0 = x * px, y0 = y * px;
+              ctx.fillStyle = 'rgba(20,60,90,0.28)';
+              ctx.fillRect(x0, y0, px, px);
+              const mask = wallMask(m.floor, x, y);
+              ctx.beginPath();
+              if (mask & WALL_N) { ctx.moveTo(x0, y0); ctx.lineTo(x0 + px, y0); }
+              if (mask & WALL_S) { ctx.moveTo(x0, y0 + px); ctx.lineTo(x0 + px, y0 + px); }
+              if (mask & WALL_W) { ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + px); }
+              if (mask & WALL_E) { ctx.moveTo(x0 + px, y0); ctx.lineTo(x0 + px, y0 + px); }
+              ctx.stroke();
+              if (m.doors[k]) ctx.strokeRect(x0 + px * 0.3, y0 + px * 0.3, px * 0.4, px * 0.4);
+            }
+          }
+          ctx.restore();
         }
       }
     }
@@ -2896,7 +2969,7 @@ export default function BattleMap({
        photographs of crates it reads as the deck not having cleared at all. */
     patch({
       floor: {}, doors: {}, markers: {}, cover: {}, hazards: {}, obscuring: {},
-      contacts: {}, ground: {}, explored: {}, viewpoint: null
+      contacts: {}, ground: {}, explored: {}, mapped: {}, viewpoint: null
     });
     originRef.current = null; measureRef.current = null;
     setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
@@ -3290,6 +3363,30 @@ export default function BattleMap({
           checked: here.state === st,
           run: () => clickDoor({ x: at.x, y: at.y }, st)
         });
+      }
+    }
+    /* A TERMINAL UNDER THE POINTER. Its state by name, and — once the party
+       is in — what it can do: work the doors of its room, hand over the
+       deck's plan, or sweep for contacts from where it stands. */
+    const term = at ? terminalAt(m, at) : null;
+    if (term) {
+      for (const [st, label] of [['locked', 'Terminal locked'], ['open', 'Terminal accessed'], ['dead', 'Terminal burnt out']]) {
+        a.push({ key: 'term-' + st, label, checked: term.state === st, run: () => patch(setTerminal(m, at, st)) });
+      }
+      if (term.state === 'open') {
+        const doorsTo = (state, label) => ({
+          key: 'term-doors-' + state, label,
+          run: () => {
+            const p = workRoomDoors(m, at, state);
+            if (p) patch(p);
+            else confirmInMap({ title: 'No doors', body: 'This terminal\u2019s room has no doors for it to work.', yes: 'Done', info: true });
+          }
+        });
+        a.push(doorsTo('open', 'Open every door in this room'));
+        a.push(doorsTo('closed', 'Seal every door in this room'));
+        a.push(doorsTo('jammed', 'Lock every door in this room'));
+        a.push({ key: 'term-plan', label: 'Download the deck plan', run: () => patch(downloadSchematics(m)) });
+        a.push({ key: 'term-sweep', label: 'Auspex sweep from the terminal', run: () => patch({ contacts: auspexSweep(m, at, auspexM) }) });
       }
     }
     /* A WARP RIFT UNDER THE POINTER: the warp's own tables, rolled where it

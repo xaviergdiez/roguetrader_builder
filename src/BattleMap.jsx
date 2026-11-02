@@ -3189,12 +3189,40 @@ export default function BattleMap({
   const tool = MODES.find((x) => x.id === mode) || MODES[0];
 
   return (
-    <div className={'rt-bm' + (win ? ' rt-bm-win' : '')} style={{ position: 'relative' }}>
+    <div className={'rt-bm' + (win ? ' rt-bm-win' : '') + (isFull ? ' rt-bm-full' : '')} style={{ position: 'relative' }}>
       {!showOptions && (
         <button type="button" className="rt-btn rt-bm-peek" onClick={() => setShowOptions(true)}
           title="Show the map options (H)">Options</button>
       )}
-      {showOptions && (<>
+      {/* THE OVERLAY'S OWN PICKER, with everything else hidden.
+
+          A projected map is run with the toolbars away, and the overlay is
+          the one tool that is used WHILE it is projected: the GM aims a
+          weapon, the table watches the ring. Changing which weapon meant
+          bringing the whole menu up over the deck the table is looking at,
+          so the overlay keeps a picker of its own — just the weapon and a
+          way to clear it. */}
+      {!showOptions && mode === 'overlay' && (
+        <div className="rt-bm-aim">
+          <select value={weaponKey} aria-label="Weapon for the overlay"
+            onChange={(e) => setWeaponKey(e.target.value)}>
+            <option value="">No weapon</option>
+            {['Pistol', 'Basic', 'Heavy', 'Thrown', 'Melee', 'Field'].map((kind) => (
+              <optgroup key={kind} label={kind}>
+                {ARMED.filter((a) => a.kind === kind).map((a) => (
+                  <option key={a.key} value={a.key}>{a.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          {origin && (
+            <button type="button" className="rt-btn ghost"
+              onClick={() => { originRef.current = null; setOrigin(null); setAim(null); }}>Clear</button>
+          )}
+        </div>
+      )}
+      {showOptions && (
+      <div className="rt-bm-opts">
       <div className="rt-bm-bar rt-bm-top">
         {/* Build the deck, or play it. What is in the rest of this bar, and in
             the right-click menu, follows the tab. */}
@@ -3957,16 +3985,15 @@ export default function BattleMap({
             onClick={() => patch({ explored: {} })}>Hide all</button>
           {num('Auspex m', auspexM, setAuspexM, 1, 500, 5)}
           <span className="rt-bm-hint">
-            Click a DOOR to change it: closed, then open, then jammed, then closed
-            again (right-click a door to set it directly). Opening one lights what
-            it joins, and the party is taken through it, so shutting a door behind
-            them takes the way they came off the board and opening it again brings
-            it straight back. A jammed door blocks like a shut one. Click a room to
-            reveal it by hand. Ctrl-click takes a place back, drag reveals square by
+            Click a DOOR to open or shut it — right-click one to jam it, which
+            blocks like a shut door. Opening lights what it joins and brings the
+            party to the threshold; shutting it takes that room back off the board
+            and leaves the way they came alone, and opening it again shows it once
+            more. Click a room to reveal it by hand. Ctrl-click takes a place back, drag reveals square by
             square, alt-click reveals line of sight from a square, and shift-click
             is an auspex sweep — it reads through bulkheads and pings contacts
             without opening the deck.
-            {m.start ? '' : ' Pick a starting room with the flag tool and a published deck opens on it instead of in the dark.'}
+            {m.start ? '' : ' Press the flag to pick a starting room \u2014 one click inside it and the tool hands itself back \u2014 and a published deck opens there instead of in the dark.'}
           </span>
         </>)}
 
@@ -4055,7 +4082,8 @@ export default function BattleMap({
         </div>
       )}
 
-      </>)}
+      </div>
+      )}
 
       {/* THE MAP ITSELF, which a controls-only copy leaves out: it is a
           second panel of tools for the GM while the only map is on the

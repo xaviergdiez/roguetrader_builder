@@ -1982,6 +1982,25 @@ const CSS = `
   font-size:10px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase;}
 .rt-bm-num input{width:62px;}
 .rt-bm-hint{font-size:11px;color:var(--dim);font-style:italic;}
+/* FULL SCREEN FLOATS THE CONTROLS over the deck rather than pushing it down.
+
+   On a projector the map is the whole point of the screen, and bringing the
+   toolbars up to change one thing shoved the deck down by their height and
+   shrank it — the table watched the map jump about while the GM reached for a
+   setting. Laid over it, the deck does not move at all. */
+.rt-bm-full .rt-bm-opts{position:absolute;top:0;left:0;right:0;z-index:40;
+  max-height:72vh;overflow-y:auto;padding:8px 10px 4px;
+  background:rgba(4,7,5,.94);border-bottom:1px solid var(--brass);
+  box-shadow:0 10px 28px rgba(0,0,0,.6);}
+
+/* The overlay's own picker, for a map run with the toolbars away. Sits beside
+   the peek button rather than under it, and is as quiet as that button is:
+   what the table should see is the deck, not the GM's controls. */
+.rt-bm-aim{position:absolute;top:8px;right:92px;z-index:6;display:flex;gap:6px;
+  align-items:center;opacity:.35;transition:opacity .15s;}
+.rt-bm-aim:hover,.rt-bm-aim:focus-within{opacity:1;}
+.rt-bm-aim select{max-width:190px;}
+
 /* The way back from a clean map: nearly invisible until the pointer finds it,
    so a projector never shows a button. H does the same thing. */
 .rt-bm-peek{position:absolute;top:8px;right:18px;z-index:5;opacity:.1;

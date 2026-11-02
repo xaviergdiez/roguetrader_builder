@@ -1614,20 +1614,53 @@ export default function BattleMap({
     const shot = target && (kind === 'beam' || kind === 'melee')
       ? reachBetween({ from: origin, to: target, map: m, weaponRangeM: weapon.range })
       : null;
-    // Templates are trimmed to what they can actually reach: fire does not
-    // cross a sealed bulkhead and a grenade does not blast through a wall.
-    // The blast is trimmed from its own point of impact, not from the firer.
+    /* A TEMPLATE: THE SQUARES IT CATCHES, AND WHAT ITS ART IS CLIPPED TO.
+
+       The caught squares are what the GM rules on, and they are trimmed to
+       what the template can actually reach — fire does not cross a sealed
+       bulkhead and a grenade does not blast through a wall.
+
+       The smooth art over them is a separate question, and getting it wrong
+       is what made a flamer draw a staircase and a force field draw a plus
+       sign. Clipped to its own squares, a circle can only ever BE squares.
+       So the art is clipped to the DECK when nothing obstructs the template —
+       which keeps it out of the void without squaring it off — and to the
+       caught squares only when something really did trim it. The stepped
+       edge then means what it looks like it means: the template stopping at
+       something, rather than being drawn on graph paper.
+
+       The deck clip is taken a square and a half wider than the template, or
+       the art's own outer edge would land exactly on the clip's and be shaved
+       off again. */
+    const template = (centre, cells, radiusM) => {
+      const onMap = onDeck(m, cells);
+      const clear = unobstructed(m, centre, onMap);
+      const blocked = clear.length !== onMap.length;
+      const pad = (m.metresPerSquare || 1) * 1.5;
+      return {
+        cells: clear,
+        clip: blocked ? clear : onDeck(m, areaCells(m, centre, (Number(radiusM) || 0) + pad)),
+        blocked
+      };
+    };
+    const blastT = weapon && weapon.blastM && target
+      ? template(target, areaCells(m, target, weapon.blastM), weapon.blastM) : null;
+    const coneT = weapon && weapon.isFlame && target
+      ? template(origin, coneCells(m, origin, target, weapon.range, coneAngle / 2), weapon.range) : null;
+    const auraT = kind === 'field'
+      ? template(origin, areaCells(m, origin, weapon.auraM), weapon.auraM) : null;
+
     return {
       kind,
       shot,
       target,
       rings: showRings && weapon && !weapon.isField && !weapon.isMelee ? rangeRings(weapon.range, m) : [],
-      blast: weapon && weapon.blastM && target
-        ? onDeck(m, unobstructed(m, target, areaCells(m, target, weapon.blastM))) : [],
-      cone: weapon && weapon.isFlame && target
-        ? onDeck(m, unobstructed(m, origin, coneCells(m, origin, target, weapon.range, coneAngle / 2))) : [],
-      aura: kind === 'field'
-        ? onDeck(m, unobstructed(m, origin, areaCells(m, origin, weapon.auraM))) : [],
+      blast: blastT ? blastT.cells : [],
+      blastClip: blastT ? blastT.clip : [],
+      cone: coneT ? coneT.cells : [],
+      coneClip: coneT ? coneT.clip : [],
+      aura: auraT ? auraT.cells : [],
+      auraClip: auraT ? auraT.clip : [],
       // The squares a melee weapon threatens from where its bearer stands.
       // Trimmed like any other template: you cannot stab through a bulkhead.
       threat: kind === 'melee'
@@ -2222,11 +2255,11 @@ export default function BattleMap({
       const inSquares = (metres) => (metres / (m.metresPerSquare || 1)) * px;
 
       if (overlay.aura.length) {
-        clipToCells(ctx, overlay.aura, px,
+        clipToCells(ctx, overlay.auraClip.length ? overlay.auraClip : overlay.aura, px,
           () => drawShield(ctx, ox, oy, inSquares(weapon.auraM)));
       }
       if (overlay.cone.length && target) {
-        clipToCells(ctx, overlay.cone, px, () => drawCone(
+        clipToCells(ctx, overlay.coneClip.length ? overlay.coneClip : overlay.cone, px, () => drawCone(
           ctx, ox, oy,
           Math.atan2(target.y - origin.y, target.x - origin.x),
           inSquares(weapon.range),
@@ -2234,7 +2267,7 @@ export default function BattleMap({
         ));
       }
       if (overlay.blast.length && target) {
-        clipToCells(ctx, overlay.blast, px, () => drawBlast(
+        clipToCells(ctx, overlay.blastClip.length ? overlay.blastClip : overlay.blast, px, () => drawBlast(
           ctx, target.x * px + px / 2, target.y * px + px / 2,
           inSquares(weapon.blastM)
         ));

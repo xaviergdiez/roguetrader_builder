@@ -718,7 +718,15 @@ const clampScale = (s) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 export default function VoidMap({
   map: rawMap, onChange, fleet = [], readOnly = false, win = null,
   historyKey = 'void', onUseShot = null, full = false, onToggleFull = null,
-  gunnery = null, library = null
+  gunnery = null, library = null,
+  /* A second copy of the TOOLS with no chart of its own, for the dashboard
+     while the only chart is in its own window: the GM picks a tool there
+     without bringing the chart back in front of the table. */
+  controlsOnly = false,
+  /* { tool, setTool } when the owner holds the selection, so the panel and
+     the chart it drives agree on what is in hand. Two copies with a tool each
+     would make the panel a dead thing. */
+  shared = null
 }) {
   const map = useMemo(() => readVoidMap(rawMap), [rawMap]);
   const w = win || window;
@@ -729,7 +737,9 @@ export default function VoidMap({
   const viewRef = useRef(view);
   viewRef.current = view;
   const touched = useRef(false);
-  const [tool, setTool] = useState('select');
+  const [toolOwn, setToolOwn] = useState('select');
+  const tool = shared ? shared.tool : toolOwn;
+  const setTool = shared ? shared.setTool : setToolOwn;
   const [sel, setSel] = useState(null);
   const [target, setTarget] = useState(null);
   const [weaponIx, setWeaponIx] = useState(0);
@@ -1364,6 +1374,7 @@ export default function VoidMap({
         <span className="rt-vm-scale">{map.cols}{'×'}{map.rows} VU</span>
       </div>
 
+      {!controlsOnly && (
       <div className="rt-vm-body">
         <div className="rt-vm-stage" ref={stageRef} style={stageStyle}>
           <canvas ref={canvasRef} tabIndex={0} className="rt-vm-canvas"
@@ -1778,6 +1789,7 @@ export default function VoidMap({
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

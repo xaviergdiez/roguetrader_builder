@@ -3204,6 +3204,14 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // shot lined up on the chart waiting to be read by the gunnery panel: it
   // lives here so the chart can be in its own window while the panel is not.
   const [voidWindow, setVoidWindow] = useState(false);
+  /* The chart's tool, held here rather than inside it, because there may be
+     two copies: the one in its own window and the control panel the GM may
+     open on the dashboard beside it. One selection between them, or picking a
+     tool on the panel would change nothing on the chart. */
+  const [voidTool, setVoidTool] = useState('select');
+  const [voidControls, setVoidControls] = useState(false);
+  const sharedVoidTools = useMemo(
+    () => ({ tool: voidTool, setTool: setVoidTool }), [voidTool]);
   const [voidWindowErr, setVoidWindowErr] = useState('');
   const [voidShot, setVoidShot] = useState(null);
   const [voidLibMsg, setVoidLibMsg] = useState({ error: '', note: '' });
@@ -4612,6 +4620,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           mapWindow={mapWindow} setMapWindow={setMapWindow} sharedMapTools={sharedMapTools}
           mapErr={mapErr} setMapErr={setMapErr}
           voidRoster={voidRoster} voidWindow={voidWindow} setVoidWindow={setVoidWindow}
+          sharedVoidTools={sharedVoidTools} voidControls={voidControls} setVoidControls={setVoidControls}
           voidWindowErr={voidWindowErr} setVoidWindowErr={setVoidWindowErr}
           voidShot={voidShot} setVoidShot={setVoidShot} gun={gun} voidLib={voidLib} mapLib={mapLib}
           grounds={grounds} onSaveGround={saveGroundToLibrary}
@@ -4683,6 +4692,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               onChange={(next) => setCombat((c) => ({ ...c, void: { ...(c.void || {}), map: next } }))}
               fleet={voidRoster}
               win={win}
+              shared={sharedVoidTools}
               historyKey={`${voidChartId || '-'}|${combat.void.map.seed}`}
               gunnery={gunSurface(gun)}
               library={voidLib}
@@ -9290,6 +9300,7 @@ function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridge
   homebrew, setHomebrew, mapWindow, setMapWindow, sharedMapTools, mapErr, setMapErr,
   voidRoster = [], voidWindow = false, setVoidWindow = () => {},
   voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {}, gun, voidLib = null, mapLib = null,
+  sharedVoidTools = null, voidControls = false, setVoidControls = () => {},
   grounds, onSaveGround, onNeedGroundTexture, groundErr, moveNote,
   decks, deckErr, deckId, openDeck, createDeck, renameDeck, deleteDeck,
   mapView, setMapView, activeMap, setActiveMap, activeMapKey, onClose }) {
@@ -9755,6 +9766,7 @@ function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridge
           roster={voidRoster}
           system={system} setSystem={setSystem}
           windowOpen={voidWindow} windowErr={voidWindowErr}
+          sharedTools={sharedVoidTools} controls={voidControls} setControls={setVoidControls}
           onWindow={() => { setVoidWindowErr(''); setVoidWindow(true); }}
           gunnery={gunSurface(gun)} library={voidLib}
           onUseShot={(shot) => { gun.loadShot(shot); setVoidShot({ ...shot, at: Date.now() }); }}

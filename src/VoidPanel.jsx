@@ -17,7 +17,7 @@ import {
 
 export default function VoidPanel({
   voidState, onVoidState, roster, system, setSystem, onWindow, windowOpen, windowErr, onUseShot,
-  library = null, gunnery = null
+  library = null, gunnery = null, sharedTools = null, controls = false, setControls = () => {}
 }) {
   const state = voidState || {};
   const map = state.map ? readVoidMap(state.map) : null;
@@ -197,12 +197,28 @@ export default function VoidPanel({
             </div>
           )}
         </>
-      ) : windowOpen ? (
-        <p className="rt-vm-sub">
-          The chart is running in a second window so this dashboard stays free. Closing that window brings it back.
-        </p>
-      ) : (
+      ) : windowOpen ? (<>
+        <div className="rt-vm-bar">
+          <p className="rt-vm-sub" style={{ flex: '1 1 auto', margin: 0 }}>
+            The chart is running in a second window so this dashboard stays free. Closing that window brings it back.
+          </p>
+          {/* The chart's tools on the GM's own screen while the only chart is
+              in its window. Offered rather than always on: it is a second row
+              of toolbars and the chart's window already has one. */}
+          <button type="button" className={'rt-btn' + (controls ? ' on' : '')}
+            onClick={() => setControls((v) => !v)}
+            title="The chart's tools here, with no second chart: pick a tool and the chart in the window obeys">
+            {controls ? 'Hide the controls' : 'Show the controls here'}
+          </button>
+        </div>
+        {controls && (
+          <VoidMap controlsOnly shared={sharedTools} map={map} onChange={(next) => write({ map: next })}
+            fleet={roster} historyKey={`${state.chartId || '-'}|${map.seed}`} onUseShot={onUseShot}
+            gunnery={gunnery} library={library} />
+        )}
+      </>) : (
         <VoidMap map={map} onChange={(next) => write({ map: next })} fleet={roster}
+          shared={sharedTools}
           historyKey={`${state.chartId || '-'}|${map.seed}`} onUseShot={onUseShot}
           gunnery={gunnery} library={library} />
       )}

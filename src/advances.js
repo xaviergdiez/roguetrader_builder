@@ -871,59 +871,200 @@ export const CAREER_ADVANCES = {
     ]
   },
 
+  /* The Tau Character Guide's Fire Warrior Career Path, ranks 1-8, as printed
+     (Rogue Trader: Tau Character Guide, pp.14-18). Where the guide's own tables
+     contradict themselves the correction is small and is kept here so it can be
+     undone:
+       - Navigate and Demolition are written as the core book writes them
+         (Navigation, Demolitions), and Drive (Skimmers) as Drive (Skimmer);
+       - Rank 3 prints "Drive (Skimmers) +10" a second time; it is +20, which is
+         what the +10 in Rank 2 is the prerequisite for;
+       - Rank 4's Literacy +20 and Rank 5's Rapid Reaction repeat advances
+         already on Rank 2's table, at the same price, and are left off;
+       - "Exotic Weapons Training (Choose One) x2" on Rank 8 is the two picks the
+         app writes as (x2). */
   "T'au Fire Warrior": {
     1: [
-      A('Awareness +10', 'Skill', 'Awareness', 200),
-      A('Dodge +10', 'Skill', 'Dodge', 200),
+      A('Awareness', 'Skill', null, 100),
+      A('Ciphers', 'Skill', null, 100),
+      A('Common Lore (War)', 'Skill', null, 100),
+      A('Literacy +10', 'Skill', 'Literacy', 100),
+      A('Scholastic Lore (Tau Empire)', 'Skill', null, 100),
+      A('Speak Language (Kroot)', 'Skill', null, 100),
+      A('Speak Language (Low Gothic)', 'Skill', null, 100),
+      A('Charm', 'Skill', null, 200),
+      A('Command', 'Skill', null, 200),
+      A('Concealment', 'Skill', null, 200),
+      A('Drive (Skimmer)', 'Skill', null, 200),
       A('Logic +10', 'Skill', 'Logic', 200),
-      A('Tech-Use +10', 'Skill', 'Tech-Use', 200),
-      A('Deadeye Shot', 'Talent', 'BS 30', 200),
-      A('Rapid Reload', 'Talent', null, 200),
-      A('Sharpshooter', 'Talent', 'BS 40', 500),
-      A('Target Selection', 'Talent', 'BS 50', 500),
-      A('Sound Constitution (×2)', 'Talent', null, 200)
+      A('Medicae', 'Skill', null, 200),
+      A('Navigation (Surface)', 'Skill', null, 200),
+      A('Silent Move', 'Skill', null, 200),
+      A('Tech-Use +10', 'Skill', 'Tech-Use', 300),
+      A('New Allies', 'Talent', 'Fel 30', 300),
+      A('Nerves of Steel', 'Talent', null, 300),
+      A('Sprint', 'Talent', null, 300),
+      A('Ambidextrous', 'Talent', null, 500),
+      A('Melee Weapon Training (Primitive)', 'Talent', null, 500),
+      A('Bonding Ritual', 'Talent', 'WP 35', 500)
     ],
     2: [
-      A('Awareness +20', 'Skill', 'Awareness +10', 200),
-      A('Dodge +20', 'Skill', 'Dodge +10', 200),
-      A('Scholastic Lore (Tactica Tau) +10', 'Skill', 'Scholastic Lore (Tactica Tau)', 200),
+      A('Common Lore (Tau Empire) +10', 'Skill', 'Common Lore (Tau Empire)', 100),
+      A('Literacy +20', 'Skill', 'Literacy +10', 100),
+      A('Scholastic Lore (Tau Empire) +10', 'Skill', 'Scholastic Lore (Tau Empire)', 100),
       A('Scrutiny', 'Skill', null, 100),
-      A('Coordinated Fire', 'Talent', 'BS 35', 500),
-      A('Marksman', 'Talent', 'BS 35', 500),
-      A('Sound Constitution (×2)', 'Talent', null, 200)
+      A('Swim', 'Skill', null, 100),
+      A('Command +10', 'Skill', 'Command', 200),
+      A('Deceive', 'Skill', null, 200),
+      A('Drive (Skimmer) +10', 'Skill', 'Drive (Skimmer)', 200),
+      A('Intimidate', 'Skill', null, 200),
+      A('Inquiry', 'Skill', null, 200),
+      A('Logic +20', 'Skill', 'Logic +10', 200),
+      A('Navigation (Stellar)', 'Skill', null, 200),
+      A('Deadeye Shot', 'Talent', 'BS 30', 200),
+      A('Hard Target', 'Talent', 'Ag 40', 200),
+      A('Meditation', 'Talent', null, 200),
+      A('Rapid Reaction', 'Talent', 'Ag 40', 200),
+      A('Sound Constitution', 'Talent', null, 200),
+      A('Technological Insight', 'Talent', 'Scholastic Lore (Tau Empire), Tech-Use +10', 300),
+      A('Flame Weapon Training (Universal)', 'Talent', null, 500),
+      A('Heavy Weapon Training (Choose One)', 'Talent', null, 500),
+      A('Melee Weapon Training (Universal)', 'Talent', null, 500),
+      A('Superior Supply Chain', 'Talent', null, 500)
     ],
     3: [
-      A('Logic +20', 'Skill', 'Logic +10', 200),
-      A('Scrutiny +10', 'Skill', 'Scrutiny', 200),
-      A('Tech-Use +20', 'Skill', 'Tech-Use +10', 200),
-      A('Eye of Vengeance', 'Talent', 'BS 50', 500),
-      A('Master Gunner', 'Talent', 'BS 50', 500),
-      A('Sound Constitution (×2)', 'Talent', null, 200)
+      A('Common Lore (War) +10', 'Skill', 'Common Lore (War)', 100),
+      A('Common Lore (Tau Empire) +20', 'Skill', 'Common Lore (Tau Empire) +10', 100),
+      A('Scholastic Lore (Tau Empire) +20', 'Skill', 'Scholastic Lore (Tau Empire) +10', 100),
+      A('Awareness +10', 'Skill', 'Awareness', 200),
+      A('Drive (Skimmer) +20', 'Skill', 'Drive (Skimmer) +10', 200),
+      A('Medicae +10', 'Skill', 'Medicae', 200),
+      A('Charm +10', 'Skill', 'Charm', 300),
+      A('Demolitions', 'Skill', null, 300),
+      A('Pilot (Flyers)', 'Skill', null, 300),
+      A('Survival', 'Skill', null, 300),
+      A('Tracking', 'Skill', null, 300),
+      A('Air of Authority', 'Talent', 'Fel 30', 300),
+      A('Crack Shot', 'Talent', 'BS 40', 300),
+      A('Double Team', 'Talent', null, 300),
+      A('Foresight', 'Talent', 'Int 30', 300),
+      A('Fire Support', 'Talent', 'BS 40, Fel 35', 400),
+      A('Heavy Weapon Training (Choose One)', 'Talent', null, 500),
+      A('Hip Shooting', 'Talent', 'BS 40, Ag 40', 500),
+      A('Infused Knowledge', 'Talent', 'Int 40', 500),
+      A('Master of Technology', 'Talent', 'Scholastic Lore (Tau Empire), Common Lore (War)', 500),
+      A('Polyglot', 'Talent', 'Int 30, Fel 30', 500),
+      A('Two-Weapon Wielder', 'Talent', 'WS 35 or BS 35, Ag 35', 500)
     ],
     4: [
-      A('Common Lore (Tau Empire) +20', 'Skill', 'Common Lore (Tau Empire) +10', 200),
-      A('Scrutiny +20', 'Skill', 'Scrutiny +10', 200),
-      A('Dynamic Tactical Command', 'Talent', 'Fel 40, Command', 500),
-      A('Sound Constitution (×2)', 'Talent', null, 200)
+      A('Scrutiny +10', 'Skill', 'Scrutiny', 100),
+      A('Peer (Kroot or other Tau Empire race)', 'Talent', 'Fel 30', 100),
+      A('Command +20', 'Skill', 'Command +10', 200),
+      A('Deceive +10', 'Skill', 'Deceive', 200),
+      A('Navigation (Surface) +10', 'Skill', 'Navigation (Surface)', 200),
+      A('Navigation (Stellar) +10', 'Skill', 'Navigation (Stellar)', 200),
+      A('Pilot (Flyers) +10', 'Skill', 'Pilot (Flyers)', 200),
+      A('Tech-Use +20', 'Skill', 'Tech-Use +10', 200),
+      A('Tracking +10', 'Skill', 'Tracking', 200),
+      A('Blind Fighting', 'Talent', 'Per 30', 200),
+      A('Sound Constitution', 'Talent', null, 200),
+      A('Armour of Contempt', 'Talent', 'WP 40', 300),
+      A('Fearless', 'Talent', null, 300),
+      A('Pilot (Personal)', 'Skill', null, 500),
+      A('Envoy of the Greater Good', 'Talent', 'Fel 45, Charm +10', 500),
+      A('Furious Fusillade', 'Talent', 'BS 40, Crack Shot', 500),
+      A('Guardian', 'Talent', 'Ag 40', 500),
+      A('Mighty Shot', 'Talent', 'BS 40', 500),
+      A('Tactical Flexibility', 'Talent', 'Sprint, Scholastic Lore (Tau Empire) +10', 500)
     ],
     5: [
-      A('Pulse Barrage', 'Talent', 'BS 50', 500),
-      A('Spotter Master', 'Talent', 'Per 40, Markerlight', 500),
-      A('Sound Constitution (×2)', 'Talent', null, 200)
+      A('Catfall', 'Talent', 'Ag 30', 100),
+      A('Leap Up', 'Talent', 'Ag 30', 100),
+      A('Charm +20', 'Skill', 'Charm +10', 200),
+      A('Concealment +10', 'Skill', 'Concealment', 200),
+      A('Silent Move +20', 'Skill', 'Silent Move +10', 200),
+      A('Survival +10', 'Skill', 'Survival', 200),
+      A('Swim +10', 'Skill', 'Swim', 200),
+      A('Demolitions +10', 'Skill', 'Demolitions', 300),
+      A('Dodge +20', 'Skill', 'Dodge +10', 300),
+      A('Intimidate +10', 'Skill', 'Intimidate', 300),
+      A('Medicae +20', 'Skill', 'Medicae +10', 300),
+      A('Pilot (Flyers) +20', 'Skill', 'Pilot (Flyers) +10', 300),
+      A('Shadowing', 'Skill', null, 300),
+      A('Die Hard', 'Talent', null, 300),
+      A('Sharpshooter', 'Talent', 'BS 40, Deadeye Shot', 300),
+      A('Technical Knock', 'Talent', 'Int 30', 400),
+      A('Disciple of Kauyon', 'Talent', 'Bonding Ritual', 500),
+      A('Dual Shot', 'Talent', 'Ag 40, Two-Weapon Wielder', 500),
+      A('Exemplar of the Selfless Cause', 'Talent', 'Bonding Ritual, Command +10', 500),
+      A('Exotic Weapon Training (Choose One)', 'Talent', null, 500),
+      A('Talented (Drive)', 'Talent', null, 500),
+      A('Takedown', 'Talent', null, 750)
     ],
     6: [
-      A("Shas'ui Veteran", 'Talent', 'BS 50, Scholastic Lore (Tactica Tau) +10', 500),
-      A('Shield Array Master', 'Talent', 'Tech-Use +20', 500),
-      A('Sound Constitution (×2)', 'Talent', null, 200)
+      A('Climb', 'Skill', null, 100),
+      A('Common Lore (War) +20', 'Skill', 'Common Lore (War) +10', 100),
+      A('Awareness +20', 'Skill', 'Awareness +10', 200),
+      A('Interrogation', 'Skill', null, 200),
+      A('Navigation (Surface) +20', 'Skill', 'Navigation (Surface) +10', 200),
+      A('Speak Language (High Gothic)', 'Skill', null, 200),
+      A('Hatred (Orks)', 'Talent', null, 200),
+      A('Light Sleeper', 'Talent', 'Per 30', 200),
+      A('Security', 'Skill', null, 300),
+      A('Deceive +20', 'Skill', 'Deceive +10', 300),
+      A('Scrutiny +20', 'Skill', 'Scrutiny +10', 300),
+      A('Bulging Biceps', 'Talent', 'S 45', 300),
+      A('Cleanse and Purify', 'Talent', 'Flame Weapon Training (Universal)', 300),
+      A('Sure Strike', 'Talent', 'WS 30', 400),
+      A('Blessing of the Ethereals', 'Talent', 'WP 40', 500),
+      A('Exotic Weapon Training (Choose One)', 'Talent', null, 500),
+      A('Good Reputation (Kroot or other Tau Empire race)', 'Talent', 'Fel 50, Peer', 500),
+      A('Inspire Wrath', 'Talent', 'Fel 30', 500),
+      A('Jaded', 'Talent', 'WP 30', 500),
+      A('Strength through Unity', 'Talent', 'Fel 40, Bonding Ritual', 600),
+      A('Duty Unto Death', 'Talent', 'WP 45', 750),
+      A('Unarmed Warrior', 'Talent', 'WS 35, Ag 35', 750)
     ],
     7: [
-      A("Shas'vre Commander", 'Talent', 'Fel 45, Command +20', 500),
-      A('Unmatched Precision', 'Talent', 'BS 55', 500),
-      A('Sound Constitution (×2)', 'Talent', null, 200)
+      A('Climb +10', 'Skill', 'Climb', 200),
+      A('Survival +20', 'Skill', 'Survival +10', 200),
+      A('Swim +20', 'Skill', 'Swim +10', 200),
+      A('Tracking +20', 'Skill', 'Tracking +10', 200),
+      A('Interrogation +10', 'Skill', 'Interrogation', 300),
+      A('Intimidate +20', 'Skill', 'Intimidate +10', 300),
+      A('Security +10', 'Skill', 'Security', 300),
+      A('Shadowing +10', 'Skill', 'Shadowing', 300),
+      A('Gunslinger', 'Talent', 'BS 40, Two-Weapon Wielder', 300),
+      A('Iron Discipline', 'Talent', 'WP 30, Command', 300),
+      A('Total Recall', 'Talent', 'Int 30', 300),
+      A('Concealment +20', 'Skill', 'Concealment +10', 500),
+      A('Demolitions +20', 'Skill', 'Demolitions +10', 500),
+      A('Exotic Weapon Training (Choose One)', 'Talent', null, 500),
+      A('Hotshot Pilot', 'Talent', 'Ag 40, Pilot (Any One)', 500),
+      A('Independent Targeting', 'Talent', 'BS 40', 500),
+      A('Master Orator', 'Talent', 'Fel 30', 500),
+      A('Precise Blow', 'Talent', 'WS 40, Sure Strike', 500),
+      A('Step Aside', 'Talent', 'Ag 40, Dodge', 500),
+      A('Talented (Command)', 'Talent', null, 500),
+      A('Disciple of Mont’ka', 'Talent', 'Ag 40, Silent Move +10', 750),
+      A('Technology Triumphant', 'Talent', 'Scholastic Lore (Tau Empire) +10, Tech-Use +20', 1000)
     ],
     8: [
-      A("Paragon of the Kauyon/Mont'ka", 'Trait', 'BS 60, Per 50', 1000),
-      A('Sound Constitution (×2)', 'Talent', null, 200)
+      A('Climb +20', 'Skill', 'Climb +10', 200),
+      A('Interrogation +20', 'Skill', 'Interrogation +10', 300),
+      A('Security +20', 'Skill', 'Security +10', 300),
+      A('Shadowing +20', 'Skill', 'Shadowing +10', 300),
+      A('Swift Attack', 'Talent', 'WS 35', 400),
+      A('Exotic Weapon Training (Choose One) (×2)', 'Talent', null, 500),
+      A('Into the Jaws of Hell', 'Talent', 'Iron Discipline', 500),
+      A('Master & Commander', 'Talent', 'Int 35, Fel 35', 500),
+      A('Master Chirurgeon', 'Talent', 'Medicae +10', 500),
+      A('Sound Constitution', 'Talent', null, 500),
+      A('Talented (Any One)', 'Talent', null, 500),
+      A('Wall of Steel', 'Talent', 'WS 40, Parry', 500),
+      A('Greater than the Sum', 'Talent', 'Fel 45, New Allies', 750),
+      A('Last Man Standing', 'Talent', 'Nerves of Steel', 750),
+      A('Through Unity, Devastation', 'Talent', 'BS 45, Furious Fusillade, Command +20', 1000)
     ]
   }
 };
@@ -1017,3 +1158,110 @@ export function advanceStatus(advance, ctx) {
     blocked: !isOwned && (lockedByRank || unaffordable || unmetChars.length > 0)
   };
 }
+
+/* ------------------------------ alternate career ranks ------------------------------
+   A side path a character takes in place of one rank of their career (Tau
+   Character Guide, pp.18-24): from a minimum Rank, with the GM\u2019s leave, their
+   advances come from this table instead of that rank\u2019s. What they pass up they
+   may buy later as Elite Advances at the GM\u2019s price, which the guide suggests
+   should be twice the printed cost. The tables are the guide\u2019s as printed. */
+export const ALTERNATE_RANKS = [
+  {
+    name: 'Pathfinder', careers: ["T'au Fire Warrior"], minRank: 2, xp: 7000,
+    requires: 'Ag 35, Nerves of Steel, Silent Move',
+    blurb: 'The Fire caste’s scouts and markerlight spotters: stealth, snipers and bait.',
+    advances: [
+      A('Awareness +10', 'Skill', 'Awareness', 100),
+      A('Concealment', 'Skill', null, 100),
+      A('Silent Move +10', 'Skill', 'Silent Move', 100),
+      A('Sleight of Hand', 'Skill', null, 100),
+      A('Tracking', 'Skill', null, 100),
+      A('Concealment +10', 'Skill', 'Concealment', 200),
+      A('Dodge +10', 'Skill', 'Dodge', 200),
+      A('Navigation (Surface) +10', 'Skill', 'Navigation (Surface)', 200),
+      A('Tracking +10', 'Skill', 'Tracking', 200),
+      A('Combat Sense', 'Talent', 'Per 40', 200),
+      A('Paranoia', 'Talent', null, 200),
+      A('Unremarkable', 'Talent', null, 200),
+      A('Demolitions', 'Skill', null, 300),
+      A('Navigation (Surface) +20', 'Skill', 'Navigation (Surface) +10', 300),
+      A('Security', 'Skill', null, 300),
+      A('Shadowing', 'Skill', null, 300),
+      A('Deadeye Shot', 'Talent', 'BS 30', 300),
+      A('Guided Precision', 'Talent', 'BS 40, Deadeye Shot', 300),
+      A('Hard Target', 'Talent', 'Ag 40', 300),
+      A('Demolitions +10', 'Skill', 'Demolitions', 400),
+      A('Silent Move +20', 'Skill', 'Silent Move +10', 400),
+      A('Hip Shooting', 'Talent', 'BS 40, Ag 40', 500),
+      A('Last Man Standing', 'Talent', 'Nerves of Steel', 500),
+      A('Talented (Silent Move)', 'Talent', null, 500),
+      A('Opportunist’s Evasion', 'Talent', 'Ag 45, Hard Target', 600)
+    ]
+  },
+  {
+    name: 'Drone Handler', careers: ["T'au Fire Warrior"], minRank: 3, xp: 10000,
+    requires: 'Int 40, Tech-Use +10',
+    blurb: 'A Fire Warrior with the aptitude to direct drones.',
+    advances: [
+      A('Awareness +10', 'Skill', 'Awareness', 100),
+      A('Blather', 'Skill', null, 100),
+      A('Common Lore (Tech)', 'Skill', null, 100),
+      A('Scholastic Lore (Chymistry)', 'Skill', null, 100),
+      A('Trade (Armourer)', 'Skill', null, 100),
+      A('Trade (Chymist)', 'Skill', null, 100),
+      A('Trade (Technomat)', 'Skill', null, 100),
+      A('Common Lore (Tech) +10', 'Skill', 'Common Lore (Tech)', 200),
+      A('Evaluate', 'Skill', null, 200),
+      A('Forbidden Lore (Xenos)', 'Skill', null, 200),
+      A('Technical Knock', 'Talent', 'Int 30', 200),
+      A('Common Lore (Tech) +20', 'Skill', 'Common Lore (Tech) +10', 300),
+      A('Tech-Use +20', 'Skill', 'Tech-Use +10', 300),
+      A('Master of Technology', 'Talent', 'Scholastic Lore (Tau Empire), Common Lore (War)', 300),
+      A('Priority Fire', 'Talent', 'Per 35, Quick Draw', 300),
+      A('Quick Draw', 'Talent', null, 300),
+      A('Combat Formation', 'Talent', 'Int 40', 400),
+      A('Pistol Weapon Training (Universal)', 'Talent', null, 400),
+      A('Gun Blessing', 'Talent', 'Mechanicus Implants (T’au Gun Drone Handlers ignore this)', 500),
+      A('Talented (Tech-Use)', 'Talent', null, 500),
+      A('Swarm Protocols', 'Talent', 'Int 45, Trade (Technomat)', 800)
+    ]
+  },
+  {
+    name: 'Battlesuit Pilot', careers: ["T'au Fire Warrior"], minRank: 5, xp: 17000,
+    requires: 'Ag 45, and the rank of Shas’ui',
+    blurb: 'A veteran trusted with a battlesuit.',
+    advances: [
+      A('Pilot (Personal)', 'Skill', null, 100),
+      A('Pilot (Personal) +10', 'Skill', 'Pilot (Personal)', 200),
+      A('Guardian', 'Talent', 'Ag 40', 200),
+      A('Pilot (Personal) +20', 'Skill', 'Pilot (Personal) +10', 300),
+      A('Advanced Battlesuit Training', 'Talent', 'Ag 40, Pilot (Personal) +10', 300),
+      A('Cleanse and Purify', 'Talent', 'Flame Weapon Training (Universal)', 300),
+      A('Dual Shot', 'Talent', 'Ag 40, Two-Weapon Wielder', 300),
+      A('Independent Targeting', 'Talent', 'BS 40', 300),
+      A('Orthoproxy', 'Talent', null, 300),
+      A('Catfall', 'Talent', 'Ag 30', 400),
+      A('Furious Assault', 'Talent', 'WS 35', 400),
+      A('Rapid Reaction', 'Talent', 'Ag 40', 500),
+      A('Technical Knock', 'Talent', 'Int 30', 500),
+      A('Talented (Pilot)', 'Talent', null, 500),
+      A('Hotshot Pilot', 'Talent', 'Ag 40, Pilot (Any One)', 750),
+      A('Step Aside', 'Talent', 'Ag 40, Dodge', 750),
+      A('Exemplar of the Selfless Cause', 'Talent', 'Bonding Ritual, Command +10', 800),
+      A('Disciple of Kauyon', 'Talent', 'Bonding Ritual', 800),
+      A('Veteran’s Reflexes', 'Talent', 'Ag 45, Talented (Pilot)', 1000)
+    ]
+  }
+];
+
+export const alternateRanksFor = (career) => {
+  const base = baseCareer(career);
+  return base ? ALTERNATE_RANKS.filter((r) => r.careers.includes(base)) : [];
+};
+export const alternateRankByName = (name) => ALTERNATE_RANKS.find((r) => r.name === name) || null;
+/* The advances of one alternate rank, each carrying the Rank it opens at, so
+   they sit among a career\u2019s own without the caller re-deriving that. */
+export const alternateAdvances = (name) => {
+  const r = alternateRankByName(name);
+  return r ? r.advances.map((a) => ({ ...a, rank: r.minRank, alt: r.name })) : [];
+};

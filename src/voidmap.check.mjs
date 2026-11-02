@@ -520,19 +520,20 @@ const firstWith = (id) => {
   // Defaults are the quadrants, and a dorsal fires everywhere but astern.
   const base = readVoidMap({});
   assert.deepEqual(base.arcs, ARC_DEFAULTS);
-  assert.deepEqual(ARC_SLOTS, ['prow', 'port', 'starboard', 'dorsal']);
+  assert.deepEqual(ARC_SLOTS, ['prow', 'port', 'starboard', 'dorsal', 'keel']);
   assert.equal(base.minis, true, 'ships are bases by default: the models are on the table');
   assert.equal(readVoidMap({ minis: false }).minis, false);
   assert.deepEqual(readVoidMap(readVoidMap({ arcs: { prow: { c: 10, w: 60 } } })).arcs.prow, { c: 10, w: 60 }, 'arcs survive a round trip');
 
   // Anything the chart is told is bounded.
-  const odd = readVoidMap({ arcs: { prow: { c: -90, w: 3 }, port: { c: 725, w: 9999 }, dorsal: 'x', keel: { c: 0, w: 90 } } });
+  const odd = readVoidMap({ arcs: { prow: { c: -90, w: 3 }, port: { c: 725, w: 9999 }, dorsal: 'x', keel: { c: 0, w: 90 }, turret: { c: 0, w: 90 } } });
   assert.equal(odd.arcs.prow.c, 270, '-90 reads as 270');
   assert.equal(odd.arcs.prow.w, MIN_ARC, 'an arc cannot be a hairline');
   assert.equal(odd.arcs.port.c, 5);
   assert.equal(odd.arcs.port.w, 360);
   assert.deepEqual(odd.arcs.dorsal, ARC_DEFAULTS.dorsal, 'junk is the default');
-  assert.equal('keel' in odd.arcs, false, 'a mount the app does not know is not stored');
+  assert.equal('turret' in odd.arcs, false, 'a mount the app does not know is not stored');
+  assert.deepEqual(odd.arcs.keel, { c: 0, w: 90 }, 'a keel arc the table sets is kept');
 
   // A ship facing east (90) at the middle of the chart. North is off its port
   // side, south its starboard.
@@ -555,12 +556,38 @@ const firstWith = (id) => {
   assert.ok(fires('dorsal', at(30.5, 14.5)) && fires('dorsal', at(20.5, 4.5)) && fires('dorsal', at(20.5, 24.5)), 'a dorsal covers all three');
   assert.ok(!fires('dorsal', at(10.5, 14.5)), 'but not astern');
 
+  // Drydock's cheat sheet: the prow is the forward quarter on a ship smaller
+  // than a light cruiser, and fore, port and starboard on a light cruiser or
+  // larger.
+  for (const cls of ['Transport', 'Raider (Escort)', 'Frigate (Escort)', '']) {
+    const small = { ...ship, cls };
+    assert.ok(!inArc(base, small, 'prow', at(20.5, 4.5)).inArc, `${cls || 'an unclassed ship'}: the prow does not take the beam`);
+  }
+  for (const cls of ['Light Cruiser', 'Cruiser', 'Monitor-Cruiser', 'Battleship']) {
+    const big = { ...ship, cls };
+    assert.ok(inArc(base, big, 'prow', at(30.5, 14.5)).inArc, `${cls}: dead ahead`);
+    assert.ok(inArc(base, big, 'prow', at(20.5, 4.5)).inArc, `${cls}: the prow reaches the port beam`);
+    assert.ok(inArc(base, big, 'prow', at(20.5, 24.5)).inArc, `${cls}: and the starboard beam`);
+    assert.ok(!inArc(base, big, 'prow', at(10.5, 14.5)).inArc, `${cls}: but not astern`);
+    assert.equal(inArc(base, big, 'prow', at(30.5, 14.5)).arc.w, 270);
+  }
+  // an arc the table set by hand stays as it set it, whatever the class
+  const handmade = readVoidMap({ arcs: { prow: { c: 0, w: 60 } } });
+  assert.ok(!inArc(handmade, { ...ship, cls: 'Cruiser' }, 'prow', at(20.5, 4.5)).inArc, 'a customised prow is not widened');
+  assert.equal(inArc(handmade, { ...ship, cls: 'Cruiser' }, 'prow', at(30.5, 14.5)).arc.w, 60);
+  // the wedge that is drawn agrees with the shot
+  const [bigWedge] = arcWedges(base, { ...ship, cls: 'Light Cruiser' }, [{ name: 'Lance', range: 8, slot: 'prow' }]);
+  assert.equal(bigWedge.width, 270);
+  const [narrow] = arcWedges(base, { ...ship, cls: 'Frigate (Escort)' }, [{ name: 'Lance', range: 8, slot: 'prow' }]);
+  assert.equal(narrow.width, 90);
+
   // The edge of an arc is inside it; a degree past is not. The prow is +-45.
   const edge = (deg) => { const r = (deg * Math.PI) / 180; return at(20.5 + 10 * Math.sin(r + Math.PI / 2), 14.5 - 10 * Math.cos(r + Math.PI / 2)); };
   assert.ok(fires('prow', edge(45)), 'exactly 45 degrees off the bow is in the prow arc');
   assert.ok(fires('prow', edge(-45)));
   assert.ok(!fires('prow', edge(46)), 'and 46 is not');
   assert.ok(!fires('prow', edge(-46)));
+  assert.ok(fires('keel', at(10.5, 14.5)) && fires('keel', at(30.5, 14.5)) && fires('keel', at(20.5, 4.5)), 'a keel mount fires every way, astern included');
   assert.ok(fires('dorsal', edge(135)), 'the dorsal reaches 135 either side');
   assert.ok(!fires('dorsal', edge(136)));
 
@@ -802,8 +829,8 @@ const firstWith = (id) => {
   assert.deepEqual(overlayWedges(null), []);
 
   // Pins are bounded and junk is dropped.
-  assert.equal(readVoidMap({ overlays: [{ shipId: '', range: 5 }, { shipId: 'a', range: 0 }, { shipId: 'a', range: 5, slot: 'keel' }, 'x'] }).overlays.length, 1);
-  assert.equal(readVoidMap({ overlays: [{ shipId: 'a', range: 5, slot: 'keel' }] }).overlays[0].slot, null, 'an unknown mount is all-round');
+  assert.equal(readVoidMap({ overlays: [{ shipId: '', range: 5 }, { shipId: 'a', range: 0 }, { shipId: 'a', range: 5, slot: 'turret' }, 'x'] }).overlays.length, 1);
+  assert.equal(readVoidMap({ overlays: [{ shipId: 'a', range: 5, slot: 'turret' }] }).overlays[0].slot, null, 'an unknown mount is all-round');
   assert.equal(readVoidMap({ overlays: Array.from({ length: 200 }, (_, i) => ({ shipId: `s${i}`, range: 5 })) }).overlays.length, MAX_OVERLAYS);
 
   // The table sees a pin only for a ship it can read.

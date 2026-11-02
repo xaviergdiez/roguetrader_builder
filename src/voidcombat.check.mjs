@@ -5,6 +5,7 @@ import {
   EXTENDED_ACTIONS, actionById, mayTakeAction,
   evasionPenalty, EVASION_CAP, lockBonus, repairAmount, triageReduction,
   rangeBand, rangeModifier, toHit, hitsScored,
+  REFERENCE_ACTIONS, MANOEUVRES, TURN_LIMITS, turnLimit, EXTENDED_ACTIONS as ALL_ACTIONS,
   resolveAttack, interceptTorpedoes,
   CRITICALS, criticalEffect, applyCritical, shieldsRestorable, CONDITIONS,
   hitAndRun, boardingRound, BOARDING_TARGET,
@@ -61,15 +62,20 @@ assert.equal(evadesFreely('Grand Cruiser'), false);
 
 /* ---- range bands ---- */
 
-// Range 6: 0-3 is short, 4-6 standard, 7+ out of range.
+// Range 6: 0-3 is short (+10), 4-6 standard, 7-12 long (-10), 13+ out of range.
+// Drydock's cheat sheet: a target up to twice the range is still a shot, at -10.
 assert.equal(rangeBand(0, 6), 'short');
 assert.equal(rangeBand(3, 6), 'short');
 assert.equal(rangeBand(4, 6), 'standard');
 assert.equal(rangeBand(6, 6), 'standard');
-assert.equal(rangeBand(7, 6), 'out');
+assert.equal(rangeBand(7, 6), 'long');
+assert.equal(rangeBand(12, 6), 'long', 'twice the range is the last shot there is');
+assert.equal(rangeBand(13, 6), 'out');
 assert.equal(rangeModifier(3, 6), 10);
 assert.equal(rangeModifier(5, 6), 0);
-assert.equal(rangeModifier(9, 6), null, 'out of range cannot fire');
+assert.equal(rangeModifier(9, 6), -10, 'past the range, up to twice it, is -10');
+assert.equal(rangeModifier(14, 6), null, 'past twice the range cannot fire');
+assert.equal(rangeBand(5, 0), 'out', 'a weapon with no range is never in range');
 // an odd range still splits cleanly: Range 5 makes 2.5 the boundary
 assert.equal(rangeBand(2, 5), 'short');
 assert.equal(rangeBand(3, 5), 'standard');
@@ -123,10 +129,19 @@ assert.equal(EVASION_CAP, -50);
 
 // Out of range cannot fire, and reports no target number to roll against.
 {
-  const h = toHit({ ballisticSkill: 60, weaponId: 'weap-macrocannon-mars', distanceVU: 12 });
+  const h = toHit({ ballisticSkill: 60, weaponId: 'weap-macrocannon-mars', distanceVU: 13 });
   assert.equal(h.canFire, false);
   assert.equal(h.target, null);
   assert.equal(h.band, 'out');
+}
+
+// Past the weapon's range but inside twice it: a shot, at -10 for the range.
+{
+  const h = toHit({ ballisticSkill: 60, weaponId: 'weap-macrocannon-mars', distanceVU: 9 });
+  assert.equal(h.canFire, true);
+  assert.equal(h.band, 'long');
+  assert.deepEqual(h.parts, [{ label: 'Range', value: -10 }]);
+  assert.equal(h.target, 50);
 }
 
 // Bridge synergies stack, and point-blank only helps a Scatter weapon.
@@ -175,6 +190,15 @@ assert.equal(hitsScored(2, 3), 3);
 assert.equal(hitsScored(5, 3), 3, 'Strength is the cap');
 assert.equal(hitsScored(5, 1), 1, 'a lance of Strength 1 scores one hit however well it rolls');
 assert.equal(hitsScored(3, 0), 0);
+// A lance scores a further hit for every THREE degrees, not every one
+// (Drydock's cheat sheet), still capped at its Strength.
+assert.equal(hitsScored(0, 4, 'lance'), 1);
+assert.equal(hitsScored(2, 4, 'lance'), 1, 'two degrees is not yet a second hit');
+assert.equal(hitsScored(3, 4, 'lance'), 2);
+assert.equal(hitsScored(6, 4, 'lance'), 3);
+assert.equal(hitsScored(9, 2, 'lance'), 2, 'Strength still caps it');
+assert.equal(hitsScored(3, 4, 'macro'), 4, 'a macrobattery gains one per degree');
+assert.equal(hitsScored(3, 4), 4, 'macro is the default');
 
 /* ---- ARMOUR COMES OFF THE COMBINED TOTAL ----
    The regression that matters. Four hits of 8 against Armour 16 is 16 damage.
@@ -678,3 +702,19 @@ assert.equal(shieldsRestorable({ conditions: [CONDITIONS.shieldsCollapsed] }), f
 
 console.log('voidcombat: all checks passed (%d actions, %d criticals)',
   EXTENDED_ACTIONS.length, CRITICALS.length);
+
+/* ---- Drydock's cheat sheet: manoeuvres, turning, and the actions the table rolls ---- */
+{
+  assert.deepEqual(MANOEUVRES.map((m) => m.name), ['Adjust Bearing', 'Adjust Speed', 'Adjust Speed and Bearing',
+    'Come to New Heading', 'Disengage', 'Evasive Manoeuvres']);
+  assert.deepEqual(TURN_LIMITS, { small: 90, large: 45 });
+  for (const cls of ['Transport', 'Raider (Escort)', 'Frigate (Escort)', '', undefined]) assert.equal(turnLimit(cls), 90, String(cls));
+  for (const cls of ['Light Cruiser', 'Cruiser', 'Monitor-Cruiser', 'Grand Cruiser', 'Battleship']) assert.equal(turnLimit(cls), 45, cls);
+  // the five are real actions Drydock names and the dashboard does not run
+  assert.deepEqual(REFERENCE_ACTIONS.map((a) => a.name), ['Disinformation', 'Flank Speed', 'Hail the Enemy', 'Hit and Run', 'Jam Communications']);
+  const ours = new Set(ALL_ACTIONS.map((a) => a.id));
+  for (const a of REFERENCE_ACTIONS) assert.ok(!ours.has(a.id), a.id + ' is not also a dashboard action');
+  for (const a of [...REFERENCE_ACTIONS, ...MANOEUVRES]) assert.ok(a.effect.length > 10, a.id);
+  // the six are exactly Drydock's Extended Actions we do run, plus the ones we do not, less Evasive (a manoeuvre)
+  assert.equal(new Set([...ALL_ACTIONS.map((a) => a.id), ...REFERENCE_ACTIONS.map((a) => a.id)]).size, 15);
+}

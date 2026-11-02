@@ -30,6 +30,10 @@
 // conflict is recorded in `conflict` so nobody has to rediscover it. See
 // CONFLICTS at the bottom for the list.
 
+import { CHAOS_THREATS, FACTIONS } from './wgconvert.js';
+import { IM_CONVERTED } from './imconvert.js';
+import { TAU_NPCS, TAU_BOOK } from './tau.js';
+
 const B = (name, group, stats, weapon, abilities, extra = {}) => ({
   name, group,
   // A characteristic the source does not give is 0, not null. A beast that
@@ -49,7 +53,14 @@ export const GROUPS = [
   { id: 'beast', name: 'Xenos Predators & Bestial Monsters' },
   { id: 'xenos', name: 'Sentient Xenos' },
   { id: 'warp', name: 'Denizens of the Warp' },
-  { id: 'human', name: 'Human Adversaries & Constructs' }
+  { id: 'human', name: 'Human Adversaries & Constructs' },
+  // The Chaos threats of Wrath & Glory, converted to these numbers (see
+  // wgconvert.js for how), one group per faction so the picker stays readable.
+  ...FACTIONS.map((f) => ({ id: `chaos_${f.id}`, name: `Chaos \u00b7 ${f.name} (Wrath & Glory)` })),
+  // The antagonists of the Imperium Maledictum Inquisition GM's Guide (see imconvert.js).
+  { id: 'im_inq', name: 'Inquisition threats (Imperium Maledictum)' },
+  // The T'au as the Tau Character Guide prints them, for a GM to run (see tau.js).
+  { id: 'tau', name: "T'au Empire (Tau Character Guide)" }
 ];
 
 /* ---------------- 1. Xenos predators and bestial monsters ---------------- */
@@ -728,11 +739,45 @@ const TACTICA = {
   "Servo Skull": [1, "Easily destroyed."]
 };
 
-export const BESTIARY = [...BEASTS, ...XENOS, ...WARP, ...HUMANS].map((b) => {
+/* ---------------- 5. Chaos threats, converted from Wrath & Glory ---------------- */
+
+// A name the Rogue Trader lists already use stays theirs; the converted one is
+// told apart, so spawning "Plaguebearer" never silently picks the wrong one.
+const TAKEN = new Set([...BEASTS, ...XENOS, ...WARP, ...HUMANS].map((b) => b.name.toLowerCase()));
+const CHAOS = CHAOS_THREATS.map((c) => B(
+  TAKEN.has(c.name.toLowerCase()) ? `${c.name} (W&G)` : c.name, `chaos_${c.faction}`,
+  { ws: c.ws, bs: c.bs, s: c.s, t: c.t, ag: c.ag, int: c.int, per: c.per, wp: c.wp, fel: c.fel,
+    wounds: c.wounds, toughnessBonus: c.toughnessBonus, armour: c.armour },
+  c.weapon, c.abilities,
+  { note: c.note, threatTier: c.threatTier, tierId: c.tierId, faction: c.faction, source: c.source, converted: true }
+));
+
+/* ---------------- 6. Inquisition threats, converted from Imperium Maledictum ---------------- */
+
+const TAKEN_ALL = new Set([...TAKEN, ...CHAOS.map((b) => b.name.toLowerCase())]);
+const INQ = IM_CONVERTED.map((c) => B(
+  TAKEN_ALL.has(c.name.toLowerCase()) ? `${c.name} (IM)` : c.name, c.group,
+  { ws: c.ws, bs: c.bs, s: c.s, t: c.t, ag: c.ag, int: c.int, per: c.per, wp: c.wp, fel: c.fel,
+    wounds: c.wounds, toughnessBonus: c.toughnessBonus, armour: c.armour },
+  c.weapon, c.abilities,
+  { note: c.note, threatTier: c.threatTier, tierId: c.tierId, faction: c.faction, source: c.source, converted: true, custom: c.custom }
+));
+
+/* ---------------- 7. The T'au, from the Tau Character Guide ---------------- */
+
+// Native Rogue Trader numbers, so nothing is converted; they carry the same
+// tier-and-page shape as the converted books so the picker treats them alike.
+const TAU = TAU_NPCS.map((n) => B(n.name, 'tau', { ...n.stats }, n.weapon, n.abilities, {
+  armourNote: n.armourNote, note: n.note, threatTier: n.tier,
+  tierId: ['minor', 'minor', 'heavy', 'elite', 'named'][n.tier], faction: "T'au",
+  source: { book: TAU_BOOK, page: n.page }, converted: true
+}));
+
+export const BESTIARY = [...BEASTS, ...XENOS, ...WARP, ...HUMANS, ...CHAOS, ...INQ, ...TAU].map((b) => {
   const t = TACTICA[b.name];
   return {
     ...b,
-    threatTier: t ? t[0] : 0,
+    threatTier: t ? t[0] : (b.threatTier || 0),
     counterTactics: t ? t[1] : null
   };
 });

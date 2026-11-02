@@ -21,6 +21,7 @@ import {
 import { movedIds, markMoved, toMove, describeMove } from './localmove.js';
 import MapWindow from './MapWindow.jsx';
 import CodexDialog from './CodexDialog.jsx';
+import InquisitionCard from './InquisitionCard.jsx';
 import { armourSummary, parseArmour, soakAt } from './armour.js';
 import {
   readMap as readBattleMap, newBattleMap, publishMap,
@@ -58,13 +59,15 @@ import {
   rankForXp, romanRank, xpToNextRank, isStartingBudget, spendableXp, remainingXp,
   tierFor, ADVANCE_LEVELS, ADVANCE_STEP, advanceCost, cumulativeAdvanceCost
 } from './xp.js';
-import { allAdvances, advanceStatus, MAX_TABLED_RANK } from './advances.js';
+import {
+  allAdvances, advanceStatus, MAX_TABLED_RANK, alternateRanksFor, alternateRankByName, alternateAdvances
+} from './advances.js';
 import { elitePresets } from './elite.js';
 import {
   HULLS, COMPONENTS, ESSENTIAL_CATEGORIES, ESSENTIAL_LABELS, CREW_RATINGS,
   SLOT_NAMES, WEAPON_CLASSES, allHulls, allComponents, isHomebrew, damageText,
   validateHull, validateComponent, usableCustom,
-  hullById, componentById, validate, stats, newVitals
+  hullById, componentById, validate, stats, newVitals, advice, constructionSteps
 } from './ship.js';
 import {
   SHIP_ROLES, GM_EVENTS, roleById, rolesForCareer, playerRoles, isGmOnlyRole
@@ -131,6 +134,9 @@ import {
 } from './points.js';
 import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
 import { buildLore } from './lore.js';
+import {
+  TAU_BASE, TAU_WOUND_DIE, TAU_WOUND_MULT, TAU_FATE, TAU_STARTING, TAU_TRAITS, COMPETENCES, TAU_CAREER
+} from './tau.js';
 
 /* ============================================================
    ROGUE TRADER : ORIGIN PATH COGITATOR
@@ -415,27 +421,19 @@ const HOME_WORLDS = [
   {
     id: 'tau',
     name: "T'au",
-    blurb: "Disciplined Fire Caste soldiers fighting for the Greater Good. Patient, precise, and deeply alien in how they understand war.",
+    blurb: "A Fire Caste soldier of the T'au Empire, far from the Third Sphere. Made by the Tau Character Guide: the T'au roll from their own characteristic bases, begin with one Fate Point, and choose a Classified Competence.",
     xenos: true,
-    mods: { ws: -5, bs: 5, per: 5, wp: 5, fel: -5 },
-    skills: [
-      'Awareness', 'Common Lore (Tau Empire)', 'Dodge',
-      'Speak Language (Tau, Low Gothic)', 'Logic', 'Scholastic Lore (Tactica Tau)', 'Tech-Use'
-    ],
-    talents: [
-      'Exotic Weapon Training (Pulse Weapons)', 'Marksman', 'Nerves of Steel'
-    ],
-    traits: [
-      'For the Greater Good: +10 to all tests when coordinating target fire or executing tactical commands with allies targeting the same enemy.',
-      'Poor Melee Vision: permanent −10 penalty to all Weapon Skill tests, Parries and close-quarters manoeuvres.',
-      'Non-Imperial: −10 on tests involving Imperial lore, customs or interactions with non-Xenophile humans.',
-      'Speak Not Unto the Alien: −10 to Fellowship tests when interacting with Imperial citizens.',
-      'Cybernetic Rejection: each Imperial bionic implant inflicts a permanent −10 to Toughness.'
-    ],
-    woundMult: 1,
-    woundDie: () => d(5) + 8,
-    woundText: "Toughness Bonus + 1d5+8",
-    fateTable: [[7, 1], [10, 2]]
+    // The guide's Table 1-1: 2d10 on the T'au's own bases, not on 25. Nothing is
+    // added on top; the differences from a human are already in the bases.
+    base: TAU_BASE,
+    mods: {},
+    skills: TAU_STARTING.skills,
+    talents: TAU_STARTING.talents,
+    traits: TAU_TRAITS,
+    woundMult: TAU_WOUND_MULT,
+    woundDie: () => d(TAU_WOUND_DIE.die) + TAU_WOUND_DIE.flat,
+    woundText: '2 × Toughness Bonus + 1d5+2',
+    fateTable: [[10, TAU_FATE]]
   }
 ];
 
@@ -994,11 +992,21 @@ const CAREERS = [
   },
   {
     id: 'taufirewarrior',
-    name: "T'au Fire Warrior",
-    blurb: "A Fire Caste soldier spreading the Greater Good beyond the Third Sphere. Exceptional at ranged combat and coordinated fire. Xenos path from the Tau Character Guide.",
+    name: TAU_CAREER,
+    blurb: "A Fire Caste soldier spreading the Greater Good beyond the Third Sphere. Exceptional at ranged combat and coordinated fire. Xenos path from the Tau Character Guide; its Alternate Career Ranks (Pathfinder, Drone Handler, Battlesuit Pilot) are taken on the advances tab.",
     skills: [],
     talents: [],
-    gear: "Tau Recon Combat Armour (AP 5 all); Pulse Rifle or Pulse Carbine; Pulse Pistol; Bonding Knife; Micro-bead; Markerlight."
+    gear: 'Good Pulse Rifle or Good Pulse Carbine; Best Pulse Pistol; 3 Tau Photon Grenades; Tau Combat Armour (AP 6 all); Micro-bead; Translator Unit; Blacksun Filter.',
+    // A xenos home skips straight to the career, so this is where the choice is
+    // seen. The guide has every T'au Explorer pick one.
+    choices: [{
+      id: 'tau_competence',
+      label: 'Classified Competence',
+      options: COMPETENCES.map((c) => ({
+        label: c.name,
+        traits: [`Classified Competence (${c.name}): ${c.text}`]
+      }))
+    }]
   }
 ];
 
@@ -1644,6 +1652,23 @@ const CSS = `
    specificity, so this has to come after it to win. */
 .rt-framer.rt-gm{width:min(1120px,94vw);}
 
+/* ---- the Inquisition card ---- */
+.rt-inq{margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--brass-dim);}
+.rt-inq-h{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;margin:10px 0 6px;
+  font-family:var(--display);font-size:15px;color:var(--gold-lit);}
+.rt-inq-h span{color:var(--text);}
+.rt-inq-stance{font-style:normal;font-family:var(--mono);font-size:10px;letter-spacing:.12em;
+  text-transform:uppercase;padding:2px 6px;border:1px solid var(--brass-dim);}
+.rt-inq-stance.radical{color:var(--rust);border-color:var(--rust);}
+.rt-inq-stance.puritan{color:var(--green);border-color:var(--green-dim);}
+.rt-inq-ph{margin:0 0 10px;padding:8px 12px;border-left:2px solid var(--brass-dim);font-size:14px;line-height:1.55;}
+.rt-inq-ph ul{margin:0 0 6px;padding-left:18px;}
+.rt-inq-ph p{margin:3px 0;}
+.rt-inq-src{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--dim);}
+.rt-inq-fk{margin:12px 0 0;}
+.rt-inq-fk > summary{cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--brass);}
+.rt-inq-clue ul{margin-top:2px;}
+
 /* ---- the Lore tab: rules for the whole table ---- */
 .rt-headbtn.lore{border-color:var(--gold);color:var(--gold-lit);}
 .rt-lorebtn{margin-left:auto;}
@@ -1700,6 +1725,15 @@ const CSS = `
 /* The three budgets, always visible. Red is the whole point: an illegal ship
    should look illegal while you build it, not when you submit. */
 .rt-shipbuds{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
+.rt-dd{list-style:none;margin:0 0 10px;padding:0;display:grid;grid-template-columns:repeat(5,1fr);gap:6px;}
+.rt-dd li{display:flex;flex-direction:column;gap:2px;padding:7px 8px;border:1px solid var(--brass);background:linear-gradient(180deg,#241d0f,#0d1109);font-size:11px;color:var(--dim);}
+.rt-dd li.done{border-color:var(--vox);color:var(--bone);}
+.rt-dd-n{font-family:var(--mono);font-size:11px;color:var(--vox);}
+.rt-dd-t{font-weight:600;letter-spacing:.03em;}
+.rt-dd-d{font-size:10.5px;opacity:.85;line-height:1.25;}
+.rt-dd-notes p{margin:0 0 4px;}
+.rt-dd-notes p:last-child{margin:0;}
+@media (max-width:640px){.rt-dd{grid-template-columns:repeat(2,1fr);}}
 .rt-shipbud{text-align:center;padding:9px 6px;
   border:1px solid var(--brass);
   background:linear-gradient(180deg,#241d0f,#0d1109);}
@@ -3948,14 +3982,16 @@ export default function RogueTraderBuilder({ me, cloud }) {
   };
   const setChoice = (cid, label) => setChoices((p) => ({ ...p, [cid]: label }));
 
+  // 2d10 on a base: 25 for a human, the species' own for the T'au.
+  const baseOf = (k) => (home && home.base ? home.base[k] : 25);
   const rollAll = () => {
     const r = {};
-    CHAR_KEYS.forEach((k) => { r[k] = 25 + d(10) + d(10); });
+    CHAR_KEYS.forEach((k) => { r[k] = baseOf(k) + d(10) + d(10); });
     setRolls(r);
     setWoundRoll(home ? home.woundDie() : d(5));
     setFateRoll(d(10));
   };
-  const rerollOne = (k) => setRolls((p) => ({ ...p, [k]: 25 + d(10) + d(10) }));
+  const rerollOne = (k) => setRolls((p) => ({ ...p, [k]: baseOf(k) + d(10) + d(10) }));
 
   /* ---- point-buy: 25 base, a pool of 100 ---- */
 
@@ -4259,8 +4295,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
   const buyAdvance = (a) => setExtras((p) => (
     p.advances.some((x) => x.name === a.name) ? p
-      : { ...p, advances: [...p.advances, { name: a.name, type: a.type, cost: a.cost, rank: a.rank }] }
+      : { ...p, advances: [...p.advances, { name: a.name, type: a.type, cost: a.cost, rank: a.rank, ...(a.alt ? { alt: a.alt } : {}) }] }
   ));
+  const setAltRank = (name) => setExtras((p) => ({ ...p, altRank: name || '' }));
   const refundAdvance = (name) =>
     setExtras((p) => ({ ...p, advances: p.advances.filter((x) => x.name !== name) }));
 
@@ -4474,7 +4511,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
             avatar={avatar} setAvatar={setAvatar}
             extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
-            onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance}
+            onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance} onAltRank={setAltRank}
             onBuyCharAdvance={buyCharAdvance} onRefundCharAdvance={refundCharAdvance}
             onGrantThrones={grantThrones} onSpendThrones={spendThrones}
             onRefundThrones={refundThrones}
@@ -4750,7 +4787,9 @@ const STARTING_XP_DEFAULT = 5000;   // a starting Explorer, per the rank table
 // stat (0-4, one per ADVANCE_LEVELS tier) — see tierFor/CHAR_ADVANCE_COST.
 const EMPTY_EXTRAS = {
   skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [], advances: [],
-  charAdvances: {}, eliteAdvances: [], purse: EMPTY_PURSE
+  charAdvances: {}, eliteAdvances: [], purse: EMPTY_PURSE,
+  // the Alternate Career Rank taken in place of one of the career's own ('' = none)
+  altRank: ''
 };
 // merges a stored extras object over the empty shape, so an older save that
 // predates a category still loads
@@ -6535,7 +6574,9 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
           ? 'These characteristics came from an imported sheet and already include Origin Path modifiers and advances, so nothing further is applied on top.'
           : pointAlloc
             ? `Every characteristic starts at ${POINT_BASE}. Distribute ${POINT_POOL} points across the nine, then your Origin Path modifiers are applied on top.`
-            : 'Each characteristic is 2d10 + 25, then your Origin Path modifiers are applied on top. Reroll any single line if the dice have been unkind.'}
+            : home && home.base
+              ? `Each characteristic is 2d10 on the ${home.name} base (${CHAR_KEYS.map((k) => CHAR_SHORT[k] + ' ' + home.base[k]).join(', ')}). Nothing is added on top. Reroll any single line if the dice have been unkind.`
+              : 'Each characteristic is 2d10 + 25, then your Origin Path modifiers are applied on top. Reroll any single line if the dice have been unkind.'}
       </p>
 
       {!rolls && !finalTotals && (
@@ -6544,8 +6585,8 @@ function CharacteristicsPane({ rolls, totals, mods, rollAll, rerollOne, home, wo
             Pick a Home World first so Wounds and Fate Points can be worked out.
           </p>}
           <div className="rt-btnrow">
-            <button className="rt-btn" onClick={rollAll}>Roll 2d10+25</button>
-            <button className="rt-btn ghost" onClick={onStartPoints}>Spend {POINT_POOL} points</button>
+            <button className="rt-btn" onClick={rollAll}>{home && home.base ? 'Roll 2d10 on the ' + home.name + ' base' : 'Roll 2d10+25'}</button>
+            {!(home && home.base) && <button className="rt-btn ghost" onClick={onStartPoints}>Spend {POINT_POOL} points</button>}
           </div>
         </>
       )}
@@ -6756,7 +6797,7 @@ const ADD_SOURCES = {
 function DossierPane({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   corruption = 0, insanity = 0, onCorruption, onInsanity,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
-  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance,
+  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onAltRank,
   onBuyCharAdvance, onRefundCharAdvance, onAddEliteAdvance, onRemoveEliteAdvance,
   onGrantThrones, onSpendThrones, onRefundThrones,
   onFate, onProfit, spentAdj = 0, onSpentAdj }) {
@@ -6796,6 +6837,9 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
 
   const charRank = rankForXp(xp);
   const careerAdvances = allAdvances(career ? career.name : '');
+  const altRanks = career ? alternateRanksFor(career.name) : [];
+  const altChosen = alternateRankByName(extras.altRank);
+  const altTable = altChosen && altRanks.includes(altChosen) ? alternateAdvances(altChosen.name) : [];
   // Each characteristic's tier (and so cost) depends on the career, so a sold
   // or swapped career re-prices whatever was already bought rather than
   // grandfathering the old cost in.
@@ -7308,6 +7352,26 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                 </button>
               </div>
 
+              {altRanks.length > 0 && (
+                <div className="rt-advrank">
+                  <div className="rt-sect-h">Alternate Career Rank</div>
+                  <div className="rt-psyrow">
+                    <select className="rt-select" value={altChosen && altTable.length ? altChosen.name : ''}
+                      onChange={(e) => onAltRank(e.target.value)} aria-label="Alternate Career Rank">
+                      <option value="">None: the career's own ranks</option>
+                      {altRanks.map((r) => (
+                        <option key={r.name} value={r.name}>{r.name} (from Rank {romanRank(r.minRank)})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="rt-psynote">
+                    {altChosen && altTable.length
+                      ? `${altChosen.blurb} Needs ${altChosen.requires}, and the GM's leave. Taken in place of a rank from Rank ${romanRank(altChosen.minRank)}: what is passed up can be bought later as an Elite Advance at a price the GM sets, which the guide suggests is twice the printed cost.`
+                      : 'With the GM\u2019s leave an Explorer who meets the requirements can take one of these in place of a rank of the career, and buy from its table instead.'}
+                  </p>
+                </div>
+              )}
+
               {Array.from({ length: MAX_TABLED_RANK }, (_, i) => i + 1).map((r) => {
                 const rows = careerAdvances.filter((a) => a.rank === r);
                 if (!rows.length) return null;
@@ -7349,6 +7413,39 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
                   </div>
                 );
               })}
+
+              {altChosen && altTable.length > 0 && (
+                <div className={'rt-advrank' + (altChosen.minRank > charRank ? ' locked' : '')}>
+                  <div className="rt-sect-h">
+                    {altChosen.name}{altChosen.minRank > charRank ? ' \u2014 not yet reached' : ''}
+                  </div>
+                  <ul className="rt-advlist">
+                    {altTable.map((a) => {
+                      const st = advanceStatus(a, { rank: charRank, remaining, totals, owned: extras.advances });
+                      const why = st.owned ? null
+                        : st.lockedByRank ? `Rank ${romanRank(a.rank)} required`
+                          : st.unmetChars.length
+                            ? 'Needs ' + st.unmetChars.map((c) => c.key.toUpperCase() + ' ' + c.min).join(', ')
+                            : st.unaffordable ? 'Not enough XP' : null;
+                      return (
+                        <li key={a.name}
+                          className={'rt-adv' + (st.owned ? ' owned' : '') + (st.blocked ? ' blocked' : '')}>
+                          <span className="rt-adv-n">{a.name}</span>
+                          <span className="rt-entry-c">{a.type}</span>
+                          <span className="rt-adv-c">{a.cost}</span>
+                          <button className="rt-adv-b" disabled={st.blocked}
+                            onClick={() => (st.owned ? onRefundAdvance(a.name) : onBuyAdvance(a))}>
+                            {st.owned ? 'Refund' : 'Buy'}
+                          </button>
+                          {(why || st.namedPrereqs.length > 0) && (
+                            <span className="rt-adv-p">{why || 'Requires ' + st.namedPrereqs.join(', ')}</span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
             </div>
           ) : (
             <p className="rt-empty">
@@ -10188,7 +10285,7 @@ function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridge
                   {h.note && (
                     <div className="rt-entry-d">
                       <p className="rt-entry-s">
-                        {h.note} {'—'} numbers to be filled in from the book
+                        {h.note}{h.custom ? ' \u2014 numbers to be filled in from the book' : ''}
                       </p>
                     </div>
                   )}
@@ -10304,6 +10401,8 @@ function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridge
             <button className="rt-btn ghost" disabled={!encBestiary}
               onClick={() => addHostile(bestiaryToNpc(encBestiary))}>Add to the encounter</button>
           </div>
+
+          <InquisitionCard onAdd={addHostile} canAdd={Boolean(editing)} />
 
           {/* onto the board */}
           <div className="rt-btnrow">
@@ -10828,6 +10927,8 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
   const hull = hullById(bp.hullId, bp);
   const { errors, budget: b } = validate(bp);
   const derived = stats(bp);
+  const dryNotes = advice(bp);
+  const drySteps = constructionSteps(bp);
 
   // `custom` is derived on every render from the library, so it is stripped
   // before saving: persisting it would freeze a stale copy into the blueprint
@@ -10916,6 +11017,23 @@ function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
       )}
       {hull && errors.length === 0 && (
         <div className="rt-note">A legal blueprint. {hull.name} {hull.cls}.</div>
+      )}
+
+      {/* Drydock's five steps, so a table new to ship building can see where
+          it is. Advice only: nothing here changes what is legal. */}
+      <ol className="rt-dd" aria-label="Starship construction steps">
+        {drySteps.map((st) => (
+          <li key={st.n} className={st.done ? 'done' : ''}>
+            <span className="rt-dd-n">{st.done ? '\u2713' : st.n}</span>
+            <span className="rt-dd-t">{st.name}</span>
+            <span className="rt-dd-d">{st.detail}</span>
+          </li>
+        ))}
+      </ol>
+      {dryNotes.length > 0 && (
+        <div className="rt-note rt-dd-notes">
+          {dryNotes.map((n) => <p key={n.id}>{n.text}</p>)}
+        </div>
       )}
 
       {/* Opened from here, rendered at the app root: a <dialog> nested inside

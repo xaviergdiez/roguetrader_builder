@@ -6,7 +6,7 @@ import { movementFor } from './movement.js';
 import { hitLocation, DAMAGE_TYPES, LOCATIONS, critRow } from './crits.js';
 import { SHOCK_TABLE, TRAUMA_TABLE, insanityTrack, corruptionTrack } from './sanity.js';
 import { ACTIONS, GROUND_CONDITIONS } from './groundcombat.js';
-import { EXTENDED_ACTIONS, PHASES } from './voidcombat.js';
+import { EXTENDED_ACTIONS, PHASES, REFERENCE_ACTIONS, MANOEUVRES, TURN_LIMITS } from './voidcombat.js';
 import { SKILLS, TALENTS, POWERS } from './glossary.js';
 
 const codex = buildCodex();
@@ -107,7 +107,9 @@ for (const a of ACTIONS) assert.ok(codex.some((e) => e.title === a.name && e.bod
 assert.equal(counts.conditions, GROUND_CONDITIONS.length);
 assert.ok(byId('conditions:on-fire').rows[0][1].startsWith('1d10'), 'On Fire carries its damage per round');
 assert.ok(byId('conditions:blood-loss').rows[0][1].startsWith('1 Wound'), 'and Blood Loss its own');
-assert.equal(counts.void, EXTENDED_ACTIONS.length + 2, 'every ship action, the turn, and evasion');
+assert.equal(counts.void, EXTENDED_ACTIONS.length + 4 + REFERENCE_ACTIONS.length,
+  'every ship action, the turn, evasion, manoeuvres, shooting, and the actions the table rolls itself');
+assert.equal(counts.building, 5, 'steps, power and space, hull weights, fitted once, oddities');
 assert.deepEqual(byId('void:turn').rows.length, PHASES.length);
 assert.equal(counts.skills, Object.keys(SKILLS).length);
 assert.ok(counts.talents >= Object.keys(TALENTS).length + Object.keys(POWERS).length, 'talents and powers');
@@ -128,5 +130,31 @@ assert.equal(searchCodex(codex, '', 'skills').length, counts.skills, 'a section 
 assert.equal(searchCodex(codex, 'dodge', 'void').length, 0);
 assert.equal(searchCodex(codex, 'willpower')[0] != null, true);
 assert.ok(searchCodex(codex, 'fear')[0].title === 'Fear' || searchCodex(codex, 'fear')[0].title.startsWith('Fear'), 'Fear leads');
+
+
+/* ---- Drydock: the cheat sheet and the build steps come from the code ---- */
+{
+  assert.deepEqual(byId('void:manoeuvres').rows.map((r) => r[0]), MANOEUVRES.map((m) => m.name));
+  assert.match(byId('void:manoeuvres').body, new RegExp(`${TURN_LIMITS.small} degrees`));
+  assert.match(byId('void:manoeuvres').body, new RegExp(`${TURN_LIMITS.large} for a light cruiser`));
+  const shooting = Object.fromEntries(byId('void:shooting').rows);
+  assert.match(shooting.Range, /\+10/, 'half range is +10');
+  assert.match(shooting.Range, /\u221210/, 'and twice the range is minus ten');
+  assert.match(shooting.Hits, /every 3\./, 'a lance is a hit per three degrees');
+  assert.match(shooting.Prow, /270 degrees/);
+  assert.ok(shooting.Keel);
+  for (const a of REFERENCE_ACTIONS) {
+    assert.ok(byId('void:' + a.id.replace(/_/g, '-')), a.name + ' is in the Lore');
+    assert.ok(byId('void:' + a.id.replace(/_/g, '-')).rows[0][1].includes('Not run'), a.name + ' says it is not on the dashboard');
+  }
+  assert.equal(REFERENCE_ACTIONS.length + EXTENDED_ACTIONS.length, 15, 'fourteen actions in Drydock, plus Evasive Manoeuvres which the dashboard runs');
+  assert.equal(byId('building:steps').rows.length, 5);
+  const weights = Object.fromEntries(byId('building:hull-weights').rows);
+  assert.match(weights.Cruiser, /Lunar-class/);
+  assert.match(weights.Transport, /Jericho-class/);
+  assert.match(byId('building:steps').rows[1][1], /5 Ship Points/);
+  assert.ok(searchCodex(codex, 'tenebro').some((e) => e.id === 'building:once-only'));
+  assert.ok(searchCodex(codex, 'jam').some((e) => e.id === 'void:jam-communications'));
+}
 
 console.log('codex checks passed');

@@ -7,6 +7,8 @@
    Split into SKILLS and TALENTS rather than one flat map so the "add" picker
    can offer the right catalogue for the tab you are on. */
 
+import { TAU_TALENT_TEXT } from './tau.js';
+
 export const SKILLS = {
   'Awareness': 'Notice what others miss — a hidden figure, a wrong sound, a detail out of place. Basic Skill, so anyone may attempt it.',
   'Barter': 'Haggle. Talk a seller down or a buyer up on the price of goods.',
@@ -39,6 +41,7 @@ export const SKILLS = {
 };
 
 export const TALENTS = {
+  ...TAU_TALENT_TEXT,
   'Air of Authority': 'You carry the assumption of command, and can bend far more ordinary people to your will when you give orders.',
   'Armour of Contempt': 'Practised disdain for the warp and its works hardens you against the corruption such things leave behind.',
   'Basic Weapon Training': 'You are trained with that class of basic weapon, and no longer suffer the heavy penalty for firing it untrained.',
@@ -100,7 +103,7 @@ export const POWERS = {
   'Eye of the Abyss': 'The pinnacle of the Warp Eye’s power — a look into the deepest currents of the immaterium that few Navigators ever risk, let alone master.'
 };
 
-export const GLOSSARY = { ...SKILLS, ...TALENTS, ...MISC, ...POWERS };
+export const GLOSSARY = { ...SKILLS, ...TALENTS, ...TAU_TALENT_TEXT, ...MISC, ...POWERS };
 
 export const CHAR_GROUP = {
   ws: 'phys', s: 'phys', t: 'phys', ag: 'phys',

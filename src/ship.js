@@ -75,12 +75,21 @@ const C = (id, name, category, power, space, sp, extra = {}) => ({
 
 export const COMPONENTS = [
   // essential
+  // `fits` is the weight classes Drydock lists a component for (see hullGroup).
+  // It is advice, not a rule the engine enforces: see advice() below.
+  C('drive-jovian1', 'Jovian Pattern Class I Drive', 'plasmaDrive', 35, 8, 0,
+    { note: 'Transport-weight drive. Generates the ship\'s whole Power pool.', fits: ['transport'], source: 'Drydock' }),
   C('drive-jovian2', 'Jovian Pattern Class II Drive', 'plasmaDrive', 45, 10, 0,
-    { note: 'Escort-weight drive. Generates the ship\'s whole Power pool.' }),
+    { note: 'Escort-weight drive. Generates the ship\'s whole Power pool.', fits: ['raider', 'frigate'] }),
   C('drive-jovian3', 'Jovian Pattern Class III Drive', 'plasmaDrive', 60, 12, 0,
-    { note: 'Cruiser-weight drive.' }),
+    { note: 'Light-cruiser-weight drive.', fits: ['light'] }),
+  C('drive-jovian4', 'Jovian Pattern Class IV Drive', 'plasmaDrive', 75, 14, 0,
+    { note: 'Cruiser-weight drive.', fits: ['cruiser'], source: 'Drydock' }),
   C('warp-strelov1', 'Strelov 1 Warp Engine', 'warpEngine', -10, 10, 0,
-    { note: 'Allows warp travel.' }),
+    { note: 'Allows warp travel.', fits: ['transport', 'raider', 'frigate'] }),
+  C('warp-strelov2', 'Strelov 2 Warp Engine', 'warpEngine', -12, 12, 0,
+    { note: 'Allows warp travel. Drydock lists it for light cruisers and cruisers; any special rules it has are in the core rulebook and are not applied here.',
+      fits: ['light', 'cruiser'], source: 'Drydock' }),
   C('geller-basic', 'Basic Geller Field', 'gellerField', -1, 0, 0,
     { note: 'Prevents daemonic incursion in the Warp.' }),
   C('shield-single', 'Single Void Shield Array', 'voidShield', -5, 1, 0,
@@ -109,7 +118,7 @@ export const COMPONENTS = [
   C('comp-munitorum', 'Munitorum', 'supplemental', -2, 3, 2,
     { note: '+1d5 Macrocannon damage. +1 Space cost for explosions.' }),
   C('comp-tenebro-maze', 'Tenebro-Maze', 'supplemental', -1, 2, 2,
-    { note: '+10 Command against boarding. Cannot be critically hit.' }),
+    { note: '+10 Command against boarding. Cannot be critically hit.', unique: true }),
   C('comp-smugglers-hold', "Smuggler's Hold", 'supplemental', -1, 2, 1,
     { note: '+50 Achievement Points for criminal objectives.' }),
   C('comp-flak-turrets', 'Flak Turrets', 'supplemental', -1, 1, 1,
@@ -166,7 +175,7 @@ export function damageText(component) {
 export const isHomebrew = (id) =>
   !HULLS.some((h) => h.id === id) && !COMPONENTS.some((c) => c.id === id);
 
-export const SLOT_NAMES = ['prow', 'dorsal', 'port', 'starboard'];
+export const SLOT_NAMES = ['prow', 'dorsal', 'port', 'starboard', 'keel'];
 export const WEAPON_CLASSES = ['macro', 'lance', 'torpedo'];
 
 const isInt = (v) => Number.isInteger(Number(v));
@@ -398,11 +407,11 @@ export function validate(bp) {
   for (const cat of ESSENTIAL_CATEGORIES) {
     const id = bp.essential && bp.essential[cat];
     const c = componentById(id, bp);
-    if (!c) { errors.push(`Missing an essential component: ${cat}.`); continue; }
+    if (!c) { errors.push(`Missing an essential component: ${ESSENTIAL_LABELS[cat] || cat}.`); continue; }
     // a component installed in the wrong category would pass every arithmetic
     // check while leaving the ship without, say, a Geller Field
     if (c.category !== cat) {
-      errors.push(`${c.name} is not a ${cat}.`);
+      errors.push(`${c.name} is not a ${ESSENTIAL_LABELS[cat] || cat}.`);
     }
   }
 
@@ -426,12 +435,111 @@ export function validate(bp) {
     }
   }
 
+  // Drydock marks Armour Plating, the Armoured Prow and the Tenebro-Maze
+  // "may not be selected more than once per vessel".
+  const seen = {};
+  for (const id of bp.supplemental || []) {
+    const c = componentById(id, bp);
+    if (!c || !c.unique) continue;
+    seen[c.id] = (seen[c.id] || 0) + 1;
+    if (seen[c.id] === 2) errors.push(`${c.name} can only be fitted once.`);
+  }
+
   const b = budget(bp);
   if (b.powerRemaining < 0) errors.push(`Power is over by ${-b.powerRemaining}.`);
   if (b.spaceRemaining < 0) errors.push(`Space is over by ${-b.spaceRemaining}.`);
   if (b.spRemaining < 0) errors.push(`Ship Points are over by ${-b.spRemaining}.`);
 
   return { ok: errors.length === 0, errors, budget: b };
+}
+
+/* ------------------------------ Drydock's guidance ------------------------------
+   Drydock (the free player's aid for building starships) walks the build in
+   five steps and says a few things the rulebook leaves to experience. None of
+   them makes a blueprint illegal, so none is in validate(); they are advice,
+   shown beside the build, and the build is the player's to finish.
+
+     1  Ship Points, from the Warrant of Trade
+     2  a hull, leaving at least five Ship Points to fit it out
+     3  a Machine Spirit Oddity and a Past History
+     4  one Essential Component from each category
+     5  any Supplemental Components, then what Ship Points remain are redeemed
+        for Profit Factor
+
+   It also sorts every hull into one of five weights (Transport, Raider,
+   Frigate, Light Cruiser, Cruiser) and says which weight each Essential
+   Component is for. That is the `fits` on a component here. */
+
+export const SP_RESERVE = 5;
+
+export const HULL_GROUPS = [
+  { id: 'transport', name: 'Transport' },
+  { id: 'raider', name: 'Raider' },
+  { id: 'frigate', name: 'Frigate' },
+  { id: 'light', name: 'Light Cruiser' },
+  { id: 'cruiser', name: 'Cruiser' }
+];
+
+// A hull's weight, from its class text. A homebrew class Drydock has no word
+// for is null, and nothing is said about it.
+export function hullGroup(cls) {
+  const c = String(cls || '').toLowerCase();
+  if (/transport/.test(c)) return 'transport';
+  if (/raider/.test(c)) return 'raider';
+  if (/frigate/.test(c)) return 'frigate';
+  if (/light cruiser/.test(c)) return 'light';
+  if (/cruiser|battleship/.test(c)) return 'cruiser';
+  return null;
+}
+const groupName = (id) => (HULL_GROUPS.find((g) => g.id === id) || { name: id }).name;
+const joinNames = (ids) => ids.map(groupName).join(', ');
+
+export function constructionSteps(bp) {
+  const hull = hullById(bp && bp.hullId, bp);
+  const b = budget(bp);
+  const hist = (bp && bp.history) || {};
+  const filled = ESSENTIAL_CATEGORIES.filter((cat) => componentById(bp && bp.essential && bp.essential[cat], bp)).length;
+  const extras = ((bp && bp.supplemental) || []).length + ((bp && bp.weapons) || []).length;
+  const legal = Boolean(hull) && validate(bp).ok;
+  return [
+    { n: 1, name: 'Ship Points', done: b.dynastySP > 0,
+      detail: b.dynastySP > 0 ? `${b.dynastySP} from the Warrant of Trade` : 'set what the Warrant of Trade provides' },
+    { n: 2, name: 'Hull', done: Boolean(hull),
+      detail: hull ? `${hull.name}, ${hull.sp} SP` : 'choose one' },
+    { n: 3, name: 'Personality', done: Boolean(hist.oddityId && hist.historyId),
+      detail: [hist.oddityId, hist.historyId].filter(Boolean).length + ' of 2 rolled' },
+    { n: 4, name: 'Essentials', done: filled === ESSENTIAL_CATEGORIES.length,
+      detail: `${filled} of ${ESSENTIAL_CATEGORIES.length} categories` },
+    { n: 5, name: 'Supplementals', done: legal && filled === ESSENTIAL_CATEGORIES.length,
+      detail: `${extras} fitted, ${b.spRemaining} SP left` }
+  ];
+}
+
+export function advice(bp) {
+  const notes = [];
+  const hull = hullById(bp && bp.hullId, bp);
+  if (!hull) return notes;
+  const b = budget(bp);
+
+  // "To properly outfit their vessel, the Explorers will likely need at least
+  // five or more extra Ship Points after they have selected their hull."
+  if (b.dynastySP > 0 && b.dynastySP - hull.sp < SP_RESERVE) {
+    notes.push({ id: 'reserve', text: `Drydock suggests keeping at least ${SP_RESERVE} Ship Points back after the hull to fit it out. The ${hull.name} leaves ${Math.max(0, b.dynastySP - hull.sp)}.` });
+  }
+
+  const group = hullGroup(hull.cls);
+  if (group) {
+    for (const c of listed(bp)) {
+      if (!c.fits || !c.fits.length || c.fits.includes(group)) continue;
+      notes.push({ id: `fits:${c.id}`, text: `Drydock lists the ${c.name} for ${joinNames(c.fits).toLowerCase()}, not a ${groupName(group).toLowerCase()}.` });
+    }
+  }
+
+  const complete = ESSENTIAL_CATEGORIES.every((cat) => componentById(bp.essential && bp.essential[cat], bp));
+  if (complete && b.spRemaining > 0) {
+    notes.push({ id: 'redeem', text: `${b.spRemaining} Ship Point${b.spRemaining === 1 ? '' : 's'} left. Drydock has any that remain redeemed for Profit Factor.` });
+  }
+  return notes;
 }
 
 /* --------------------------------- vitals --------------------------------- */

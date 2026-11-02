@@ -79,7 +79,10 @@ export const ADVANCE_LEVELS = ['simple', 'intermediate', 'trained', 'expert'];
 export const CHAR_ADVANCE_COST = {
   primary:   { simple: 100, intermediate: 250, trained: 500,  expert: 750 },
   secondary: { simple: 250, intermediate: 500, trained: 750,  expert: 1000 },
-  tertiary:  { simple: 500, intermediate: 750, trained: 1000, expert: 1500 }
+  tertiary:  { simple: 500, intermediate: 750, trained: 1000, expert: 1500 },
+  // The T'au's Weapon Skill and Strength (Tau Character Guide p.13): priced as
+  // tertiary up to the last step, which is a good deal dearer.
+  tertiaryTau: { simple: 500, intermediate: 750, trained: 1000, expert: 2500 }
 };
 
 export function advanceCost(tier, level) {
@@ -136,8 +139,11 @@ const CHAR_TIERS = {
   'Drukhari Kabalite Warrior': {
     primary: ['ws', 'bs', 'ag', 'per'], secondary: ['int', 'wp'], tertiary: ['s', 't', 'fel']
   },
+  // The guide's own table (Tau Character Guide p.13): Ballistic Skill, Intelligence
+  // and Perception at 100/250/500/750; Toughness, Agility, Willpower and
+  // Fellowship at 250/500/750/1000; Weapon Skill and Strength at 500/750/1000/2500.
   "T'au Fire Warrior": {
-    primary: ['bs', 'per', 'wp'], secondary: ['t', 'ag', 'int'], tertiary: ['ws', 's', 'fel']
+    primary: ['bs', 'int', 'per'], secondary: ['t', 'ag', 'wp', 'fel'], tertiary: [], tertiaryTau: ['ws', 's']
   }
 };
 
@@ -149,9 +155,9 @@ export function tierFor(careerName, charKey) {
   const rows = CHAR_TIERS[careerName];
   if (!rows) return null;
   const k = String(charKey || '').toLowerCase();
-  if (rows.primary.includes(k)) return 'primary';
-  if (rows.secondary.includes(k)) return 'secondary';
-  if (rows.tertiary.includes(k)) return 'tertiary';
+  for (const tier of ['primary', 'secondary', 'tertiary', 'tertiaryTau']) {
+    if ((rows[tier] || []).includes(k)) return tier;
+  }
   return null;
 }
 

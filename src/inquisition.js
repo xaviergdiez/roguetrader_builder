@@ -6,6 +6,9 @@
 // left to the GM's table — it is a campaign decision, not a stat.
 
 import { bestiaryEntry, bestiaryToNpc } from './npcgen.js';
+import { PHILOSOPHIES, philosophyById, philosophyForRoll } from './philosophies.js';
+
+export { PHILOSOPHIES, philosophyById, philosophyForRoll };
 
 export const ORDOS = [
   { id: 'hereticus', name: 'Ordo Hereticus', remit: 'Heresy, witch-hunting, corruption inside the Imperium.' },
@@ -22,6 +25,8 @@ export const INQUISITION_FACTIONS = [
 ];
 
 export const ordoById = (id) => ORDOS.find((o) => o.id === id) || null;
+// The older five-faction list is kept as it was; a philosophy of the same id
+// (Thorian, Monodominant, Amalathian) is the fuller form of it.
 export const factionById = (id) => INQUISITION_FACTIONS.find((f) => f.id === id) || null;
 
 // Names of existing bestiary entries. The check file asserts every one of
@@ -38,10 +43,17 @@ export const RETINUE = [
 
 const pick = (arr, rng) => arr[Math.floor(rng() * arr.length)];
 
-// A rolled Inquisitor and retinue, each member ready for npc_add.
-export function rollInquisitor({ rng = Math.random, ordoId = null, factionId = null, retinueSize = null } = {}) {
+/* A rolled Inquisitor and retinue, each member ready for npc_add.
+
+   The Inquisitor\u2019s philosophy is the book\u2019s: asked for by `philosophyId` (or by
+   `factionId`, which a philosophy of the same id answers), or rolled on the
+   book\u2019s d100 table. `faction` is its name, as it always was; `philosophy` is
+   the whole of it, for the table to read. */
+export function rollInquisitor({ rng = Math.random, ordoId = null, factionId = null, philosophyId = null, retinueSize = null } = {}) {
   const ordo = ordoById(ordoId) || pick(ORDOS, rng);
-  const faction = factionById(factionId) || pick(INQUISITION_FACTIONS, rng);
+  const philosophy = philosophyById(philosophyId) || philosophyById(factionId)
+    || (factionById(factionId) ? null : philosophyForRoll(1 + Math.floor(rng() * 100)));
+  const legacy = philosophy ? null : factionById(factionId);
   const size = Number.isFinite(retinueSize) ? Math.max(0, Math.min(6, retinueSize)) : 2 + Math.floor(rng() * 3);
 
   const pool = RETINUE.slice();
@@ -50,9 +62,10 @@ export function rollInquisitor({ rng = Math.random, ordoId = null, factionId = n
     const m = pool.splice(Math.floor(rng() * pool.length), 1)[0];
     retinue.push({ ...bestiaryToNpc(m.entry), role: m.role });
   }
+  const label = philosophy ? philosophy.name : legacy.name;
   return {
-    ordo: ordo.name, faction: faction.name,
-    inquisitor: { ...bestiaryToNpc(INQUISITOR_ENTRY), name: `Inquisitor (${ordo.name}, ${faction.name})` },
+    ordo: ordo.name, faction: label, philosophy,
+    inquisitor: { ...bestiaryToNpc(INQUISITOR_ENTRY), name: `Inquisitor (${ordo.name}, ${label})` },
     retinue
   };
 }

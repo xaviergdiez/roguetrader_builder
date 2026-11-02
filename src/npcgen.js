@@ -121,7 +121,7 @@ export const ARMOUR_TABLES = {
   '4b': { minor: 'heavy leather armour', heavy: 'heavy leather armour', elite: 'squig-hide armour' },
   '4c': { minor: null, heavy: 'aeldari mesh armour', elite: 'kabalite armour' },
   '4d': { minor: null, heavy: 'kroot leather armour', elite: 'kroot leather armour' },
-  '4e': { minor: null, heavy: 'tau recon combat armour', elite: 'tau recon combat armour' }
+  '4e': { minor: null, heavy: 'tau combat armour', elite: 'tau combat armour' }
 };
 
 /* ================================ Section 5 ================================

@@ -114,7 +114,10 @@ assert.ok(TYPES.includes('Xenos') && TYPES.includes('Human') && TYPES.includes('
         `${b.name}.${k} is null; the index spells absent as 0 and so should this`);
     }
   }
-  const adjudicated = BESTIARY.find((b) => b.custom && !b.ws && !b.bs);
+  // An entry the source gives nothing usable for: no skill, no Wounds. A converted
+  // creature with no damaging attack (the Murmurer) is custom too, but it has real
+  // numbers, so it is not what this compares the index against.
+  const adjudicated = BESTIARY.find((b) => b.custom && !b.ws && !b.bs && !b.wounds);
   if (adjudicated) {
     const handRolled = bestiaryToNpc(adjudicated.name);
     for (const k of ['ws', 'bs', 'armour', 'toughnessBonus', 'custom']) {

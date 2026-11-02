@@ -7,7 +7,8 @@ import {
   validateHull, validateComponent, validateCustom, usableCustom, damageText,
   hullById, componentById, crewRating,
   powerGenerated, powerUsed, spaceUsed, spSpent, budget, validate,
-  stats, newVitals, POP_PENALTY_THRESHOLD
+  stats, newVitals, POP_PENALTY_THRESHOLD,
+  hullGroup, HULL_GROUPS, SP_RESERVE, advice, constructionSteps
 } from './ship.js';
 
 /* ---- the data is well formed ---- */
@@ -189,7 +190,7 @@ const dauntless = {
   const { gellerField, ...short } = essential;
   const v = validate({ ...dauntless, essential: short });
   assert.equal(v.ok, false);
-  assert.ok(v.errors.some((e) => /gellerField/.test(e)), v.errors.join('; '));
+  assert.ok(v.errors.some((e) => /Missing an essential component: Geller Field/.test(e)), v.errors.join('; '));
 }
 
 // A component in the wrong category passes every sum while leaving the ship
@@ -199,7 +200,7 @@ const dauntless = {
     ...dauntless,
     essential: { ...essential, gellerField: 'comp-flak-turrets' }
   });
-  assert.ok(v.errors.some((e) => /Flak Turrets is not a gellerField/.test(e)),
+  assert.ok(v.errors.some((e) => /Flak Turrets is not a Geller Field/.test(e)),
     v.errors.join('; '));
 }
 
@@ -379,7 +380,8 @@ assert.ok(hullErr({ sp: 0 }).some((m) => /Ship Points/.test(m)));
 assert.ok(hullErr({ turrets: -1 }).some((m) => /Turret/.test(m)));
 assert.ok(hullErr({ speed: 1.5 }).some((m) => /Speed/.test(m)));
 assert.ok(hullErr({ slots: [] }).some((m) => /at least one weapon mount/.test(m)));
-assert.ok(hullErr({ slots: ['keel'] }).some((m) => /Unknown mount/.test(m)));
+assert.ok(hullErr({ slots: ['turret'] }).some((m) => /Unknown mount/.test(m)));
+assert.deepEqual(hullErr({ slots: ['keel'] }), [], 'a keel mount is a real mount (Drydock)');
 // manoeuvre may be negative — a transport is sluggish
 assert.deepEqual(hullErr({ manoeuvre: -10 }), []);
 
@@ -415,7 +417,7 @@ assert.deepEqual(validateComponent({
 }), []);
 
 assert.deepEqual(WEAPON_CLASSES, ['macro', 'lance', 'torpedo']);
-assert.deepEqual(SLOT_NAMES, ['prow', 'dorsal', 'port', 'starboard']);
+assert.deepEqual(SLOT_NAMES, ['prow', 'dorsal', 'port', 'starboard', 'keel']);
 
 /* ---- a duplicate id inside the catalogue is caught ---- */
 
@@ -472,3 +474,98 @@ assert.equal(damageText({}), '');
 assert.equal(damageText(null), '');
 
 console.log('ship: damage text OK');
+
+/* ---- Drydock: the five steps, the hull weights, and what it advises ---- */
+
+{
+  assert.equal(SP_RESERVE, 5);
+  assert.deepEqual(HULL_GROUPS.map((g) => g.id), ['transport', 'raider', 'frigate', 'light', 'cruiser']);
+
+  // every hull we ship falls in one of Drydock's five weights
+  assert.equal(hullGroup(hullById('hull-jericho').cls), 'transport');
+  assert.equal(hullGroup(hullById('hull-hazeroth').cls), 'raider');
+  assert.equal(hullGroup(hullById('hull-sword').cls), 'frigate');
+  assert.equal(hullGroup(hullById('hull-dauntless').cls), 'light');
+  assert.equal(hullGroup(hullById('hull-defiant').cls), 'light');
+  assert.equal(hullGroup(hullById('hull-lunar').cls), 'cruiser');
+  assert.equal(hullGroup(hullById('hull-secutor').cls), 'cruiser');
+  assert.equal(hullGroup('Homebrew Dreadnought-thing'), null, 'a class Drydock has no word for says nothing');
+  assert.equal(hullGroup(''), null);
+
+  // the three plasma drives and the warp engine read from Drydock's table 1-3
+  const drive = (id) => componentById(id);
+  assert.deepEqual([drive('drive-jovian1').power, drive('drive-jovian1').space], [35, 8]);
+  assert.deepEqual([drive('drive-jovian2').power, drive('drive-jovian2').space], [45, 10]);
+  assert.deepEqual([drive('drive-jovian3').power, drive('drive-jovian3').space], [60, 12]);
+  assert.deepEqual([drive('drive-jovian4').power, drive('drive-jovian4').space], [75, 14]);
+  assert.deepEqual([drive('warp-strelov1').power, drive('warp-strelov1').space], [-10, 10]);
+  assert.deepEqual([drive('warp-strelov2').power, drive('warp-strelov2').space], [-12, 12]);
+  assert.equal(drive('drive-jovian1').source, 'Drydock', 'what came from Drydock says so');
+  // a drive for every weight of hull, so advice can always be followed
+  for (const g of HULL_GROUPS) {
+    assert.ok(COMPONENTS.some((c) => c.category === 'plasmaDrive' && c.fits && c.fits.includes(g.id)), g.id + ' has a drive');
+    assert.ok(COMPONENTS.some((c) => c.category === 'warpEngine' && c.fits && c.fits.includes(g.id)), g.id + ' has a warp engine');
+  }
+  for (const c of COMPONENTS.filter((x) => x.fits)) {
+    for (const f of c.fits) assert.ok(HULL_GROUPS.some((g) => g.id === f), c.id + ': ' + f);
+  }
+
+  // the Dauntless build above is a light cruiser with the light cruiser's drive,
+  // but a Strelov 1 engine, which Drydock gives to transports, raiders and frigates
+  const notes = advice(dauntless);
+  assert.ok(notes.some((n) => n.id === 'fits:warp-strelov1' && /light cruiser/i.test(n.text)), 'the engine is flagged');
+  assert.ok(!notes.some((n) => n.id === 'fits:drive-jovian3'), 'the drive is the right one');
+  // advice never makes a blueprint illegal
+  assert.equal(validate(dauntless).ok, true);
+
+  // the same ship with the right engine has nothing to say about fit
+  const right = { ...dauntless, essential: { ...essential, warpEngine: 'warp-strelov2' } };
+  assert.deepEqual(advice(right).filter((n) => n.id.startsWith('fits:')), []);
+  assert.equal(validate(right).ok, true);
+
+  // a cruiser on a Class III drive is under-engined by Drydock's reckoning
+  const lunar = { ...dauntless, hullId: 'hull-lunar', weapons: [], supplemental: [] };
+  assert.ok(advice(lunar).some((n) => n.id === 'fits:drive-jovian3'));
+  assert.equal(advice({ ...lunar, essential: { ...essential, plasmaDrive: 'drive-jovian4', warpEngine: 'warp-strelov2' } })
+    .filter((n) => n.id.startsWith('fits:')).length, 0);
+
+  // five Ship Points back after the hull
+  const tight = { ...dauntless, dynastySP: 58 };            // Dauntless costs 55
+  assert.ok(advice(tight).some((n) => n.id === 'reserve' && /3/.test(n.text)));
+  assert.ok(!advice({ ...dauntless, dynastySP: 60 }).some((n) => n.id === 'reserve'), 'exactly five is enough');
+  assert.ok(!advice({ ...dauntless, dynastySP: 0 }).some((n) => n.id === 'reserve'), 'no budget set, nothing to say');
+
+  // leftover Ship Points are for Profit Factor, once the essentials are in
+  const spare = advice({ ...dauntless, dynastySP: 80 });
+  assert.ok(spare.some((n) => n.id === 'redeem'));
+  assert.ok(!advice({ ...dauntless, dynastySP: 80, essential: { ...essential, augurArray: undefined } }).some((n) => n.id === 'redeem'),
+    'not while the build is unfinished');
+  assert.deepEqual(advice({ hullId: null }), []);
+  assert.deepEqual(advice(null), []);
+
+  // Armour Plating, the Armoured Prow and the Tenebro-Maze: once per vessel
+  assert.equal(componentById('comp-tenebro-maze').unique, true);
+  const twice = { ...dauntless, supplemental: ['comp-tenebro-maze', 'comp-tenebro-maze'] };
+  assert.ok(validate(twice).errors.some((e) => /Tenebro-Maze can only be fitted once/.test(e)));
+  assert.equal(validate({ ...dauntless, supplemental: ['comp-tenebro-maze'] }).errors.some((e) => /once/.test(e)), false);
+  assert.equal(validate({ ...dauntless, supplemental: ['comp-flak-turrets', 'comp-flak-turrets'] }).errors.some((e) => /once/.test(e)), false,
+    'a component not marked unique can be fitted again');
+
+  // the five steps, as the builder shows them
+  const steps = constructionSteps(dauntless);
+  assert.deepEqual(steps.map((x) => x.n), [1, 2, 3, 4, 5]);
+  assert.deepEqual(steps.map((x) => x.name), ['Ship Points', 'Hull', 'Personality', 'Essentials', 'Supplementals']);
+  assert.equal(steps[0].done, true);
+  assert.equal(steps[1].done, true);
+  assert.equal(steps[2].done, false, 'nothing rolled yet');
+  assert.equal(steps[3].done, true);
+  assert.equal(steps[4].done, true);
+  assert.match(steps[3].detail, /8 of 8/);
+  const rolled = constructionSteps({ ...dauntless, history: { oddityId: 'stoic', historyId: 'haunted' } });
+  assert.equal(rolled[2].done, true);
+  const blank = constructionSteps({ dynastySP: 0 });
+  assert.deepEqual(blank.map((x) => x.done), [false, false, false, false, false]);
+  assert.equal(constructionSteps(null).length, 5);
+}
+
+console.log('ship: Drydock guidance OK');

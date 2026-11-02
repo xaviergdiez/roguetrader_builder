@@ -17,7 +17,26 @@ import {
   addInsanity, addCorruption, warpShockCorruption, insanityTrack, corruptionTrack, FEAR_LEVELS
 } from './sanity.js';
 
+import {
+  stageFor, assertControl, unleash, puppetPush, takingHold, BOONS, PUPPET_BONUS
+} from './possession.js';
+
 const d = (n) => 1 + Math.floor(Math.random() * n);
+
+// Whether a daemon has taken hold of this character. Kept in this browser, per
+// character, because it is a fact about the story rather than a number on the
+// sheet; clearing it is one button.
+const POSSESSED_KEY = 'rt:possessed';
+const readPossessed = (id) => {
+  try { return Boolean(JSON.parse(localStorage.getItem(POSSESSED_KEY) || '{}')[id]); } catch { return false; }
+};
+const writePossessed = (id, on) => {
+  try {
+    const all = JSON.parse(localStorage.getItem(POSSESSED_KEY) || '{}');
+    if (on) all[id] = true; else delete all[id];
+    localStorage.setItem(POSSESSED_KEY, JSON.stringify(all));
+  } catch { /* storage is unavailable: it simply is not remembered */ }
+};
 
 // Conditions a snap-out Willpower Test ends (Shock table "snap out of it").
 const SNAPPABLE = ['shaken', 'frozen', 'fleeing', 'frenzied'];
@@ -33,6 +52,8 @@ export default function NervePanel({
   const [inMelee, setInMelee] = useState(false);
   const [result, setResult] = useState(null);         // last line shown
   const [pending, setPending] = useState({ trauma: 0, malignancy: 0 });
+  const [possessed, setPossessed] = useState(() => readPossessed(charId));
+  const [boon, setBoon] = useState('skill');
 
   const isPinned = conditions.some((c) => c.id === 'pinned');
   const snappable = conditions.filter((c) => SNAPPABLE.includes(c.id));
@@ -113,6 +134,69 @@ export default function NervePanel({
     setPending((p) => ({ ...p, malignancy: Math.max(0, p.malignancy - 1) }));
   };
 
+  /* ---- possession ----
+     The daemon’s hold is Corruption, so every point it costs goes through
+     onCorruption and any Malignancy Tests it brings are queued with the rest. */
+  const stage = stageFor(corruption);
+  const gainCorruption = (n) => {
+    if (!n) return;
+    const c = addCorruption(corruption, n);
+    setPending((p) => ({ ...p, malignancy: p.malignancy + c.malignancyTests }));
+    if (onCorruption) onCorruption(n);
+  };
+  const takeHold = async () => {
+    const n = takingHold(d(10), d(10));
+    setPossessed(true); writePossessed(charId, true);
+    gainCorruption(n);
+    setResult(`A daemon takes hold: +${n} Corruption.`);
+    await note(`A daemon takes hold of ${name}: +${n} Corruption.`);
+  };
+  const castOut = async () => {
+    setPossessed(false); writePossessed(charId, false);
+    setResult('The daemon is cast out. The Corruption stays.');
+    await note(`The daemon is cast out of ${name}.`);
+  };
+  const control = async () => {
+    const t = assertControl({ willpower, corruption, roll: d(100), d5: d(5) });
+    if (!t) { setResult('No Corruption yet: the daemon has no hold to use.'); return; }
+    let line;
+    if (t.auto) line = `${t.stage.name}: the daemon takes control and the character cannot resist.`;
+    else if (t.resisted) line = `The daemon reaches for control (${t.stage.difficulty}): rolled ${t.roll} vs ${t.target}, resisted.`;
+    else {
+      line = `The daemon reaches for control (${t.stage.difficulty}): rolled ${t.roll} vs ${t.target}, and it takes the wheel for ${t.rounds} round${t.rounds === 1 ? '' : 's'}`
+        + `${t.corruptionGained ? `, at a cost of ${t.corruptionGained} Corruption` : ''}.`;
+      gainCorruption(t.corruptionGained);
+    }
+    setResult(line);
+    await note(`${name}: ${line}`);
+  };
+  const push = async () => {
+    const t = puppetPush({ willpower, roll: d(100) });
+    const line = `The daemon pushes a skill: +${t.bonus} to one test it favours. Resist: rolled ${t.roll} vs ${t.target}, `
+      + `${t.resisted ? 'resisted' : 'failed'}; ${t.corruptionGained} Corruption.`;
+    gainCorruption(t.corruptionGained);
+    setResult(line);
+    await note(`${name}: ${line}`);
+  };
+  const draw = async () => {
+    const t = unleash({ willpower, corruption, roll: d(100), d5: d(5), boon });
+    if (!t) { setResult('No Corruption yet: the daemon has nothing to give.'); return; }
+    let line;
+    if (t.auto) line = `${t.stage.name}: the daemon takes control; there is nothing to draw on.`;
+    else if (t.success) {
+      const paid = d(5);
+      gainCorruption(paid);
+      line = `Unleash the daemon (${t.stage.difficulty}): rolled ${t.roll} vs ${t.target}. Boon: ${t.amount} ${t.unit}. The daemon takes ${paid} Corruption.`;
+    } else {
+      gainCorruption(t.takeover.corruptionGained);
+      line = `Unleash the daemon (${t.stage.difficulty}): rolled ${t.roll} vs ${t.target}, and it fails. The boon lasts one action, `
+        + `then the daemon has control for ${t.takeover.rounds} round${t.takeover.rounds === 1 ? '' : 's'}`
+        + `${t.takeover.corruptionGained ? ` (${t.takeover.corruptionGained} Corruption)` : ''}.`;
+    }
+    setResult(line);
+    await note(`${name}: ${line}`);
+  };
+
   const ins = insanityTrack(insanity);
   const cor = corruptionTrack(corruption);
 
@@ -149,6 +233,46 @@ export default function NervePanel({
         {pending.trauma > 0 && <button className="rt-btn" disabled={busy} onClick={trauma}>Trauma Test ({pending.trauma})</button>}
         {pending.malignancy > 0 && <button className="rt-btn" disabled={busy} onClick={malignancy}>Malignancy Test ({pending.malignancy})</button>}
       </div>
+
+      {(corruption > 0 || possessed) && (
+        <>
+          <div className="rt-conds-h">Possession</div>
+          {!possessed ? (
+            <>
+              <p className="rt-vox-hint">
+                Only when the GM rules a daemon has taken hold, and only with the player’s say-so. It costs 2d10
+                Corruption at once.
+              </p>
+              <div className="rt-btnrow">
+                <button className="rt-btn ghost" disabled={busy} onClick={takeHold}>A daemon takes hold</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="rt-vox-hint">
+                {stage
+                  ? <><b>{stage.name}.</b> Resisting is {stage.difficulty}. {stage.summary}</>
+                  : 'Possessed, with no Corruption yet.'}
+              </p>
+              <div className="rt-btnrow">
+                <button className="rt-btn" disabled={busy || !stage} onClick={control}>The daemon asserts control</button>
+                {stage && stage.id === 'puppet' && (
+                  <button className="rt-btn" disabled={busy} onClick={push}>The daemon pushes a skill (+{PUPPET_BONUS})</button>
+                )}
+              </div>
+              <div className="rt-gmmods">
+                <label><span className="rt-der-k">Draw on it for</span>
+                  <select className="rt-sel" value={boon} onChange={(e) => setBoon(e.target.value)}>
+                    {BOONS.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </label>
+                <button className="rt-btn" disabled={busy || !stage} onClick={draw}>Unleash the daemon</button>
+                <button className="rt-btn ghost" disabled={busy} onClick={castOut}>Cast it out</button>
+              </div>
+            </>
+          )}
+        </>
+      )}
       {result && <p className="rt-vox-hint" role="status">{result}</p>}
     </>
   );

@@ -134,8 +134,9 @@ for (const career of CHAR_TIER_CAREERS) {
   assert.ok(seen.every(Boolean), career + ': every characteristic must have a tier');
   assert.equal(new Set(ALL_CHARS.filter((k) => tierFor(career, k) === 'primary')).size
     + new Set(ALL_CHARS.filter((k) => tierFor(career, k) === 'secondary')).size
-    + new Set(ALL_CHARS.filter((k) => tierFor(career, k) === 'tertiary')).size,
-    9, career + ': the three tiers must not overlap');
+    + new Set(ALL_CHARS.filter((k) => tierFor(career, k) === 'tertiary')).size
+    + new Set(ALL_CHARS.filter((k) => tierFor(career, k) === 'tertiaryTau')).size,
+    9, career + ': the tiers must not overlap');
 }
 
 // spot checks against the supplied matrix
@@ -145,7 +146,16 @@ assert.equal(tierFor('Rogue Trader', 'per'), 'tertiary');
 assert.equal(tierFor('Kroot Mercenary', 'per'), 'primary', 'Kroot has five primary stats');
 assert.equal(tierFor('Kroot Mercenary', 'fel'), 'tertiary');
 assert.equal(tierFor("T'au Fire Warrior", 'bs'), 'primary');
-assert.equal(tierFor("T'au Fire Warrior", 'ws'), 'tertiary');
+// The T'au's own costs, from the Tau Character Guide (p.13).
+assert.equal(tierFor("T'au Fire Warrior", 'ws'), 'tertiaryTau');
+assert.equal(tierFor("T'au Fire Warrior", 's'), 'tertiaryTau');
+assert.equal(tierFor("T'au Fire Warrior", 'int'), 'primary');
+assert.equal(tierFor("T'au Fire Warrior", 'per'), 'primary');
+assert.equal(tierFor("T'au Fire Warrior", 'wp'), 'secondary');
+assert.equal(tierFor("T'au Fire Warrior", 'fel'), 'secondary');
+assert.deepEqual(['simple', 'intermediate', 'trained', 'expert'].map((l) => advanceCost('tertiaryTau', l)), [500, 750, 1000, 2500]);
+assert.equal(cumulativeAdvanceCost('tertiaryTau', 4), 500 + 750 + 1000 + 2500, 'the last Weapon Skill step is dear');
+assert.equal(advanceCost('tertiaryTau', 'expert') > advanceCost('tertiary', 'expert'), true);
 assert.equal(tierFor('Nonesuch Career', 'ws'), null);
 assert.equal(tierFor('Rogue Trader', 'nonsense'), null);
 

@@ -91,6 +91,38 @@ export const EXTENDED_ACTIONS = [
 
 export const actionById = (id) => EXTENDED_ACTIONS.find((a) => a.id === id) || null;
 
+/* ------------------- Drydock's cheat sheet: what the table rolls itself -------------------
+   Drydock lists fourteen Extended Actions and six Manoeuvres. The dashboard
+   runs ten of the actions above (Evasive Manoeuvres is the helmsman's, and
+   Drydock counts it among the manoeuvres, which is where the helmsman's roll
+   belongs). The five below are in the rulebook and are not run from here: the
+   effects are one line each, and the table resolves the rest from the book.
+   Written for this app in its own words. */
+
+export const REFERENCE_ACTIONS = [
+  { id: 'disinformation', name: 'Disinformation', effect: 'Calculated lies that make the crew fight harder.' },
+  { id: 'flank_speed', name: 'Flank Speed', effect: 'Overpowers the engines for more speed, sometimes with dangerous consequences.' },
+  { id: 'hail_the_enemy', name: 'Hail the Enemy', effect: 'Contacts an enemy vessel to intimidate it, mock it, or make a deal.' },
+  { id: 'hit_and_run', name: 'Hit and Run', effect: 'Sends raiding parties across to cripple an enemy vessel.' },
+  { id: 'jam_communications', name: 'Jam Communications', effect: 'Stops an enemy ship using long-range communications.' }
+];
+
+// How far a ship may turn at the end of its basic move: 90 degrees for a
+// transport, raider or frigate, 45 for a light cruiser or anything larger.
+export const TURN_LIMITS = { small: 90, large: 45 };
+export const turnLimit = (hullClass) =>
+  (/cruiser|battleship/i.test(String(hullClass || '')) ? TURN_LIMITS.large : TURN_LIMITS.small);
+
+// Each takes a Pilot (Space Craft) test with the ship's Manoeuvrability.
+export const MANOEUVRES = [
+  { id: 'adjust_bearing', name: 'Adjust Bearing', effect: 'Lets the ship turn sooner in its move.' },
+  { id: 'adjust_speed', name: 'Adjust Speed', effect: 'Lets the ship speed up or slow down.' },
+  { id: 'adjust_speed_and_bearing', name: 'Adjust Speed and Bearing', effect: 'Speed up or slow down while turning sooner.' },
+  { id: 'come_to_new_heading', name: 'Come to New Heading', effect: 'Lets the ship turn twice.' },
+  { id: 'disengage', name: 'Disengage', effect: 'Tested against the other ships\u2019 Detection, to flee the battle.' },
+  { id: 'evasive_manoeuvres', name: 'Evasive Manoeuvres', effect: 'Makes the ship harder to hit (see Evasion).' }
+];
+
 // May this station take this action? The server checks this as well as the
 // field permissions — an action is gated by role, its writes by field.
 export function mayTakeAction(actionId, roleId, { isGm = false } = {}) {
@@ -216,11 +248,15 @@ export function rangeBand(distanceVU, weaponRange) {
   // No range is not point-blank. Without it, an unnamed weapon reported
   // "short" and collected the +10 for being in a range it does not have.
   if (r <= 0) return 'out';
-  if (d > r) return 'out';
+  // Drydock's cheat sheet: half the range or less is +10, up to the range is
+  // no modifier, and up to twice the range is still a shot at -10. Only past
+  // twice the range is there no shot at all.
+  if (d > r * 2) return 'out';
+  if (d > r) return 'long';
   return d <= r / 2 ? 'short' : 'standard';
 }
 
-export const RANGE_MODIFIERS = { short: 10, standard: 0, out: null };
+export const RANGE_MODIFIERS = { short: 10, standard: 0, long: -10, out: null };
 
 export const rangeModifier = (distanceVU, weaponRange) =>
   RANGE_MODIFIERS[rangeBand(distanceVU, weaponRange)];
@@ -289,11 +325,16 @@ export function toHit({
   };
 }
 
-// 1 hit for succeeding, +1 per Degree of Success, capped at the weapon's
+// 1 hit for succeeding, +1 per Degree of Success for a macrobattery and +1 per
+// three Degrees for a lance (Drydock's cheat sheet), capped at the weapon's
 // Strength. Strength is the cap, not the number of dice.
-export function hitsScored(degreesOfSuccess, strength) {
+export const DEGREES_PER_LANCE_HIT = 3;
+export function hitsScored(degreesOfSuccess, strength, weaponClass = 'macro') {
   const str = Math.max(0, Math.floor(Number(strength) || 0));
-  return Math.min(1 + dos(degreesOfSuccess), str);
+  const extra = weaponClass === 'lance'
+    ? Math.floor(dos(degreesOfSuccess) / DEGREES_PER_LANCE_HIT)
+    : dos(degreesOfSuccess);
+  return Math.min(1 + extra, str);
 }
 
 /* ------------------------------ attack resolution ------------------------------ */
@@ -322,7 +363,7 @@ export function resolveAttack({
 
   const scored = hits != null
     ? Math.max(0, Math.floor(Number(hits) || 0))
-    : hitsScored(degreesOfSuccess, str);
+    : hitsScored(degreesOfSuccess, str, cls);
 
   const turretRating = Math.max(0, Number(target.turretRating) || 0);
   const shields = Math.max(0, Number(target.voidShields) || 0);

@@ -203,9 +203,17 @@ assert.equal(bestiaryEntry(null), null);
     assert.ok(Number.isInteger(b.threatTier) && b.threatTier >= 0 && b.threatTier <= 4,
       `${b.name}: threatTier is ${b.threatTier}`);
     // A tier and its advice travel together; one without the other is a
-    // half-merged row.
-    assert.equal(Boolean(b.threatTier), Boolean(b.counterTactics),
-      `${b.name}: tier and counter-tactics must both be present or both absent`);
+    // half-merged row. A creature converted from Wrath & Glory is the one
+    // exception: its tier is the book's own Threat tier, there is no Tactica
+    // sheet to take advice from, and it must say which book and page it came
+    // from instead.
+    if (b.converted) {
+      assert.ok(b.threatTier >= 1, `${b.name}: a converted creature has a tier`);
+      assert.ok(b.source && b.source.book && Number.isInteger(b.source.page), `${b.name}: a converted creature cites its page`);
+    } else {
+      assert.equal(Boolean(b.threatTier), Boolean(b.counterTactics),
+        `${b.name}: tier and counter-tactics must both be present or both absent`);
+    }
     if (b.counterTactics) {
       // Low enough to let a terse real line through — the Mutant
       // Abomination's whole entry is "Heavy fire." — while still catching a

@@ -218,14 +218,32 @@ export function chordLength(field, a, b) {
 
 /* c is the centre of the arc in degrees clockwise from the bow, w its full
    width. A mount with no arc on the chart is unconstrained. */
-export const ARC_SLOTS = ['prow', 'port', 'starboard', 'dorsal'];
+export const ARC_SLOTS = ['prow', 'port', 'starboard', 'dorsal', 'keel'];
 export const ARC_DEFAULTS = Object.freeze({
   prow: Object.freeze({ c: 0, w: 90 }),
   port: Object.freeze({ c: 270, w: 90 }),
   starboard: Object.freeze({ c: 90, w: 90 }),
-  dorsal: Object.freeze({ c: 0, w: 270 })
+  dorsal: Object.freeze({ c: 0, w: 270 }),
+  // A keel mount fires in every direction (Drydock's cheat sheet).
+  keel: Object.freeze({ c: 0, w: 360 })
 });
 export const MIN_ARC = 10;
+
+/* On a light cruiser or anything larger the prow covers fore, port and
+   starboard, 270 degrees; on a smaller ship it is the forward quarter only
+   (Drydock's cheat sheet). The chart's prow arc is the small-ship one, so it
+   is widened here for a large class, and only while the table has left it as
+   the default: an arc the table has set by hand stays exactly as it set it. */
+export const PROW_WIDE = 270;
+export const isLargeClass = (cls) => /cruiser|battleship|battlecruiser/i.test(String(cls || ''));
+export function arcOf(m, ship, slot) {
+  const a = slot && m && m.arcs ? m.arcs[slot] : null;
+  if (a && slot === 'prow' && isLargeClass(ship && ship.cls)
+    && a.c === ARC_DEFAULTS.prow.c && a.w === ARC_DEFAULTS.prow.w) {
+    return { c: 0, w: PROW_WIDE };
+  }
+  return a;
+}
 
 const norm360 = (d) => ((d % 360) + 360) % 360;
 // The signed difference a - b, folded into -180..180.
@@ -1205,7 +1223,7 @@ const bearingExact = (a, b) => norm360((Math.atan2(b.x - a.x, -(b.y - a.y)) * 18
 export function inArc(map, ship, slot, p) {
   const m = map && map.arcs ? map : readVoidMap(map);
   const relative = Math.round(norm360(bearingExact(ship, p) - num(ship.heading)) * 10) / 10;
-  const arc = slot ? m.arcs[slot] : null;
+  const arc = arcOf(m, ship, slot);
   if (!arc) return { inArc: true, slot: slot || null, relative, arc: null };
   const inside = arc.w >= 360 || Math.abs(angleDiff(relative, arc.c)) <= arc.w / 2 + 1e-9;
   return { inArc: inside, slot, relative, arc };
@@ -1230,7 +1248,7 @@ export function arcWedges(map, ship, weapons) {
   const order = [...ARC_SLOTS, ''];
   return order.filter((k) => by.has(k)).map((k) => {
     const g = by.get(k);
-    const arc = k ? m.arcs[k] : { c: 0, w: 360 };
+    const arc = k ? arcOf(m, ship, k) : { c: 0, w: 360 };
     return {
       slot: g.slot, range: g.range, weapons: g.weapons,
       centre: norm360(heading + arc.c), width: arc.w,

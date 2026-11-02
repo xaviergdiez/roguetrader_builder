@@ -26,7 +26,12 @@ import {
   insanityTrack, corruptionTrack
 } from './sanity.js';
 import { MODES, PSY_RATINGS, DISCIPLINES, MAX_PUSH } from './psychic.js';
-import { PHASES, PHASE_LABELS, EXTENDED_ACTIONS, EVASION_CAP } from './voidcombat.js';
+import {
+  PHASES, PHASE_LABELS, EXTENDED_ACTIONS, EVASION_CAP, REFERENCE_ACTIONS, MANOEUVRES, TURN_LIMITS,
+  RANGE_MODIFIERS, DEGREES_PER_LANCE_HIT
+} from './voidcombat.js';
+import { HULLS, HULL_GROUPS, SP_RESERVE, hullGroup, ESSENTIAL_CATEGORIES } from './ship.js';
+import { PROW_WIDE } from './voidmap.js';
 import { roleById } from './shiproles.js';
 
 export const CODEX_NOTE = 'Plain-language summaries written for this table, not the rulebook’s own wording. '
@@ -45,7 +50,8 @@ export const SECTIONS = [
   { id: 'crits', title: 'Critical damage', blurb: 'The tables, by damage type and where the hit landed.' },
   { id: 'mind', title: 'Fear and insanity', blurb: 'Fear tests, the Shock table, and the Insanity track.' },
   { id: 'psychic', title: 'Psychic powers', blurb: 'Manifesting, Psy Rating, and the disciplines.' },
-  { id: 'void', title: 'Void combat', blurb: 'The ship turn and what each station can do in it.' },
+  { id: 'void', title: 'Void combat', blurb: 'The ship turn, manoeuvres, shooting, and what each station can do.' },
+  { id: 'building', title: 'Building a voidship', blurb: 'The five steps, power and space, and which hulls take what.' },
   { id: 'skills', title: 'Skills', blurb: 'What each skill is for.' },
   { id: 'talents', title: 'Talents and powers', blurb: 'What each talent and special power does.' }
 ];
@@ -202,6 +208,49 @@ export function buildCodex() {
   }
   out.push(E('void', 'evasion-cap', 'Evasion', 'Core rule',
     `Incoming attacks suffer \u221210, and a further \u221210 per Degree of Success on the manoeuvre, to a maximum of ${signed(EVASION_CAP)}.`));
+  out.push(E('void', 'manoeuvres', 'Manoeuvres', 'Core rule',
+    `Each ship\u2019s turn is one Manoeuvre Action and one Shooting Action. The basic Manoeuvre moves the ship forward its Speed in Void Units, `
+    + `then it may turn: up to ${TURN_LIMITS.small} degrees for a transport, raider or frigate, and up to ${TURN_LIMITS.large} for a light cruiser or larger. `
+    + 'A manoeuvre changes that move, and each is a Pilot (Space Craft) test with the ship\u2019s Manoeuvrability.',
+    MANOEUVRES.map((m) => [m.name, m.effect])));
+  out.push(E('void', 'shooting', 'Shooting', 'Core rule',
+    'One crew member directs every weapon in the Shooting Action, testing Ballistic Skill. Each weapon fires into the arc of its mount.',
+    [
+      ['Range', `Half the weapon\u2019s range or less is ${signed(RANGE_MODIFIERS.short)}; up to its range is no modifier; up to twice its range is ${signed(RANGE_MODIFIERS.long)}. Past that there is no shot.`],
+      ['Hits', `A macrobattery scores a further hit for every Degree of Success; a lance scores one for every ${DEGREES_PER_LANCE_HIT}. The weapon\u2019s Strength caps either.`],
+      ['Void shields', 'Each void shield removes one hit before any damage is rolled.'],
+      ['Damage', 'The damage of every macrobattery hit is added together and the ship\u2019s Armour comes off the total. A lance\u2019s damage goes straight to Hull Integrity.'],
+      ['Prow', `Fore on a ship smaller than a light cruiser. Fore, port and starboard (${PROW_WIDE} degrees) on a light cruiser or larger.`],
+      ['Dorsal', 'Fore, port and starboard.'],
+      ['Port and starboard', 'That side only.'],
+      ['Keel', 'Every direction.']
+    ]));
+  for (const a of REFERENCE_ACTIONS) {
+    out.push(E('void', slug(a.id), a.name, 'Ship action', a.effect,
+      [['On the dashboard', 'Not run from here. Resolve it from the core rulebook.']]));
+  }
+
+  /* ---- building a voidship ---- */
+  const weights = HULL_GROUPS.map((g) => [g.name, HULLS.filter((h) => hullGroup(h.cls) === g.id).map((h) => h.name).join(', ') || 'none in the catalogue']);
+  out.push(E('building', 'steps', 'The five steps', 'Drydock',
+    'Drydock, the free player\u2019s aid, breaks building a starship into five steps, in this order.',
+    [
+      ['1  Ship Points', 'Find out how many the Warrant of Trade provides.'],
+      ['2  Hull', `Pick one that costs fewer than the Explorers have, and leave at least ${SP_RESERVE} Ship Points to fit it out.`],
+      ['3  Personality', 'Roll a Machine Spirit Oddity and a Past History, and note what each does before any component is chosen.'],
+      ['4  Essentials', `One component, and only one, from each of the ${ESSENTIAL_CATEGORIES.length} categories.`],
+      ['5  Supplementals', 'Any number, within the Ship Points. What Ship Points remain are redeemed for Profit Factor.']
+    ]));
+  out.push(E('building', 'power-space', 'Power and space', 'Core rule',
+    'The Plasma Drive provides the ship\u2019s power and the hull provides its space; both are fixed. Most components need some of each, '
+    + 'and the total a ship\u2019s components need must not be more than it has. The penalties for going over are in the core rulebook.'));
+  out.push(E('building', 'hull-weights', 'Hull weights', 'Drydock',
+    'Drydock sorts hulls into five weights and says which weight each Essential Component is for. The builder notes a component fitted outside its weight; it does not forbid it.',
+    weights));
+  out.push(E('building', 'once-only', 'Fitted once only', 'Drydock',
+    'Armour Plating, the Armoured Prow and the Tenebro-Maze may be fitted only once to a vessel. The builder will not accept a second Tenebro-Maze.'));
+  out.push(E('building', 'personality', 'Oddities and histories', 'Core rule',
+    'Roll once on each table, d10 each, and write both on the ship\u2019s sheet. They change what the ship can afford and how it behaves, which is why they come before the components.'));
 
   /* ---- skills, talents ---- */
   for (const [name, text] of Object.entries(SKILLS)) out.push(E('skills', slug(name), name, 'Skill', text));

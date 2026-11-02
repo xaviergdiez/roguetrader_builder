@@ -209,7 +209,9 @@ export function readHostile(h) {
     // difficulty reckoning can leave it out rather than weigh a blank as
     // though it were a real combatant.
     custom: Boolean(h && h.custom),
-    note: (h && h.note) ? String(h.note).slice(0, 200) : null
+    // Long enough for a converted creature's role, its book page and the traits
+    // left for the GM to apply; the page is the part that must not be cut off.
+    note: (h && h.note) ? String(h.note).slice(0, 480) : null
   };
 }
 

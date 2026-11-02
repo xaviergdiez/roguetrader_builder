@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import TipButton from './TipButton.jsx';
 import { makeRng } from './mapgen.js';
 import {
   readVoidMap, BODY_KINDS, FIELD_KINDS, SIDES, STATES, newVoidId,
@@ -55,13 +56,13 @@ function Ico({ name, size = 18 }) {
   );
 }
 
+// The chart's own glyphs in the shared button, so its toolbar names itself
+// under the pointer the way the battle map's does.
 function IconButton({ icon, label, onClick, on = false, disabled = false }) {
   return (
-    <button type="button" className={'rt-ico-btn' + (on ? ' on' : '')}
-      title={label} aria-label={label} aria-pressed={on || undefined}
-      disabled={disabled} onClick={onClick}>
+    <TipButton label={label} onClick={onClick} on={on} disabled={disabled}>
       <Ico name={icon} />
-    </button>
+    </TipButton>
   );
 }
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import TipButton from './TipButton.jsx';
 import {
   MAP_THEMES, themeById, readMap, cellKey, parseKey,
   TILE_CATALOG, TILE_CATEGORIES, stampCells, paintCells,
@@ -128,58 +129,13 @@ function Icon({ name, size = 18 }) {
   );
 }
 
-/* A button that is only a picture, with its name on it for the pointer and the
-   screen reader alike.
-
-   The name is also drawn as a tooltip of our own. `title` stays — it is what
-   a screen reader reads and what a patient pointer gets — but the browser
-   waits about a second before showing it and draws it in system grey, which
-   is long enough that a GM mid-session guesses at a dozen icons instead of
-   reading them. This one appears at once, in the app's own type.
-
-   It is nudged sideways when it would run off the window: the toolbar wraps,
-   so a button regularly ends a row hard against the right edge, and a
-   centred tooltip would hang half its text outside the glass.
-
-   The nudge is worked out from where the tooltip WOULD sit, centred on the
-   button, rather than from where it currently sits. An incremental
-   correction looks the same in one pass and is wrong in two: `place` runs
-   from more than one event, both passes measure the same unmoved tooltip,
-   and the shifts add up — the first version pushed a tooltip 182px when 91
-   was the whole fix, which left it nowhere near its own icon. */
+// The chart and the deck share one icon button (TipButton), which draws the
+// name under the pointer; this passes the deck's own glyphs into it.
 function IconButton({ icon, label, onClick, on = false, disabled = false, className = '' }) {
-  const tipRef = useRef(null);
-  const [shift, setShift] = useState(0);
-  const place = (e) => {
-    const btn = e.currentTarget;
-    const tip = tipRef.current;
-    if (!tip) return;
-    const view = btn.ownerDocument.defaultView || window;
-    const b = btn.getBoundingClientRect();
-    // The width is the one measurement the shift cannot affect — and it is
-    // the real width, so a two-word label is not moved as if it were a
-    // sentence. Hidden with visibility rather than display precisely so
-    // there is a box to measure before anyone has seen it.
-    const half = tip.getBoundingClientRect().width / 2;
-    const mid = b.left + b.width / 2;
-    const pad = 8;
-    let want = 0;
-    if (mid + half > view.innerWidth - pad) want = (view.innerWidth - pad) - (mid + half);
-    if (mid - half + want < pad) want = pad - (mid - half);
-    setShift(Math.round(want));
-  };
   return (
-    <button type="button" className={'rt-ico-btn' + (on ? ' on' : '') + (className ? ' ' + className : '')}
-      title={label} aria-label={label} aria-pressed={on || undefined}
-      disabled={disabled} onClick={onClick}
-      onMouseEnter={place} onFocus={place}
-      // Measured again next time rather than kept: the window may have been
-      // resized, or the bar rewrapped, since this one was placed.
-      onMouseLeave={() => setShift(0)} onBlur={() => setShift(0)}>
+    <TipButton label={label} onClick={onClick} on={on} disabled={disabled} className={className}>
       <Icon name={icon} />
-      <span className="rt-ico-tip" ref={tipRef} aria-hidden="true"
-        style={{ '--tip-shift': shift + 'px' }}>{label}</span>
-    </button>
+    </TipButton>
   );
 }
 

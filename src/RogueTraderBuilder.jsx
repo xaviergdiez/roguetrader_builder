@@ -3156,9 +3156,19 @@ export default function RogueTraderBuilder({ me, cloud }) {
      table is looking at. */
   const [mapTab, setMapTab] = useState('build');
   const [mapMode, setMapMode] = useState('stamp');
-  const sharedMapTools = useMemo(
-    () => ({ tab: mapTab, setTab: setMapTab, mode: mapMode, setMode: setMapMode }),
-    [mapTab, mapMode]);
+  // The overlay's settings too: two copies with a weapon each meant the
+  // control panel said Heavy Flamer while the map drew a lasgun.
+  const [mapWeapon, setMapWeapon] = useState('lasgun');
+  const [mapLos, setMapLos] = useState(true);
+  const [mapRings, setMapRings] = useState(true);
+  const [mapCone, setMapCone] = useState(15);
+  const sharedMapTools = useMemo(() => ({
+    tab: mapTab, setTab: setMapTab, mode: mapMode, setMode: setMapMode,
+    weaponKey: mapWeapon, setWeaponKey: setMapWeapon,
+    showLos: mapLos, setShowLos: setMapLos,
+    showRings: mapRings, setShowRings: setMapRings,
+    coneAngle: mapCone, setConeAngle: setMapCone
+  }), [mapTab, mapMode, mapWeapon, mapLos, mapRings, mapCone]);
   const [mapErr, setMapErr] = useState('');
   // The void chart's window, owned here for the same reason. voidShot is a
   // shot lined up on the chart waiting to be read by the gunnery panel: it

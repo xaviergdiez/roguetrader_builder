@@ -392,6 +392,16 @@ export const nextDoorState = (s) => {
   const i = DOOR_STATES.indexOf(s);
   return DOOR_STATES[(i < 0 ? 0 : i + 1) % DOOR_STATES.length];
 };
+
+/* What a CLICK on a door does: opens it, or shuts it. Two states, because a
+   door at a table is a thing you open and close and that is the whole of it.
+
+   Jamming is not in the cycle. It is a thing the GM decides — the mechanism is
+   wrecked, the lock is fused — and a state nobody can click past by accident:
+   cycling through it meant every second click on a door left it jammed, which
+   blocks like a shut door and reads like one, so the party was stopped by a
+   door the GM never meant to jam. It is set by name, from the menu. */
+export const toggledDoorState = (s) => (s === 'open' ? 'closed' : 'open');
 export const doorBlocks = (state) => state !== 'open';
 
 /* A bulkhead and a hatch are both doors and differ in what it takes to get
@@ -1184,7 +1194,7 @@ export function playDoor(map, pos, to = null) {
   const k = cellKey(pos.x, pos.y);
   const door = m.doors[k];
   if (!door) return null;
-  const state = to && DOOR_STATES.includes(to) ? to : nextDoorState(door.state);
+  const state = to && DOOR_STATES.includes(to) ? to : toggledDoorState(door.state);
   if (state === door.state) return {};
   const doors = { ...m.doors, [k]: { ...door, state } };
   const patch = { doors };
@@ -1200,26 +1210,27 @@ export function playDoor(map, pos, to = null) {
     const sides = [[0, -1], [1, 0], [0, 1], [-1, 0]]
       .map(([dx, dy]) => ({ x: pos.x + dx, y: pos.y + dy }))
       .filter((c) => m.floor[cellKey(c.x, c.y)] && !m.doors[cellKey(c.x, c.y)]);
+    /* THE PARTY COMES TO THE DOOR, and stops at it.
+
+       What is beyond a door is only SHOWN if it can be reached from where the
+       party is standing (visibleExplored), so a door opened while they were
+       three rooms away lit the room beyond in the record and showed nothing
+       on screen. Opening a door is the party being at it, so they are moved
+       to the side they opened it from: the near side, the one already within
+       reach, and never the far one.
+
+       Moving them to the FAR side is what this used to do, and it is why
+       shutting a door hid the corridor behind them instead of the room they
+       had just opened. They stop at the threshold instead — the room beyond
+       is in sight while the door is open and gone the moment it is shut, and
+       the way they came stays lit either way.
+
+       With nothing in reach touching the door, the GM is opening one away
+       from the party altogether; they are taken to be at it, or opening it
+       would show nothing at all. */
     const near = sides.filter((c) => reach.has(cellKey(c.x, c.y)));
-    if (near.length === 0 && sides.length) {
-      // Nowhere the party can see touches this door, so lighting it would show
-      // nothing: the party is taken to be on one side of it.
-      patch.viewpoint = sides[0];
-    }
-    /* OPENING A DOOR NO LONGER WALKS THE PARTY THROUGH IT.
-
-       It used to move them to the far side, on the reasoning that a door is
-       opened in order to go through it. The cost only showed when the door
-       was shut again: with the party now standing in the new room, shutting
-       it took the corridor they came along off the board and left the room
-       they had just opened lit — backwards. Shutting a door should take back
-       what opening it revealed, which it now does, because the party is still
-       on the side they opened it from and what lies beyond a shut door is not
-       in sight from there.
-
-       Moving the party is the GM's to do, by revealing a square, and it was
-       never anything the door knew for certain anyway: a door is opened to
-       look through it at least as often as to walk through it. */
+    if (near.length) patch.viewpoint = near[0];
+    else if (sides.length) patch.viewpoint = sides[0];
   }
   return patch;
 }

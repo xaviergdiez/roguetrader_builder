@@ -534,12 +534,23 @@ export default function BattleMap({
   const modeRef = useRef(mode);
   tabRef.current = tab;
   modeRef.current = mode;
+  // What the flag interrupted, so one click on a room gives it straight back.
+  const beforeStartRef = useRef(null);
+  /* Picking a tool. The flag is the one that TOGGLES: pressing it again puts
+     back what was in hand rather than leaving the GM holding a tool that eats
+     their next click on the map. Every other tool is simply taken up. */
+  const pickTool = (id) => {
+    if (id !== 'start') { beforeStartRef.current = null; setMode(id); return; }
+    if (mode === 'start') {
+      setMode(beforeStartRef.current || 'fog');
+      beforeStartRef.current = null;
+      return;
+    }
+    beforeStartRef.current = mode;
+    setMode('start');
+  };
   // The tool last used on each tab, so going back to one finds it as it was.
-  /* The tool each tab was last left on. Play starts on NOTHING rather than on
-     the fog, so the first visit can choose by what the deck needs — the flag
-     when it has no starting room yet, the fog once it has one. After that the
-     GM's own last choice wins, which is what this is for. */
-  const lastToolRef = useRef({ build: 'stamp', play: null });
+  const lastToolRef = useRef({ build: 'stamp', play: 'fog' });
   const [tileId, setTileId] = useState('corridor_1x5');
   const [rotation, setRotation] = useState(0);
   const [markerType, setMarkerType] = useState('objective');
@@ -705,12 +716,24 @@ export default function BattleMap({
   }, [deckOpen]);
   const [hover, setHover] = useState(null);
 
-  const [weaponKey, setWeaponKey] = useState('lasgun');
+  const [weaponKeyOwn, setWeaponKeyOwn] = useState('lasgun');
   const [origin, setOrigin] = useState(null);
   const [aim, setAim] = useState(null);
-  const [showLos, setShowLos] = useState(true);
-  const [showRings, setShowRings] = useState(true);
-  const [coneAngle, setConeAngle] = useState(15);
+  const [showLosOwn, setShowLosOwn] = useState(true);
+  const [showRingsOwn, setShowRingsOwn] = useState(true);
+  const [coneAngleOwn, setConeAngleOwn] = useState(15);
+  /* The overlay is aimed from whichever copy of this the GM is looking at, so
+     its settings are shared the way the tool is. Left per-copy, the control
+     panel said Heavy Flamer while the map drew a lasgun — two menus for one
+     overlay, disagreeing. */
+  const weaponKey = shared ? shared.weaponKey : weaponKeyOwn;
+  const setWeaponKey = shared ? shared.setWeaponKey : setWeaponKeyOwn;
+  const showLos = shared ? shared.showLos : showLosOwn;
+  const setShowLos = shared ? shared.setShowLos : setShowLosOwn;
+  const showRings = shared ? shared.showRings : showRingsOwn;
+  const setShowRings = shared ? shared.setShowRings : setShowRingsOwn;
+  const coneAngle = shared ? shared.coneAngle : coneAngleOwn;
+  const setConeAngle = shared ? shared.setConeAngle : setConeAngleOwn;
 
   // A clean map: every toolbar and readout hidden, only the deck left. The
   // overlays, templates and fog still draw, because those are the map.
@@ -1241,7 +1264,15 @@ export default function BattleMap({
     // The room the party arrives in. Click inside it; click inside it again
     // to take the choice back.
     if (mode === 'start') {
+      /* ONE CLICK AND IT IS DONE. The flag is a thing you set once, not a
+         tool you hold: left in hand it eats every click on the Play tab, so
+         the GM reaching for a door or a room to reveal moves the party's
+         starting point instead. Setting it hands the tool straight back to
+         whatever was in hand before — the fog, usually — and the fog that
+         the flag lifts comes back with it. */
       patch({ start: setStartRoom(m, pos) });
+      setMode(beforeStartRef.current || 'fog');
+      beforeStartRef.current = null;
       return;
     }
     if (mode === 'door') {
@@ -1630,11 +1661,10 @@ export default function BattleMap({
     lastToolRef.current[from] = modeRef.current;
     const ids = t === 'play' ? PLAY_TOOLS : BUILD_TOOLS;
     const want = lastToolRef.current[t];
-    /* A deck with no starting room opens on the flag, because that is the one
-       thing that has to be set before it is played: without it a published
-       deck opens in the dark. With one already set, Play opens on the fog. */
-    const next = ids.includes(want) ? want
-      : (t === 'play' && !(mapRef.current && mapRef.current.start) ? 'start' : ids[0]);
+    /* Play opens on the fog, never on the flag. Arriving with the flag in
+       hand would mean the first click meant for a door moved the party's
+       starting point instead; the flag is reached by pressing it. */
+    const next = ids.includes(want) ? want : ids[0];
     if (t === from && modeRef.current === next) return;
     tabRef.current = t;
     modeRef.current = next;
@@ -1645,7 +1675,10 @@ export default function BattleMap({
     if (t === 'play') { setGenOpen(false); setDeckOpen(false); setGridOpen(false); }
   };
   // Picking a tool by any road (the toolbar, the menu) is remembered for its tab.
-  useEffect(() => { lastToolRef.current[tabRef.current] = mode; }, [mode]);
+  // The flag is a one-shot and is never what a tab is "left on": remembering
+  // it would hand it back on the next visit, which is the interference all
+  // of this is trying to avoid.
+  useEffect(() => { if (mode !== 'start') lastToolRef.current[tabRef.current] = mode; }, [mode]);
   // A different map is on screen: the tab that suits it. The live map has the
   // fog on and is played; a deck out of the library is built.
   useEffect(() => { chooseTab(m.fog ? 'play' : 'build'); }, [historyKey]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -2892,6 +2925,22 @@ export default function BattleMap({
   };
   const menuActions = () => {
     const a = [];
+    /* THE DOOR UNDER THE POINTER. A click opens or shuts a door and nothing
+       else, so jamming one — the mechanism wrecked, the lock fused — is asked
+       for here, by name, on the door that was right-clicked. */
+    const at = menu && menu.cell;
+    const here = at && m.doors[cellKey(at.x, at.y)];
+    if (here) {
+      for (const st of DOOR_STATES) {
+        a.push({
+          key: 'door-' + st,
+          label: `${st === 'jammed' ? 'Jam' : st === 'open' ? 'Open' : 'Shut'} the ${
+            doorKindById(here.kind).name.toLowerCase()}`,
+          checked: here.state === st,
+          run: () => clickDoor({ x: at.x, y: at.y }, st)
+        });
+      }
+    }
     if (library) {
       a.push({ key: 'library', label: 'Library\u2026 (decks, environments, files)', icon: 'save',
         run: () => { setLibOpen(true); setShowOptions(true); } });
@@ -3197,7 +3246,7 @@ export default function BattleMap({
         <div className="rt-bm-group" role="group" aria-label="Tools">
           {toolsOf(tab).map((x) => (
             <IconButton key={x.id} icon={x.icon} label={x.label} on={mode === x.id}
-              onClick={() => setMode(x.id)} />
+              onClick={() => pickTool(x.id)} />
           ))}
         </div>
 
@@ -4089,7 +4138,7 @@ export default function BattleMap({
             {toolsOf(tab).map((x) => (
               <button key={x.id} type="button" role="menuitemradio" aria-checked={mode === x.id}
                 className={'rt-bm-menu-tool' + (mode === x.id ? ' on' : '')}
-                onClick={doMenu(() => setMode(x.id))}>
+                onClick={doMenu(() => pickTool(x.id))}>
                 <Icon name={x.icon} size={16} /><span>{x.label}</span>
               </button>
             ))}

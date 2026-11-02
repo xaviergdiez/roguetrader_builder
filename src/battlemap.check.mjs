@@ -1887,6 +1887,48 @@ console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   assert.equal(grown.obscuring['1,1'], 'light');
   assert.equal(grown.obscuring['7,1'], 'light', 'the second copy carries its foliage');
 }
+
+/* ---- the flame cone's angle ----
+   coneCells takes HALF the cone. The overlay used to hand it the number the
+   GM typed, so a 30-degree flamer template came out at sixty; the caller
+   halves it now, and this pins the contract down so it cannot drift back. */
+{
+  const m = readMap({ cols: 41, rows: 41, metresPerSquare: 1 });
+  const origin = { x: 20, y: 20 };
+  const east = { x: 40, y: 20 };
+  // The widest cell off the aim line, as an angle from it.
+  const widest = (half) => {
+    let worst = 0;
+    for (const c of coneCells(m, origin, east, 10, half)) {
+      if (c.x === origin.x && c.y === origin.y) continue;
+      const a = Math.abs(Math.atan2(c.y - origin.y, c.x - origin.x)) * 180 / Math.PI;
+      if (a > worst) worst = a;
+    }
+    return worst;
+  };
+  assert.ok(widest(15) <= 15.001, `half 15 stays within 15 degrees (got ${widest(15).toFixed(1)})`);
+  assert.ok(widest(30) <= 30.001, `half 30 stays within 30 (got ${widest(30).toFixed(1)})`);
+  assert.ok(widest(30) > widest(15), 'and a wider half angle really is wider');
+
+  // Symmetric about the aim: a cone that leans is a cone that was measured
+  // from the wrong place.
+  const cells = coneCells(m, origin, east, 10, 20);
+  const above = cells.filter((c) => c.y < origin.y).length;
+  const below = cells.filter((c) => c.y > origin.y).length;
+  assert.equal(above, below, `the cone is even about its aim (${above} vs ${below})`);
+
+  // It reaches as far as the weapon does, and no further.
+  const far = coneCells(m, origin, east, 10, 20)
+    .reduce((n, c) => Math.max(n, Math.hypot(c.x - origin.x, c.y - origin.y)), 0);
+  assert.ok(far <= 10.001, `nothing past the range (${far.toFixed(2)} squares)`);
+  assert.ok(far > 9, 'and it does reach it');
+
+  // Junk in does not throw. Aimed at its own square it still burns that
+  // square, which is asserted above and is the rule this file already settled.
+  assert.deepEqual(coneCells(m, null, east, 10, 20), []);
+  assert.deepEqual(coneCells(m, origin, east, 0, 20), [], 'no range is no cone');
+}
+
 console.log('battlemap.check.mjs: rotation passed');
 
 /* ---- big decks: packed storage and clean layers ---- */

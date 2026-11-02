@@ -1842,6 +1842,9 @@ export function areaCells(map, centre, radiusM) {
    rather than a constant — 15 degrees either side gives the narrow teardrop
    a flamer is usually read as, and a GM who rules it wider can say so. The
    origin square is always included: you are standing in your own fire. */
+/* `halfAngleDeg` is HALF the cone, which is what the geometry wants and NOT
+   what a GM means by "a 30 degree cone". The caller halves the number the GM
+   typed; it did not always, and the cone came out twice the angle asked for. */
 export function coneCells(map, origin, towards, rangeM, halfAngleDeg = 15) {
   const m = readMap(map);
   if (!origin || !towards) return [];

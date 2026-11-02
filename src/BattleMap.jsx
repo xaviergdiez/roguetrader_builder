@@ -721,7 +721,13 @@ export default function BattleMap({
   const [aim, setAim] = useState(null);
   const [showLosOwn, setShowLosOwn] = useState(true);
   const [showRingsOwn, setShowRingsOwn] = useState(true);
-  const [coneAngleOwn, setConeAngleOwn] = useState(15);
+  /* The whole cone, in degrees, not the half-angle. The control said "Cone °"
+     and was handed straight to coneCells as the HALF angle, so a GM asking
+     for 30 — a flamer's template in Rogue Trader — got sixty, and the wider
+     they set it the further it ran from what the number said. 30 here draws
+     exactly what the old default of 15 drew; nothing moves until someone
+     types a number, and now the number means what it says. */
+  const [coneAngleOwn, setConeAngleOwn] = useState(30);
   /* The overlay is aimed from whichever copy of this the GM is looking at, so
      its settings are shared the way the tool is. Left per-copy, the control
      panel said Heavy Flamer while the map drew a lasgun — two menus for one
@@ -1593,7 +1599,7 @@ export default function BattleMap({
       blast: weapon && weapon.blastM && target
         ? onDeck(m, unobstructed(m, target, areaCells(m, target, weapon.blastM))) : [],
       cone: weapon && weapon.isFlame && target
-        ? onDeck(m, unobstructed(m, origin, coneCells(m, origin, target, weapon.range, coneAngle))) : [],
+        ? onDeck(m, unobstructed(m, origin, coneCells(m, origin, target, weapon.range, coneAngle / 2))) : [],
       aura: kind === 'field'
         ? onDeck(m, unobstructed(m, origin, areaCells(m, origin, weapon.auraM))) : []
     };
@@ -2192,7 +2198,7 @@ export default function BattleMap({
           ctx, ox, oy,
           Math.atan2(target.y - origin.y, target.x - origin.x),
           inSquares(weapon.range),
-          coneAngle * Math.PI / 180
+          (coneAngle / 2) * Math.PI / 180
         ));
       }
       if (overlay.blast.length && target) {
@@ -4019,7 +4025,7 @@ export default function BattleMap({
           )}
           <label className="rt-bm-num"><input type="checkbox" checked={showLos}
             onChange={(e) => setShowLos(e.target.checked)} /><span>Line of sight</span></label>
-          {weapon && weapon.isFlame && num('Cone °', coneAngle, setConeAngle, 5, 90, 5)}
+          {weapon && weapon.isFlame && num('Cone, whole °', coneAngle, setConeAngle, 10, 180, 5)}
           <button type="button" className="rt-btn"
             onClick={() => { originRef.current = null; setOrigin(null); setAim(null); }}>Clear overlay</button>
         </>)}

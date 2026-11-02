@@ -1982,13 +1982,22 @@ const CSS = `
   font-size:10px;letter-spacing:.04em;color:var(--dim);text-transform:uppercase;}
 .rt-bm-num input{width:62px;}
 .rt-bm-hint{font-size:11px;color:var(--dim);font-style:italic;}
-/* FULL SCREEN FLOATS THE CONTROLS over the deck rather than pushing it down.
+/* THE MAP'S OWN WINDOW FLOATS THE CONTROLS over the deck instead of pushing
+   it down.
 
-   On a projector the map is the whole point of the screen, and bringing the
-   toolbars up to change one thing shoved the deck down by their height and
-   shrank it — the table watched the map jump about while the GM reached for a
-   setting. Laid over it, the deck does not move at all. */
-.rt-bm-full .rt-bm-opts{position:absolute;top:0;left:0;right:0;z-index:40;
+   That window exists to show the deck, and bringing the toolbars up to change
+   one thing shoved it down by their height and shrank it — the table watched
+   the map jump about while the GM reached for a setting. Laid over it, the
+   deck does not move at all.
+
+   Keyed on the WINDOW and not on full screen. It was full screen alone at
+   first, which missed the ordinary case completely: a maximised window is not
+   a full-screen one, so the map everybody actually runs still jumped. (The
+   check that was supposed to catch this added the full-screen class by hand
+   rather than going full screen, so it proved the rule worked and not that it
+   applied.) The in-tab map is left in flow, where the page scrolls and
+   nothing is being projected. */
+.rt-bm-win .rt-bm-opts{position:absolute;top:0;left:0;right:0;z-index:40;
   max-height:72vh;overflow-y:auto;padding:8px 10px 4px;
   background:rgba(4,7,5,.94);border-bottom:1px solid var(--brass);
   box-shadow:0 10px 28px rgba(0,0,0,.6);}
@@ -2300,6 +2309,8 @@ const CSS = `
    would darken the corners of a deck that is being projected onto a table,
    and the layered background would show through the grid. */
 .rt-mapwin{min-height:0;background:#05070a;}
+/* With the controls floating, the deck has the window to itself. */
+.rt-bm-win .rt-bm-stage{height:calc(100vh - 24px);}
 .rt-mapwin::after{content:none;}
 /* The canvas is a window onto the deck, not the deck: it sticks to the
    top-left of whatever is scrolled into view and is redrawn for it. The
@@ -3180,7 +3191,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [mapWeapon, setMapWeapon] = useState('lasgun');
   const [mapLos, setMapLos] = useState(true);
   const [mapRings, setMapRings] = useState(true);
-  const [mapCone, setMapCone] = useState(15);
+  const [mapCone, setMapCone] = useState(30);   // the whole cone, not the half
   const sharedMapTools = useMemo(() => ({
     tab: mapTab, setTab: setMapTab, mode: mapMode, setMode: setMapMode,
     weaponKey: mapWeapon, setWeaponKey: setMapWeapon,

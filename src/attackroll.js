@@ -27,6 +27,7 @@ import {
   weaponProfile, ammoCost, spendAmmo, jamCheck, overheatResult, actionById, weaponAllowsAction, resolveAttack
 } from './groundcombat.js';
 import { damageTypeById } from './crits.js';
+import { GEAR } from './gear.js';
 
 /* The attacks a sheet can roll for itself. The rest of the action list needs
    somebody to shoot back at (Overwatch, Suppressing Fire's Pinning tests) or is
@@ -51,6 +52,20 @@ export function weaponsFor(gear, skillType) {
   return out;
 }
 
+/* Every weapon the gear catalogue holds that rolls this skill, for adding one a
+   character is carrying but has not listed. Grouped by the book's kind (Pistol,
+   Basic, Melee...) and in alphabetical order inside it. The label is the
+   catalogue name with its first letter raised, which gearInfo reads back. */
+export function catalogueWeapons(skillType) {
+  const out = [];
+  for (const key of Object.keys(GEAR)) {
+    const label = key.charAt(0).toUpperCase() + key.slice(1);
+    const w = weaponProfile(label);
+    if (w && w.skillType === skillType && w.damage) out.push({ label, kind: w.kind || 'Other' });
+  }
+  return out.sort((a, b) => a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label));
+}
+
 // What this weapon can do, in the order a player would reach for them.
 export function actionsFor(weapon) {
   if (!weapon) return [];
@@ -72,6 +87,30 @@ export function roundsLeft(state, weapon) {
 }
 
 export const isJammed = (state) => Boolean(state && state.jammed);
+
+/* Whether a weapon can be fired as it stands: not jammed, and with a round in it
+   (a weapon with no clip, a blade or a thrown grenade, is always ready). */
+export function isReady(weapon, state) {
+  if (!weapon || isJammed(state)) return false;
+  const left = roundsLeft(state, weapon);
+  return left == null || left > 0;
+}
+
+/* The weapon to reach for: the first of `weapons` that is ready, not counting
+   `except` (the one that just failed), or null when none is. `states` is the
+   sheet's whole weapon state, keyed by label. */
+export function nextReady(weapons, states, except = null) {
+  return (weapons || []).find((w) => w.label !== except && isReady(w, (states || {})[w.label])) || null;
+}
+
+/* What a weapon's chip says about it: nothing for a blade, otherwise JAMMED,
+   EMPTY, or the rounds left over the clip. */
+export function weaponStatus(weapon, state) {
+  if (isJammed(state)) return 'JAMMED';
+  const left = roundsLeft(state, weapon);
+  if (left == null) return '';
+  return left === 0 ? 'EMPTY' : `${left}/${weapon.clip}`;
+}
 
 /* One attack. `base` is the character's WS or BS, `modifier` what the player
    chose on the difficulty ladder and the toggles, `roll` the d100 and `d10` the

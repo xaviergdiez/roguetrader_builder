@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import {
   ATTACK_ACTION_IDS, weaponsFor, actionsFor, actionBonus, roundsLeft, isJammed, attack, damageSpec,
-  overheatDamage, reloaded, jamCleared
+  overheatDamage, reloaded, jamCleared, isReady, nextReady, weaponStatus, catalogueWeapons
 } from './attackroll.js';
 import { weaponProfile } from './groundcombat.js';
 
@@ -202,6 +202,46 @@ const W = (label) => weaponProfile(label);
   r = attack({ weapon: W('Autogun'), state, base: 90, roll: 10 });
   assert.equal(r.blocked, null);
   assert.equal(r.rounds, 29);
+}
+
+/* ---- several weapons: which is ready, what each chip says, what to reach for next ---- */
+{
+  const guns = ['Good Pulse Rifle', 'Good Pulse Carbine', 'Best Pulse Pistol'].map(W);
+  const [rifle, carbine, pistol] = guns;
+  assert.equal(isReady(rifle, null), true, 'a fresh gun is ready');
+  assert.equal(isReady(rifle, { jammed: true }), false);
+  assert.equal(isReady(rifle, { rounds: 0 }), false, 'an empty gun is not ready');
+  assert.equal(isReady(rifle, { rounds: 1 }), true);
+  assert.equal(isReady(W('Chainsword'), null), true, 'a blade has no clip to run dry');
+  assert.equal(isReady(null, null), false);
+
+  assert.equal(weaponStatus(rifle, null), `${rifle.clip}/${rifle.clip}`);
+  assert.equal(weaponStatus(rifle, { rounds: 12 }), `12/${rifle.clip}`);
+  assert.equal(weaponStatus(rifle, { rounds: 0 }), 'EMPTY');
+  assert.equal(weaponStatus(rifle, { jammed: true, rounds: 20 }), 'JAMMED', 'a jam outranks the count');
+  assert.equal(weaponStatus(W('Chainsword'), null), '');
+
+  const states = { [rifle.label]: { jammed: true } };
+  assert.equal(nextReady(guns, states).label, carbine.label, 'the jammed rifle is skipped');
+  assert.equal(nextReady(guns, states, carbine.label).label, pistol.label, 'and so is the one just tried');
+  assert.equal(nextReady(guns, { ...states, [carbine.label]: { rounds: 0 }, [pistol.label]: { jammed: true } }), null, 'nothing ready is null');
+  assert.equal(nextReady([], {}), null);
+  assert.equal(nextReady(guns, null).label, rifle.label, 'no state at all: the first');
+}
+
+/* ---- the catalogue, for adding a weapon the character carries ---- */
+{
+  const bs = catalogueWeapons('bs');
+  const ws = catalogueWeapons('ws');
+  assert.ok(bs.length > 20 && ws.length > 5, `plenty of each: ${bs.length} ranged, ${ws.length} melee`);
+  assert.ok(bs.some((w) => w.label === 'Laspistol') && ws.some((w) => w.label === 'Chainsword'));
+  assert.ok(!bs.some((w) => w.label === 'Chainsword') && !ws.some((w) => w.label === 'Laspistol'), 'by skill');
+  assert.ok(bs.every((w) => weaponProfile(w.label) && weaponProfile(w.label).damage), 'every one parses, with a damage line');
+  assert.equal(new Set(bs.map((w) => w.label)).size, bs.length, 'none twice');
+  const kinds = bs.map((w) => w.kind);
+  assert.deepEqual(kinds, [...kinds].sort((a, b) => a.localeCompare(b)), 'grouped by kind');
+  // a character can be handed one and it is then offered
+  assert.equal(weaponsFor(['Laspistol'], 'bs').length, 1);
 }
 
 console.log('attackroll: all checks passed');

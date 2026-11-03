@@ -91,7 +91,7 @@ import {
 } from './groundcombat.js';
 import {
   weaponsFor, actionsFor, actionBonus, roundsLeft, attack as weaponAttack, damageSpec, overheatDamage,
-  reloaded, jamCleared
+  reloaded, jamCleared, nextReady, weaponStatus, catalogueWeapons
 } from './attackroll.js';
 import NervePanel, { SpotPanel } from './NervePanel.jsx';
 import CampaignPanel from './CampaignPanel.jsx';
@@ -1549,6 +1549,20 @@ const CSS = `
 .rt-wpn{margin:0 0 10px;padding-bottom:8px;border-bottom:1px solid var(--brass-dim);}
 .rt-wpn-pick{display:block;margin-bottom:6px;}
 .rt-wpn .rt-sel{margin-bottom:6px;}
+.rt-wpns{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:4px;margin-bottom:8px;}
+.rt-wpn-opt{display:flex;flex-direction:column;align-items:flex-start;gap:1px;cursor:pointer;
+  padding:6px 8px;text-align:left;font-family:var(--mono);color:var(--text);
+  border:1px solid var(--brass-dim);background:rgba(6,12,8,.6);
+  transition:color .14s,border-color .14s;}
+.rt-wpn-opt b{font-weight:500;font-size:11px;letter-spacing:.03em;}
+.rt-wpn-opt span{font-size:10px;letter-spacing:.08em;color:var(--brass-lit);}
+.rt-wpn-opt:hover{border-color:var(--brass);color:var(--bone);}
+.rt-wpn-opt.bad span{color:var(--bad);}
+.rt-wpn-opt.on{color:#161004;border-color:var(--gold-lit);
+  background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
+.rt-wpn-opt.on span{color:#3d2c06;}
+.rt-wpn-opt.on.bad span{color:#6a1d12;font-weight:600;}
+.rt-wpn-opt:focus-visible{outline:2px solid var(--green);outline-offset:1px;}
 .rt-wpn .rt-btnrow{align-items:center;}
 .rt-roller-h{display:flex;align-items:baseline;gap:10px;margin-bottom:9px;}
 .rt-roller-t{flex:1;font-family:var(--display);font-size:12px;font-weight:600;
@@ -6338,7 +6352,7 @@ function ConditionChips({ list = [], onClear }) {
 const ROLL_LOG_MAX = 6;
 
 function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [],
-  weapons = [], weaponState = {}, onWeaponState = null, strengthBonus = 0 }) {
+  weapons = [], weaponState = {}, onWeaponState = null, onAddWeapon = null, strengthBonus = 0 }) {
   const [mod, setMod] = useState(0);
   const [on, setOn] = useState([]);   // indexes of applied conditionals
 
@@ -6346,13 +6360,26 @@ function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [
      attack is made with something: the weapons the character carries are
      offered, the roll spends their rounds, can jam or overheat them, and the
      hit that follows arrives with the weapon's own damage. The rules are in
-     attackroll.js (and groundcombat.js under it). With no weapon chosen, or
-     none carried, it is the plain skill test it always was. */
-  const armed = weapons.length > 0 && Boolean(onWeaponState);
-  const [pick, setPick] = useState(armed ? weapons[0].label : '');
+     attackroll.js (and groundcombat.js under it). With no weapon chosen it is
+     the plain skill test it always was.
+
+     The weapon section is there whenever the sheet can keep weapon state (the
+     dossier), even for a character whose gear lists no weapon the app can
+     read: it says so and offers the catalogue, rather than quietly leaving
+     the player with a bare d100 and no sign a picker was ever meant to be there.
+     Every weapon shows its rounds, JAMMED or EMPTY on its own button, so
+     changing to another when one has jammed is a single press. */
+  const armed = Boolean(onWeaponState) && (charKey === 'ws' || charKey === 'bs');
+  const [picked, setPicked] = useState(null);   // null: not chosen yet, '' : no weapon
   const [actionId, setActionId] = useState('standard_attack');
   const [note, setNote] = useState('');
   const [oh, setOh] = useState(null);     // overheat damage, once rolled
+  // Until the player chooses, the first weapon that can fire; afterwards what they chose.
+  const ready = nextReady(weapons, weaponState);
+  const pick = picked === '' ? ''
+    : picked != null && weapons.some((w) => w.label === picked) ? picked
+    : (ready || weapons[0] || { label: '' }).label;
+  const catalogue = useMemo(() => (armed && onAddWeapon ? catalogueWeapons(charKey) : []), [armed, onAddWeapon, charKey]);
   const weapon = armed ? (weapons.find((w) => w.label === pick) || null) : null;
   const actions = weapon ? actionsFor(weapon) : [];
   const action = actions.find((a) => a.id === actionId) || actions[0] || null;
@@ -6373,7 +6400,12 @@ function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [
       roll: roll1d100(), d10: d(10)
     });
     // An empty or jammed weapon is not fired, and nothing is rolled or spent.
-    if (r.blocked) { setNote(r.reason); return; }
+    if (r.blocked) {
+      const alt = nextReady(weapons, weaponState, weapon.label);
+      setNote(alt ? `${r.reason} Or use the ${alt.label}.` : r.reason);
+      return;
+    }
+    setPicked(weapon.label);      // stay with it, even if it jams and another becomes the first ready
     onWeaponState(weapon.label, r.patch);
     onRoll({
       roll: r.roll, target: r.target, success: r.success, degrees: r.degrees, automatic: r.automatic,
@@ -6404,14 +6436,55 @@ function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [
 
       {armed && (
         <div className="rt-wpn">
-          <label className="rt-wpn-pick">
-            <span className="rt-conds-h">Weapon</span>
-            <select className="rt-sel" value={pick} aria-label="Weapon for this test"
-              onChange={(e) => { setPick(e.target.value); setNote(''); setOh(null); }}>
-              {weapons.map((w) => <option key={w.label} value={w.label}>{w.label}</option>)}
-              <option value="">{'\u2014 no weapon: roll the skill \u2014'}</option>
-            </select>
-          </label>
+          <div className="rt-conds-h">{charKey === 'ws' ? 'Melee weapon' : 'Firearm'}</div>
+          {weapons.length === 0 && (
+            <p className="rt-vox-hint" role="status">
+              {charKey === 'ws'
+                ? 'No melee weapon on this character\u2019s gear list.'
+                : 'No firearm on this character\u2019s gear list.'}
+              {catalogue.length > 0 ? ' Add the one they carry below, and it is kept on the sheet.' : ' Add one under Gear to roll the attack with it.'}
+            </p>
+          )}
+          <div className="rt-wpns" role="radiogroup" aria-label="Weapon for this test">
+            {weapons.map((w) => {
+              const s = weaponState[w.label] || {};
+              const status = weaponStatus(w, s);
+              const bad = status === 'JAMMED' || status === 'EMPTY';
+              return (
+                <button key={w.label} role="radio" aria-checked={pick === w.label}
+                  className={'rt-wpn-opt' + (pick === w.label ? ' on' : '') + (bad ? ' bad' : '')}
+                  onClick={() => { setPicked(w.label); setNote(''); setOh(null); setActionId('standard_attack'); }}>
+                  <b>{w.label}</b>
+                  {status && <span>{status}</span>}
+                </button>
+              );
+            })}
+            {weapons.length > 0 && (
+              <button role="radio" aria-checked={pick === ''}
+                className={'rt-wpn-opt' + (pick === '' ? ' on' : '')}
+                onClick={() => { setPicked(''); setNote(''); setOh(null); }}>
+                <b>No weapon</b>
+                <span>plain test</span>
+              </button>
+            )}
+          </div>
+          {catalogue.length > 0 && (
+            <label className="rt-wpn-pick">
+              <select className="rt-sel" value="" aria-label="Add a weapon this character carries"
+                onChange={(e) => {
+                  const label = e.target.value;
+                  if (!label) return;
+                  onAddWeapon(label); setPicked(label); setNote(''); setOh(null);
+                }}>
+                <option value="">{'+ Add a weapon from the catalogue\u2026'}</option>
+                {[...new Set(catalogue.map((w) => w.kind))].map((kind) => (
+                  <optgroup key={kind} label={kind}>
+                    {catalogue.filter((w) => w.kind === kind).map((w) => <option key={w.label} value={w.label}>{w.label}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+          )}
           {weapon && <WeaponLine label={weapon.label} className="rt-vox-hint" />}
           {weapon && actions.length > 1 && (
             <div className="rt-diffs" role="group" aria-label="How it is used">
@@ -6478,6 +6551,16 @@ function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [
             <b>{latest.weapon} JAMMED</b> {'\u2014'} an automatic miss. Clear the jam (a Full Action and a Ballistic
             Skill Test) before it can fire again.
           </p>
+          {(() => {
+            const alt = nextReady(weapons, weaponState, latest.weapon);
+            return alt && (
+              <div className="rt-btnrow">
+                <button className="rt-opt" onClick={() => { setPicked(alt.label); setNote(''); setActionId('standard_attack'); }}>
+                  Use the {alt.label} instead
+                </button>
+              </div>
+            );
+          })()}
         </div>
       )}
       {latest && latest.weapon && latest.saved && (
@@ -6785,6 +6868,7 @@ function StatSheet({ totals, mods, rolls, onReroll, picked, gear = [], armed = n
               weapons={armed && (k === 'ws' || k === 'bs') ? weaponsFor(gear, k) : []}
               weaponState={armed ? armed.state : {}}
               onWeaponState={armed ? armed.set : null}
+              onAddWeapon={armed ? armed.add : null}
               strengthBonus={Math.floor((totals.s || 0) / 10)}
               /* Origin-path traits and worn augmetics both surface here as
                  toggles rather than moving the total: +20 Strength from a
@@ -7431,7 +7515,7 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
 
       {totals && (
         <StatSheet totals={totals} mods={build.mods} picked={build.picked} gear={allGear}
-          armed={onWeaponState ? { state: extras.weaponState || {}, set: onWeaponState } : null} />
+          armed={onWeaponState ? { state: extras.weaponState || {}, set: onWeaponState, add: (label) => onAddExtra('gear', label) } : null} />
       )}
 
       {/* Tabbed lower panel, after the CRPG sheet: one parchment panel with

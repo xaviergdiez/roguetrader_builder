@@ -1,9 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { framingStyle, panFraming, DEFAULT_FRAMING } from './framing.js';
-import BattleMap from './BattleMap.jsx';
-import VoidPanel from './VoidPanel.jsx';
-import VoidMap from './VoidMap.jsx';
-import MapLibrary from './MapLibrary.jsx';
 import { shrinkToDataUrl } from './imageshrink.js';
 import {
   readLocal as readLocalGrounds, writeLocal as writeLocalGrounds,
@@ -26,7 +22,6 @@ import {
   homebrewIds, describeRestore, reindexTried, markReindexTried
 } from './heal.js';
 import MapWindow from './MapWindow.jsx';
-import CodexDialog from './CodexDialog.jsx';
 import InquisitionCard from './InquisitionCard.jsx';
 import { armourSummary, parseArmour, soakAt } from './armour.js';
 import {
@@ -144,6 +139,7 @@ import {
 } from './points.js';
 import { SKILLS, TALENTS, explainEntry, charGroup } from './glossary.js';
 import { buildLore } from './lore.js';
+import { guarded, lazyGuarded } from './ErrorBoundary.jsx';
 import {
   TAU_BASE, TAU_WOUND_DIE, TAU_WOUND_MULT, TAU_FATE, TAU_STARTING, TAU_TRAITS, COMPETENCES, TAU_CAREER
 } from './tau.js';
@@ -1198,6 +1194,27 @@ function useVoxEngine() {
     pitch, setPitch, rate, setRate
   };
 }
+
+/* ====================== PANES THAT FAIL ON THEIR OWN ======================
+   Each large screen sits in its own error boundary (ErrorBoundary.jsx), so one
+   that cannot draw, from a hand-edited or imported record of the wrong shape
+   say, shows a short message with Try again and Close instead of blanking the
+   whole app, and the rest keeps working. Made once here so each component's
+   identity is stable across renders. A caller may pass resetKey (the open
+   character's id, for the two that show one) to clear the message when
+   another is opened. */
+// The four heavy screens are fetched when first opened, not with the page.
+const BattleMap = lazyGuarded(() => import('./BattleMap.jsx'), 'the battle map');
+const VoidMap = lazyGuarded(() => import('./VoidMap.jsx'), 'the void map');
+const VoidPanel = lazyGuarded(() => import('./VoidPanel.jsx'), 'the void panel');
+const CodexDialog = lazyGuarded(() => import('./CodexDialog.jsx'), 'the Lore pages');
+const MapLibrary = lazyGuarded(() => import('./MapLibrary.jsx'), 'the map library');
+const GmPanel = guarded(GmPanelBase, 'the GM tools');
+const BridgePanel = guarded(BridgePanelBase, 'the Bridge');
+const ShipPanel = guarded(ShipPanelBase, 'the ship');
+const RosterDialog = guarded(RosterDialogBase, 'the roster');
+const StepPane = guarded(StepPaneBase, 'this step');
+const DossierPane = guarded(DossierPaneBase, 'this character sheet');
 
 /* ============================== STYLES ============================== */
 
@@ -4623,6 +4640,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
         {stepIx < 6 && (
           <StepPane
+            resetKey={charId}
             step={STEPS[stepIx]}
             selected={sel[STEPS[stepIx].id]}
             choices={choices}
@@ -4652,6 +4670,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
 
         {stepIx === 7 && (
           <DossierPane
+            resetKey={charId}
             name={name} gender={gender} background={background} setBackground={setBackground}
             build={build} totals={totals}
             ws={ws} onDamage={takeDamage} onAdjustMax={changeMax}
@@ -5240,7 +5259,7 @@ function SaveClashDialog({ existing, name, onOverwrite, onNew, onCancel }) {
   );
 }
 
-function RosterDialog({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose,
+function RosterDialogBase({ roster, currentId, onSave, onOpen, onDelete, onNew, onClose,
   err, me, cloud, note, busy }) {
   const dialogRef = useRef(null);
   useEffect(() => {
@@ -6898,7 +6917,7 @@ const STEP_LEAD = {
   career: 'Your role aboard the ship. This decides your starting Skills, Talents and gear.'
 };
 
-function StepPane({ step, selected, choices, onSelect, onChoose, showIntro, name, setName, gender, setGender, onImport, xenosHome, onSkipToCareer }) {
+function StepPaneBase({ step, selected, choices, onSelect, onChoose, showIntro, name, setName, gender, setGender, onImport, xenosHome, onSkipToCareer }) {
   return (
     <div>
       {showIntro && (
@@ -7181,7 +7200,7 @@ const ADD_SOURCES = {
   notes:   { title: 'Add a note',     options: [] }
 };
 
-function DossierPane({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
+function DossierPaneBase({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   corruption = 0, insanity = 0, onCorruption, onInsanity,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
   psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onAltRank, onWeaponState,
@@ -7955,7 +7974,7 @@ const QUICK_LINES = [
    from a station goes through the same patch call, which the server checks
    against the station's fields. */
 
-function BridgePanel({ onLore, code, setCode, characterName, charId, shipRole,
+function BridgePanelBase({ onLore, code, setCode, characterName, charId, shipRole,
   blueprint, fleet, combat, roster, card, characteristics, charWounds,
   insanity = 0, corruption = 0, onInsanity, onCorruption,
   onDynastyPf, onClose }) {
@@ -9784,7 +9803,7 @@ const gunSurface = (g) => ({
   log: g.log.slice(0, 6)
 });
 
-function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
+function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
   homebrew, setHomebrew, mapWindow, setMapWindow, sharedMapTools, mapErr, setMapErr,
   voidRoster = [], voidWindow = false, setVoidWindow = () => {},
   voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {}, gun, voidLib = null, mapLib = null,
@@ -11293,7 +11312,7 @@ function HomebrewEditor({ homebrew, setHomebrew, err, cloud, note = '', leftCoun
   );
 }
 
-function ShipPanel({ blueprint, setBlueprint, homebrew, onEditHomebrew,
+function ShipPanelBase({ blueprint, setBlueprint, homebrew, onEditHomebrew,
   shipRole, setShipRole, careerName, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {

@@ -21,7 +21,7 @@
 //                                   that the index has lost; adds entries only
 
 import { deckKey, redis } from "../lib/storage.js";
-import { requireUser, getUser, saveUser } from "../lib/auth.js";
+import { requireUser, getUser, updateUser, answerBusy } from "../lib/auth.js";
 import { runDecks } from "../lib/decks.js";
 
 export default async function handler(req, res) {
@@ -30,19 +30,26 @@ export default async function handler(req, res) {
   const uid = await requireUser(req, res);
   if (!uid) return;
 
-  // Mutated and saved whole, so fields this endpoint knows nothing about
-  // (email, chars, homebrew, grounds) survive.
+  // A snapshot, for reads and early refusals. Every change goes through
+  // updateUser, which makes it on the record as it is at that moment, so a
+  // save made at the same time by another endpoint is not overwritten.
   const user = (await getUser(uid)) ?? {};
-  const out = await runDecks({
-    method: req.method,
-    did: req.query.d,
-    body: req.body,
-    user,
-    redis,
-    key: (did) => deckKey(uid, did),
-    save: (u) => saveUser(uid, u),
-    reindex: req.query.reindex === "1",
-  });
+  let out;
+  try {
+    out = await runDecks({
+      method: req.method,
+      did: req.query.d,
+      body: req.body,
+      user,
+      redis,
+      key: (did) => deckKey(uid, did),
+      update: (fn) => updateUser(uid, fn),
+      reindex: req.query.reindex === "1",
+    });
+  } catch (e) {
+    if (answerBusy(res, e)) return;
+    throw e;
+  }
 
   if (out.status === 405) {
     res.setHeader("Allow", "GET, PUT, DELETE, POST");

@@ -12,7 +12,7 @@
 //   DELETE /api/characters?c=<id>   -> { ok: true }
 
 import { charKey, isCharId, redis } from "../lib/storage.js";
-import { requireUser, getUser, saveUser } from "../lib/auth.js";
+import { requireUser, getUser, updateUser, answerBusy } from "../lib/auth.js";
 
 const MAX_NAME = 60;
 // Upstash rejects a record over 1MB. A generated portrait is ~250KB as a data
@@ -26,13 +26,25 @@ const text = (v, fallback = "") => {
 };
 
 export default async function handler(req, res) {
+  try {
+    return await handle(req, res);
+  } catch (e) {
+    if (answerBusy(res, e)) return;
+    throw e;
+  }
+}
+
+const list = (v) => (Array.isArray(v) ? v : []);
+
+async function handle(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
   const uid = await requireUser(req, res);
   if (!uid) return;
 
-  // Mutated and saved whole, so fields this endpoint knows nothing about
-  // (email, name) survive. The auth callback preserves chars the same way.
+  // A snapshot, for reads. Every change goes through updateUser, which makes
+  // it on the record as it is at that moment, so a save made at the same time
+  // by another endpoint is not overwritten (see updateUser in lib/auth.js).
   const user = (await getUser(uid)) ?? {};
   if (!Array.isArray(user.chars)) user.chars = [];
 
@@ -73,15 +85,13 @@ export default async function handler(req, res) {
     // Body before index: an index entry pointing at a missing body would show
     // an un-openable character, while an unindexed body is merely inert.
     await redis.set(charKey(uid, cid), body.state);
-    user.chars = [...user.chars.filter((c) => c.id !== cid), meta];
-    await saveUser(uid, user);
+    await updateUser(uid, (u) => { u.chars = [...list(u.chars).filter((c) => c.id !== cid), meta]; });
     return res.status(200).json(meta);
   }
 
   if (req.method === "DELETE") {
     if (!cid) return res.status(400).json({ error: "character_id_required" });
-    user.chars = user.chars.filter((c) => c.id !== cid);
-    await saveUser(uid, user);
+    await updateUser(uid, (u) => { u.chars = list(u.chars).filter((c) => c.id !== cid); });
     await redis.del(charKey(uid, cid));
     return res.status(200).json({ ok: true });
   }

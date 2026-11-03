@@ -18,7 +18,7 @@
 //                                    that the index has lost; adds entries only
 
 import { groundKey, isCharId, redis } from "../lib/storage.js";
-import { requireUser, getUser, saveUser } from "../lib/auth.js";
+import { requireUser, getUser, updateUser, answerBusy } from "../lib/auth.js";
 import {
   MAX_TEXTURE_BYTES, MAX_SPRITES_BYTES, MAX_GROUNDS, IMAGE_URL, meta, runGroundsReindex,
 } from "../lib/grounds.js";
@@ -33,13 +33,23 @@ import {
 const spritesKey = (uid, gid) => `${groundKey(uid, gid)}:sprites`;
 
 export default async function handler(req, res) {
+  try {
+    return await handle(req, res);
+  } catch (e) {
+    if (answerBusy(res, e)) return;
+    throw e;
+  }
+}
+
+async function handle(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
   const uid = await requireUser(req, res);
   if (!uid) return;
 
-  // Mutated and saved whole, so fields this endpoint knows nothing about
-  // (email, chars, homebrew) survive.
+  // A snapshot, for reads and early refusals. Every change goes through
+  // updateUser, which makes it on the record as it is at that moment, so a
+  // save made at the same time by another endpoint is not overwritten.
   const user = (await getUser(uid)) ?? {};
   if (!Array.isArray(user.grounds)) user.grounds = [];
 
@@ -120,15 +130,24 @@ export default async function handler(req, res) {
       else { await redis.set(spritesKey(uid, gid), sprites); hasSprites = true; }
     }
     const entry = meta(gid, body, hasSprites);
-    user.grounds = [...user.grounds.filter((g) => g.id !== gid), entry];
-    await saveUser(uid, user);
+    const done = await updateUser(uid, (u) => {
+      const have = Array.isArray(u.grounds) ? u.grounds : [];
+      // the limit again, on the record as it is now
+      if (!have.some((g) => g.id === gid) && have.length >= MAX_GROUNDS) return false;
+      u.grounds = [...have.filter((g) => g.id !== gid), entry];
+    });
+    if (!done.written) {
+      if (!replacing) await redis.del(groundKey(uid, gid));      // a floor nothing will ever list
+      return res.status(413).json({ error: `That is ${MAX_GROUNDS} grounds, which is the limit. Delete one first.` });
+    }
     return res.status(200).json(entry);
   }
 
   if (req.method === "DELETE") {
     if (!gid) return res.status(400).json({ error: "ground_id_required" });
-    user.grounds = user.grounds.filter((g) => g.id !== gid);
-    await saveUser(uid, user);
+    await updateUser(uid, (u) => {
+      u.grounds = (Array.isArray(u.grounds) ? u.grounds : []).filter((g) => g.id !== gid);
+    });
     // Both records, or a deleted ground's props would sit in Redis for good
     // with nothing left that could ever name them.
     await Promise.all([
@@ -143,7 +162,7 @@ export default async function handler(req, res) {
      from the signed-in account's id and nothing the caller sends. */
   if (req.method === "POST" && req.query.reindex === "1") {
     const out = await runGroundsReindex({
-      user, redis, prefix: groundKey(uid, ""), save: (u) => saveUser(uid, u),
+      user, redis, prefix: groundKey(uid, ""), update: (fn) => updateUser(uid, fn),
     });
     return res.status(out.status).json(out.json);
   }

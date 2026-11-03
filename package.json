@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "node scripts/run-checks.mjs",
+    "test": "node scripts/run-checks.mjs && node tests/run-api.mjs",
+    "test:e2e": "node tests/run-e2e.mjs"
   },
   "dependencies": {
     "@upstash/redis": "^1.38.4",

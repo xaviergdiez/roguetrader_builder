@@ -13,7 +13,8 @@
 // the player's work for the crime of not having finished. What is refused is a
 // payload large or numerous enough to be storage abuse rather than a library.
 
-import { requireUser, getUser, saveUser } from "../lib/auth.js";
+import { homebrewKey, redis } from "../lib/storage.js";
+import { requireUser, getUser, updateUser } from "../lib/auth.js";
 
 const MAX_ENTRIES = 200;
 // Raised from 100KB when the library stopped being "a few hundred bytes an
@@ -59,6 +60,9 @@ export default async function handler(req, res) {
   if (!uid) return;
 
   if (req.method === "GET") {
+    const stored = await redis.get(homebrewKey(uid));
+    if (stored != null) return res.status(200).json({ homebrew: clean(stored) });
+    // Not moved yet: a library saved before it had a key of its own is still on the record.
     const user = (await getUser(uid)) ?? {};
     return res.status(200).json({ homebrew: clean(user.homebrew) });
   }
@@ -83,10 +87,19 @@ export default async function handler(req, res) {
       });
     }
 
-    // Mutated and saved whole, so chars and dynasties survive.
-    const user = (await getUser(uid)) ?? {};
-    user.homebrew = homebrew;
-    await saveUser(uid, user);
+    // Its own key, written first; the copy on the account record (from before
+    // there was one) is then dropped, so every other endpoint stops carrying it.
+    // The drop is tidying: if the account is busy it is left for the next save,
+    // and reads prefer the key anyway.
+    await redis.set(homebrewKey(uid), homebrew);
+    try {
+      await updateUser(uid, (u) => {
+        if (!Object.prototype.hasOwnProperty.call(u, "homebrew")) return false;
+        delete u.homebrew;
+      });
+    } catch (e) {
+      if (!e || e.code !== "account_busy") throw e;
+    }
 
     return res.status(200).json({ homebrew });
   }

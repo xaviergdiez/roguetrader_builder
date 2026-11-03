@@ -7,7 +7,7 @@ import {
   createSession,
   destroySession,
   getUser,
-  saveUser,
+  updateUser,
   signInRecord,
 } from "../../lib/auth.js";
 
@@ -127,8 +127,8 @@ export default async function handler(req, res) {
 
     // Refresh who they are and keep everything else on the account: decks,
     // grounds, homebrew and tables are all stored on this record.
-    const existing = await getUser(sub);
-    await saveUser(sub, signInRecord(existing, { email, name }));
+    // Through updateUser, so a save from another device made at this moment is not overwritten.
+    await updateUser(sub, (u) => { Object.assign(u, signInRecord(u, { email, name })); });
     await createSession(res, sub, { gm: asGm });
     return res.redirect(302, "/");
   }

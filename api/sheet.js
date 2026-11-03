@@ -11,6 +11,7 @@
 // this cannot be turned into a general-purpose proxy for arbitrary hosts.
 
 import { workbookNames, sheetRows, toCsv } from "../lib/xlsx.js";
+import { requireUser } from "../lib/auth.js";
 
 const ID_RE = /^[A-Za-z0-9_-]{20,}$/;
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -34,6 +35,11 @@ async function fetchLimited(url) {
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
+
+  // Behind sign-in, like the rest: each call pulls a spreadsheet of up to 20MB
+  // through a function, and nothing here should be free for anyone to use.
+  const uid = await requireUser(req, res);
+  if (!uid) return;
 
   const { id, tab, tabs } = req.query;
   if (!ID_RE.test(String(id || ""))) {

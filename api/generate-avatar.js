@@ -12,6 +12,8 @@
 
 import { requireUser } from "../lib/auth.js";
 import { buildPrompt } from "../lib/prompt.js";
+import { redis } from "../lib/storage.js";
+import { takeAllowance, giveBack, dailyLimit, limitMessage, secondsToReset } from "../lib/quota.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MODEL = "gemini-3.1-flash-image";
@@ -55,6 +57,13 @@ export default async function handler(req, res) {
     return res.status(503).json({ error: "GEMINI_API_KEY is not configured on this deployment" });
   }
 
+  // The daily allowance: this spends the owner's money on every call.
+  const allowance = await takeAllowance(redis, { uid, limit: dailyLimit() });
+  if (!allowance.ok) {
+    res.setHeader("Retry-After", String(secondsToReset()));
+    return res.status(429).json({ error: limitMessage(allowance.limit) });
+  }
+
   try {
     // The prompt is assembled here, from the character's origin path, rather
     // than accepted from the client: a signed-in caller should not be able to
@@ -65,6 +74,7 @@ export default async function handler(req, res) {
     res.setHeader("X-Prompt", encodeURIComponent(prompt.slice(0, 900)));
     return res.status(200).send(buf);
   } catch (err) {
+    await giveBack(redis, allowance.key);          // nothing was made, so nothing is spent
     console.error("[generate-avatar]", err && err.message);
     return res.status(502).json({ error: err.message || "generation_failed" });
   }

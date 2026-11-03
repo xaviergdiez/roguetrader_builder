@@ -31,7 +31,7 @@
 // controls with the same functions; only this copy counts.
 
 import { redis } from "../lib/storage.js";
-import { requireSession, getUser, saveUser } from "../lib/auth.js";
+import { requireSession, getUser, updateUser, answerBusy } from "../lib/auth.js";
 import {
   dynastyKey, shipKey, newCode, normaliseCode,
   newDynasty, isGm, memberOf, joinDynasty, leaveDynasty,
@@ -57,24 +57,31 @@ const load = async (code) => ({
 // The dynasties an account belongs to, kept on the user record next to chars
 // so a player can find their table again without remembering the code.
 async function remember(uid, code) {
-  const user = (await getUser(uid)) ?? {};
-  const codes = Array.isArray(user.dynasties) ? user.dynasties : [];
-  if (!codes.includes(code)) {
-    user.dynasties = [...codes, code].slice(-20);
-    await saveUser(uid, user);
-  }
+  await updateUser(uid, (u) => {
+    const codes = Array.isArray(u.dynasties) ? u.dynasties : [];
+    if (codes.includes(code)) return false;
+    u.dynasties = [...codes, code].slice(-20);
+  });
 }
 
 async function forget(uid, code) {
-  const user = (await getUser(uid)) ?? {};
-  const codes = Array.isArray(user.dynasties) ? user.dynasties : [];
-  if (codes.includes(code)) {
-    user.dynasties = codes.filter((c) => c !== code);
-    await saveUser(uid, user);
-  }
+  await updateUser(uid, (u) => {
+    const codes = Array.isArray(u.dynasties) ? u.dynasties : [];
+    if (!codes.includes(code)) return false;
+    u.dynasties = codes.filter((c) => c !== code);
+  });
 }
 
 export default async function handler(req, res) {
+  try {
+    return await handle(req, res);
+  } catch (e) {
+    if (answerBusy(res, e)) return;
+    throw e;
+  }
+}
+
+async function handle(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
   const session = await requireSession(req, res);

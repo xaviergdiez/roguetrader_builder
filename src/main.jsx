@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import RogueTraderBuilder from "./RogueTraderBuilder.jsx";
 import Login from "./Login.jsx";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 
 // ponytail: plain `vite dev` has no /api, so sign-in is stubbed locally and the
 // roster stays in localStorage. Run `vercel dev` to exercise the real Google +
@@ -41,6 +42,8 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <Root />
+    <ErrorBoundary full label="the app">
+      <Root />
+    </ErrorBoundary>
   </React.StrictMode>
 );

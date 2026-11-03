@@ -6,7 +6,7 @@ import {
   damageType, qualitiesOf, weaponString, primaryWeapon, convertThreat, CHAOS_THREATS, FACTIONS
 } from './wgconvert.js';
 import { THREAT_TIERS } from './npcgen.js';
-import { BESTIARY, bestiaryEntry, byGroup, GROUPS } from './bestiary.js';
+import { BESTIARY, bestiaryEntry, GROUPS, SUPERSEDED } from './bestiary.js';
 import { bestiaryToNpc } from './npcgen.js';
 
 /* ---- every creature the book prints is here, once ---- */
@@ -221,21 +221,42 @@ const EXPECTED = [
   assert.deepEqual(convertThreat(WG_THREATS[2]), convertThreat(WG_THREATS[2]));
 }
 
-/* ---- and in the bestiary ---- */
-{
-  const groups = GROUPS.filter((g) => /^chaos_/.test(g.id));
-  assert.equal(groups.length, FACTIONS.length, 'one group a faction');
-  assert.equal(groups.reduce((s, g) => s + byGroup(g.id).length, 0), 66, 'every entry is in one');
-  for (const g of groups) assert.ok(byGroup(g.id).length > 0, `${g.id} is not empty`);
-  assert.equal(byGroup('chaos_khorne').length, 9);
-  assert.equal(byGroup('chaos_engine').length, 6);
+/* ---- and in the bestiary ----
 
-  // The Rogue Trader entries of the same name keep their names; the converted ones are told apart.
+   The 66 are converted whole, and the bestiary keeps the ones that are not the
+   same creature as something it has already (see SUPERSEDED in bestiary.js).
+   Its daemons go with the Denizens of the Warp, filed by god, and its mortals,
+   Heretic Astartes and war engines with the Chaos group. */
+{
+  const dropped = SUPERSEDED.filter(([book]) => book === 'wg');
+  assert.equal(dropped.length, 5, 'five of them are a creature the bestiary already had');
+  const kept = BESTIARY.filter((x) => x.source && x.source.book === WG_BOOK);
+  assert.equal(kept.length, 66 - dropped.length, 'the rest all reach the bestiary');
+  for (const [, name] of dropped) {
+    assert.ok(!kept.some((b) => b.name.replace(/ \(W&G\)$/, '') === name && b.converted),
+      `${name} is not in the bestiary twice`);
+  }
+  assert.equal(GROUPS.filter((g) => /^chaos_/.test(g.id)).length, 0, 'there is no group of its own for the book');
+
+  const daemons = kept.filter((b) => b.group === 'warp');
+  const gods = ['Khorne', 'Nurgle', 'Slaanesh', 'Tzeentch'];
+  assert.ok(daemons.length > 25 && daemons.every((b) => gods.includes(b.faction)), 'daemons are filed by god');
+  for (const god of gods) assert.ok(daemons.some((b) => b.faction === god), `${god} has daemons`);
+  const chaos = kept.filter((b) => b.group === 'chaos');
+  assert.deepEqual([...new Set(chaos.map((b) => b.faction))].sort(), ['Chaos engines', 'Heretic Astartes', 'Heretics and cultists']);
+  assert.equal(chaos.filter((b) => b.faction === 'Chaos engines').length, 6);
+  assert.equal(daemons.length + chaos.length, kept.length, 'every entry is in one of the two');
+
+  // The Rogue Trader entry stays, and the name the converted one briefly had still finds it.
   assert.equal(bestiaryEntry('Plaguebearer').converted, undefined);
-  assert.equal(bestiaryEntry('Plaguebearer (W&G)').converted, true);
-  assert.equal(bestiaryEntry('Beast of Nurgle (W&G)').group, 'chaos_nurgle');
-  assert.equal(bestiaryEntry('Bloodletter').group, 'chaos_khorne');
+  assert.equal(bestiaryEntry('Plaguebearer (W&G)').name, 'Plaguebearer');
+  assert.equal(bestiaryEntry('Beast of Nurgle (W&G)').name, 'Beast of Nurgle');
+  assert.equal(bestiaryEntry('Flesh Hound').name, 'Flesh Hound of Khorne');
+  assert.equal(bestiaryEntry('Mutant').name, 'Mutant Outcast');
+  assert.equal(bestiaryEntry('Bloodletter').group, 'warp');
+  assert.equal(bestiaryEntry('Bloodletter').faction, 'Khorne');
   assert.equal(bestiaryEntry('Bloodletter').source.page, 81);
+  assert.equal(bestiaryEntry('Defiler').group, 'chaos');
 
   // And it spawns on the board.
   const npc = bestiaryToNpc('Bloodletter');
@@ -245,7 +266,6 @@ const EXPECTED = [
   assert.equal(npc.fear, 3, 'the Fear test arms itself from the ability text');
   assert.match(npc.note, /Converted from Wrath & Glory/);
   assert.equal(bestiaryToNpc('Defiler').max, 34);
-  assert.equal(BESTIARY.filter((x) => x.source && x.source.book === WG_BOOK).length, 66, 'all 66 reach the bestiary');
 
   // The note that reaches the board is stored whole (encounters.js keeps 480
   // characters), so the book page at the end of it must always fit.

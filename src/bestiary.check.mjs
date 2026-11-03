@@ -4,6 +4,8 @@ import {
   BESTIARY, GROUPS, bestiaryEntry, byGroup, CONFLICTS, TIER_NAMES, describeTier
 } from './bestiary.js';
 import { bestiaryToNpc } from './npcgen.js';
+import { WG_BOOK } from './wgsource.js';
+import { IM_BOOK } from './imsource.js';
 import { threatWeight, readHostile, hostileWeight } from './encounters.js';
 
 /* ---- every entry is complete and usable ---- */
@@ -246,6 +248,85 @@ assert.equal(bestiaryEntry(null), null);
     assert.equal(/\bp\.\s*\d/.test(b.counterTactics || ''), false,
       b.name + ': no page reference in the advice either');
   }
+}
+
+/* ---- one list: no creature twice, whichever book it came from ----
+
+   The bestiary is built from three sources (the app's own Rogue Trader
+   entries, Imperium Maledictum and Wrath & Glory) and the same creature turned
+   up in more than one: a Plaguebearer under the Denizens of the Warp and again
+   under the daemons of Nurgle. A GM choosing from two of them has nothing to say
+   which is right. These hold the line. */
+{
+  const { SUPERSEDED, ALIASES, GROUPS: GS, pickerLabel } = await import('./bestiary.js');
+
+  // No two entries are the same creature. The name is compared without a book's
+  // tag and without a leading "the", so "Plaguebearer (W&G)" and "Plaguebearer"
+  // cannot both be there.
+  const plain = (n) => n.toLowerCase().replace(/\s*\((w&g|im)\)$/, '').replace(/^the /, '').trim();
+  const seen = new Map();
+  for (const b of BESTIARY) {
+    const k = plain(b.name);
+    assert.ok(!seen.has(k), `${b.name} is in twice (also ${seen.get(k)})`);
+    seen.set(k, b.name);
+  }
+  assert.ok(!BESTIARY.some((b) => /\((W&G|IM)\)$/.test(b.name)), 'and no entry needs a book\'s tag to be told from another');
+
+  // Every entry is in a group that exists, and every group has something in it.
+  const ids = new Set(GS.map((g) => g.id));
+  for (const b of BESTIARY) assert.ok(ids.has(b.group), `${b.name}: group ${b.group} does not exist`);
+  for (const g of GS) assert.ok(BESTIARY.some((b) => b.group === g.id), `${g.id} is empty`);
+  assert.deepEqual(GS.map((g) => g.id), ['beast', 'xenos', 'warp', 'human', 'chaos', 'tau']);
+
+  // The daemons are one group, filed by god; the mortals and machines another.
+  const warp = BESTIARY.filter((b) => b.group === 'warp');
+  for (const god of ['Khorne', 'Nurgle', 'Slaanesh', 'Tzeentch']) {
+    assert.ok(warp.some((b) => b.faction === god), `Denizens of the Warp has ${god} daemons`);
+  }
+  assert.equal(bestiaryEntry('Plaguebearer').faction, 'Nurgle');
+  assert.equal(bestiaryEntry('Flesh Hound of Khorne').faction, 'Khorne');
+  assert.equal(bestiaryEntry('Screamer of Tzeentch').faction, 'Tzeentch');
+  assert.ok(!BESTIARY.some((b) => b.group === 'chaos' && warp.includes(b)), 'nothing in both');
+  assert.ok(BESTIARY.filter((b) => b.group === 'chaos').every((b) => ['Heretics and cultists', 'Heretic Astartes', 'Chaos engines'].includes(b.faction)));
+  // within the long lists, what was added reads as a ladder: by god, then by how dangerous
+  const added = warp.filter((b) => b.converted);
+  for (let i = 1; i < added.length; i++) {
+    const g = (x) => ['Khorne', 'Nurgle', 'Slaanesh', 'Tzeentch'].indexOf(x.faction);
+    const a = added[i - 1], c = added[i];
+    const ga = g(a) < 0 ? 9 : g(a), gc = g(c) < 0 ? 9 : g(c);
+    assert.ok(ga < gc || (ga === gc && a.threatTier <= c.threatTier), `${a.name} then ${c.name} is out of order`);
+  }
+
+  // What was superseded is gone under that book's name, and the survivor is a real entry.
+  assert.equal(SUPERSEDED.length, 7);
+  for (const [book, name, by, why] of SUPERSEDED) {
+    assert.ok(why.length > 10, `${name}: say why`);
+    assert.ok(bestiaryEntry(by), `${name} gave way to ${by}, which is not an entry`);
+    assert.ok(!BESTIARY.some((b) => b.name === name && b.source && b.source.book === (book === 'wg' ? WG_BOOK : IM_BOOK)),
+      `${name} (${book}) is still in the bestiary`);
+  }
+  // A Rogue Trader entry always outranks a converted one of the same creature.
+  for (const [book, name, by] of SUPERSEDED) {
+    if (name === by && !['Poxwalker'].includes(name)) assert.equal(bestiaryEntry(by).converted, undefined, `${by} stays the Rogue Trader one`);
+  }
+  assert.equal(bestiaryEntry('Poxwalker').source.book, IM_BOOK, 'where two books have it, the d100 one stays');
+
+  // An old name still finds its creature, and every alias lands on a real entry.
+  for (const [old, now] of Object.entries(ALIASES)) {
+    assert.equal(bestiaryEntry(old).name, now, `${old} -> ${now}`);
+    assert.ok(!BESTIARY.some((b) => b.name === old), `${old} is an alias, not an entry`);
+  }
+  assert.equal(bestiaryEntry('plaguebearer (w&g)').name, 'Plaguebearer', 'case does not matter');
+  assert.equal(bestiaryEntry('nobody'), null);
+  assert.equal(bestiaryEntry(undefined), null);
+  assert.equal(bestiaryToNpc('Flesh Hound').max, 15, 'an old name still spawns, as the entry that kept it');
+
+  // The picker's label says which god in the two mixed groups, and nothing extra elsewhere.
+  assert.equal(pickerLabel(bestiaryEntry('Bloodletter')), 'Bloodletter \u00B7 20w \u00B7 T3 \u00B7 Khorne');
+  assert.equal(pickerLabel(bestiaryEntry('Defiler')), 'Defiler \u00B7 34w \u00B7 T3 \u00B7 Chaos engines');
+  assert.equal(pickerLabel(bestiaryEntry('Ork Boy')), 'Ork Boy \u00B7 16w \u00B7 T1');
+  assert.equal(pickerLabel(bestiaryEntry("T'au Gun Drone")), "T'au Gun Drone \u00B7 12w \u00B7 T2", 'no repeating the species');
+  assert.match(pickerLabel(bestiaryEntry('The Murmurer')), /\(adjudicate by hand\)$/);
 }
 
 console.log('bestiary.js OK (%d antagonists, %d groups, %d tiered, %d conflicts)',

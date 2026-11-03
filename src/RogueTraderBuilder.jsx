@@ -94,7 +94,7 @@ import CampaignPanel from './CampaignPanel.jsx';
 import { situationFor } from './awareness.js';
 import { insanityTrack, corruptionTrack, INSANITY_STEP, MALIGNANCY_STEP } from './sanity.js';
 import {
-  rollNpc, bestiaryToNpc, BESTIARY, BESTIARY_GROUPS, byGroup,
+  rollNpc, bestiaryToNpc, BESTIARY, BESTIARY_GROUPS, byGroup, pickerLabel,
   THREAT_TIERS, ORIGINS
   , orderById, BREAK_TRIGGERS, breakTest
 } from './npcgen.js';
@@ -8834,12 +8834,7 @@ function BridgePanel({ onLore, code, setCode, characterName, charId, shipRole,
                       {BESTIARY_GROUPS.map((g) => (
                         <optgroup key={g.id} label={g.name}>
                           {byGroup(g.id).map((b) => (
-                            <option key={b.name} value={b.name}>
-                              {b.name}
-                              {b.wounds ? ` · ${b.wounds}w` : ''}
-                              {b.threatTier ? ` · T${b.threatTier}` : ''}
-                              {b.custom ? ' (adjudicate by hand)' : ''}
-                            </option>
+                            <option key={b.name} value={b.name}>{pickerLabel(b)}</option>
                           ))}
                         </optgroup>
                       ))}
@@ -10509,12 +10504,7 @@ function GmPanel({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridge
               {BESTIARY_GROUPS.map((g) => (
                 <optgroup key={g.id} label={g.name}>
                   {byGroup(g.id).map((b) => (
-                    <option key={b.name} value={b.name}>
-                      {b.name}
-                      {b.wounds ? ` \u00B7 ${b.wounds}w` : ''}
-                      {b.threatTier ? ` \u00B7 T${b.threatTier}` : ''}
-                      {b.custom ? ' (adjudicate by hand)' : ''}
-                    </option>
+                    <option key={b.name} value={b.name}>{pickerLabel(b)}</option>
                   ))}
                 </optgroup>
               ))}

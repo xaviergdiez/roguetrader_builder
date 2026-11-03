@@ -30,8 +30,9 @@
 // conflict is recorded in `conflict` so nobody has to rediscover it. See
 // CONFLICTS at the bottom for the list.
 
-import { CHAOS_THREATS, FACTIONS } from './wgconvert.js';
+import { CHAOS_THREATS } from './wgconvert.js';
 import { IM_CONVERTED } from './imconvert.js';
+import { IM_THREATS } from './imsource.js';
 import { TAU_NPCS, TAU_BOOK } from './tau.js';
 
 const B = (name, group, stats, weapon, abilities, extra = {}) => ({
@@ -49,16 +50,29 @@ const B = (name, group, stats, weapon, abilities, extra = {}) => ({
   ...extra
 });
 
+/* Six groups. There were thirteen once the Wrath & Glory and Imperium
+   Maledictum threats were added, each in a group of its own book or faction,
+   which put the same kind of creature in several places: a Plaguebearer under
+   Denizens of the Warp and again under Daemons of Nurgle. A GM looking for a
+   daemon does not care which book it came from. So the groups are what a
+   creature IS, and where it came from is on the entry (its `source`, and a
+   note with the page):
+
+     Denizens of the Warp   every daemon, whichever god and whichever book,
+                            filed by god (`faction`)
+     Chaos Heretics ...     the mortals and the machines that serve the gods:
+                            cultists, Heretic Astartes, traitors, war engines
+     Sentient Xenos         every xenos with a mind of its own, from any book
+     Human Adversaries      people, servitors and the like
+
+   Where the same creature came from more than one place only one entry
+   stays: see SUPERSEDED. */
 export const GROUPS = [
   { id: 'beast', name: 'Xenos Predators & Bestial Monsters' },
   { id: 'xenos', name: 'Sentient Xenos' },
   { id: 'warp', name: 'Denizens of the Warp' },
   { id: 'human', name: 'Human Adversaries & Constructs' },
-  // The Chaos threats of Wrath & Glory, converted to these numbers (see
-  // wgconvert.js for how), one group per faction so the picker stays readable.
-  ...FACTIONS.map((f) => ({ id: `chaos_${f.id}`, name: `Chaos \u00b7 ${f.name} (Wrath & Glory)` })),
-  // The antagonists of the Imperium Maledictum Inquisition GM's Guide (see imconvert.js).
-  { id: 'im_inq', name: 'Inquisition threats (Imperium Maledictum)' },
+  { id: 'chaos', name: 'Chaos Heretics, Astartes & Engines' },
   // The T'au as the Tau Character Guide prints them, for a GM to run (see tau.js).
   { id: 'tau', name: "T'au Empire (Tau Character Guide)" }
 ];
@@ -739,29 +753,119 @@ const TACTICA = {
   "Servo Skull": [1, "Easily destroyed."]
 };
 
-/* ---------------- 5. Chaos threats, converted from Wrath & Glory ---------------- */
+/* ------------- 5. The converted books, and what they have in common ------------- */
 
-// A name the Rogue Trader lists already use stays theirs; the converted one is
-// told apart, so spawning "Plaguebearer" never silently picks the wrong one.
-const TAKEN = new Set([...BEASTS, ...XENOS, ...WARP, ...HUMANS].map((b) => b.name.toLowerCase()));
-const CHAOS = CHAOS_THREATS.map((c) => B(
-  TAKEN.has(c.name.toLowerCase()) ? `${c.name} (W&G)` : c.name, `chaos_${c.faction}`,
-  { ws: c.ws, bs: c.bs, s: c.s, t: c.t, ag: c.ag, int: c.int, per: c.per, wp: c.wp, fel: c.fel,
-    wounds: c.wounds, toughnessBonus: c.toughnessBonus, armour: c.armour },
-  c.weapon, c.abilities,
-  { note: c.note, threatTier: c.threatTier, tierId: c.tierId, faction: c.faction, source: c.source, converted: true }
-));
+/* The same creature turned up in more than one place, and a bestiary that
+   lists it twice is two entries to choose between with nothing to say which is
+   right. One stays. The rule, in order:
 
-/* ---------------- 6. Inquisition threats, converted from Imperium Maledictum ---------------- */
+     1. the app's own Rogue Trader entry (from the Master Bestiary Directory
+        and the tactica sheets), because that is this game's own number;
+     2. Imperium Maledictum's, which is a d100 game with the same nine
+        characteristics and so converts almost one to one;
+     3. Wrath & Glory's, which is a d6 dice pool and converts by a rule.
 
-const TAKEN_ALL = new Set([...TAKEN, ...CHAOS.map((b) => b.name.toLowerCase())]);
-const INQ = IM_CONVERTED.map((c) => B(
-  TAKEN_ALL.has(c.name.toLowerCase()) ? `${c.name} (IM)` : c.name, c.group,
-  { ws: c.ws, bs: c.bs, s: c.s, t: c.t, ag: c.ag, int: c.int, per: c.per, wp: c.wp, fel: c.fel,
-    wounds: c.wounds, toughnessBonus: c.toughnessBonus, armour: c.armour },
-  c.weapon, c.abilities,
-  { note: c.note, threatTier: c.threatTier, tierId: c.tierId, faction: c.faction, source: c.source, converted: true, custom: c.custom }
-));
+   Each row is [book, the name the book gives it, the entry that stays, why].
+   The converters (wgconvert.js, imconvert.js) still convert everything in the
+   book, so a number can be compared; this is the only place that says which
+   of two stays in the bestiary. */
+export const SUPERSEDED = [
+  ['wg', 'Plaguebearer', 'Plaguebearer', 'the same daemon; the Rogue Trader entry stays'],
+  ['wg', 'Beast of Nurgle', 'Beast of Nurgle', 'the same daemon; the Rogue Trader entry stays'],
+  ['wg', 'Flesh Hound', 'Flesh Hound of Khorne', 'the same daemon; the Rogue Trader entry stays'],
+  ['wg', 'Poxwalker', 'Poxwalker', 'Imperium Maledictum has it in d100 terms, nearer to this game'],
+  ['wg', 'Mutant', 'Mutant Outcast', 'a mutant is a mutant; the Rogue Trader entries (Outcast, Abomination) cover it'],
+  ['im', 'Wraithguard', 'Wraithguard', 'the same construct; the Rogue Trader entry stays'],
+  ['im', 'Kroot Carnivore', 'Kroot Mercenary', 'the same kind of Kroot warrior; the Rogue Trader entry stays']
+];
+
+/* Names that stopped being entries, and what they became, so an encounter
+   saved with one, or a sheet that names it, still finds its creature. */
+export const ALIASES = {
+  'Plaguebearer (W&G)': 'Plaguebearer',
+  'Beast of Nurgle (W&G)': 'Beast of Nurgle',
+  'Flesh Hound': 'Flesh Hound of Khorne',
+  'Poxwalker (IM)': 'Poxwalker',
+  'Mutant': 'Mutant Outcast',
+  'Wraithguard (IM)': 'Wraithguard',
+  'Kroot Carnivore': 'Kroot Mercenary'
+};
+
+const superseded = (book, name) => SUPERSEDED.some(([b, n]) => b === book && n === name);
+
+// The four gods, in the order a list is read in.
+const GODS = ['Khorne', 'Nurgle', 'Slaanesh', 'Tzeentch'];
+const godIn = (text) => (String(text || '').match(/Khorne|Nurgle|Slaanesh|Tzeentch/) || [])[0] || null;
+
+// A Rogue Trader daemon whose god is in its name; the rest are the book's to say.
+const NATIVE_GOD = {
+  Plaguebearer: 'Nurgle', 'Beast of Nurgle': 'Nurgle',
+  'Flesh Hound of Khorne': 'Khorne', "Huntsman's Flesh Hound": 'Khorne',
+  'Screamer of Tzeentch': 'Tzeentch', 'Fury of Chaos': 'Undivided'
+};
+for (const b of WARP) if (NATIVE_GOD[b.name]) b.faction = NATIVE_GOD[b.name];
+
+/* The Wrath & Glory threats. Its daemons of the four gods are daemons and go
+   with the Denizens of the Warp, filed by god; its mortals, Heretic Astartes
+   and war engines are the Chaos group. */
+const WG_KIND = {
+  tzeentch: ['warp', 'Tzeentch'], nurgle: ['warp', 'Nurgle'], khorne: ['warp', 'Khorne'], slaanesh: ['warp', 'Slaanesh'],
+  mortal: ['chaos', 'Heretics and cultists'], astartes: ['chaos', 'Heretic Astartes'], engine: ['chaos', 'Chaos engines']
+};
+
+/* The Imperium Maledictum threats, by what the book says they are: a daemon
+   is a Denizen of the Warp (and its god, where the book gives one, is its
+   faction), a heretic is Chaos, and every xenos, Kroot, Drukhari, Votann or
+   Genestealer Cult entry is a Sentient Xenos. */
+const IM_TYPE = Object.fromEntries(IM_THREATS.map((t) => [t.name, t.type]));
+function imKind(c) {
+  if (c.faction === 'Daemon') return ['warp', godIn(`${IM_TYPE[c.name] || ''} ${c.name}`) || 'Undivided'];
+  if (c.faction === 'Heretic') return ['chaos', 'Heretics and cultists'];
+  return ['xenos', c.faction];
+}
+
+const sameStats = (c) => ({
+  ws: c.ws, bs: c.bs, s: c.s, t: c.t, ag: c.ag, int: c.int, per: c.per, wp: c.wp, fel: c.fel,
+  wounds: c.wounds, toughnessBonus: c.toughnessBonus, armour: c.armour
+});
+
+// A name another entry already has is told apart, never silently doubled.
+const taken = new Set([...BEASTS, ...XENOS, ...WARP, ...HUMANS].map((b) => b.name.toLowerCase()));
+const uniqueName = (name, tag) => {
+  let out = name;
+  if (taken.has(out.toLowerCase())) out = `${name} (${tag})`;
+  taken.add(out.toLowerCase());
+  return out;
+};
+
+/* Imperium Maledictum first, so that where it and Wrath & Glory both have a
+   creature the d100 one is the one that takes the name. */
+const FROM_IM = IM_CONVERTED.filter((c) => !superseded('im', c.name)).map((c) => {
+  const [group, faction] = imKind(c);
+  return B(uniqueName(c.name, 'IM'), group, sameStats(c), c.weapon, c.abilities, {
+    note: c.note, threatTier: c.threatTier, tierId: c.tierId, faction, source: c.source, converted: true, custom: c.custom
+  });
+});
+const FROM_WG = CHAOS_THREATS.filter((c) => !superseded('wg', c.name)).map((c) => {
+  const [group, faction] = WG_KIND[c.faction];
+  return B(uniqueName(c.name, 'W&G'), group, sameStats(c), c.weapon, c.abilities, {
+    note: c.note, threatTier: c.threatTier, tierId: c.tierId, faction, source: c.source, converted: true
+  });
+});
+
+/* Where they sit in a list. The Rogue Trader entries keep the order they were
+   given in; what was added is filed by god (a daemon) or by kind (the Chaos
+   group) and then by how dangerous it is, so a long list reads as a ladder. */
+const KINDS = ['Heretics and cultists', 'Heretic Astartes', 'Chaos engines'];
+const rank = (b) => {
+  const g = GODS.indexOf(b.faction);
+  if (b.group === 'warp') return g < 0 ? GODS.length : g;
+  const k = KINDS.indexOf(b.faction);
+  return k < 0 ? KINDS.length : k;
+};
+const filed = (list) => list.slice().sort((a, b) =>
+  rank(a) - rank(b) || (a.threatTier || 0) - (b.threatTier || 0) || a.name.localeCompare(b.name));
+const added = (group) => filed([...FROM_IM, ...FROM_WG].filter((b) => b.group === group));
 
 /* ---------------- 7. The T'au, from the Tau Character Guide ---------------- */
 
@@ -773,7 +877,9 @@ const TAU = TAU_NPCS.map((n) => B(n.name, 'tau', { ...n.stats }, n.weapon, n.abi
   source: { book: TAU_BOOK, page: n.page }, converted: true
 }));
 
-export const BESTIARY = [...BEASTS, ...XENOS, ...WARP, ...HUMANS, ...CHAOS, ...INQ, ...TAU].map((b) => {
+export const BESTIARY = [
+  ...BEASTS, ...XENOS, ...added('xenos'), ...WARP, ...added('warp'), ...HUMANS, ...added('chaos'), ...TAU
+].map((b) => {
   const t = TACTICA[b.name];
   return {
     ...b,
@@ -786,8 +892,24 @@ export const TIER_NAMES = { 1: 'Low', 2: 'Moderate', 3: 'High', 4: 'Lethal' };
 export const describeTier = (b) => (b && b.threatTier
   ? `Tier ${b.threatTier} \u00B7 ${TIER_NAMES[b.threatTier]}` : null);
 
-export const bestiaryEntry = (name) =>
-  BESTIARY.find((b) => b.name.toLowerCase() === String(name || '').toLowerCase()) || null;
+// By name, or by a name the entry used to have: see ALIASES.
+export const bestiaryEntry = (name) => {
+  const k = String(name || '').toLowerCase();
+  const hit = BESTIARY.find((b) => b.name.toLowerCase() === k);
+  if (hit) return hit;
+  const via = Object.entries(ALIASES).find(([old]) => old.toLowerCase() === k);
+  return via ? (BESTIARY.find((b) => b.name === via[1]) || null) : null;
+};
+
+/* What a picker shows beside a name: Wounds, tier, and for the two groups that
+   mix books and gods, which god or kind it is, because in a list of fifty
+   daemons "Bloodletter" does not say whose. */
+export const pickerLabel = (b) => [
+  b.name,
+  b.wounds ? `${b.wounds}w` : null,
+  b.threatTier ? `T${b.threatTier}` : null,
+  (b.group === 'warp' || b.group === 'chaos') && b.faction ? b.faction : null
+].filter(Boolean).join(' \u00B7 ') + (b.custom ? ' (adjudicate by hand)' : '');
 
 export const byGroup = (id) => BESTIARY.filter((b) => b.group === id);
 

@@ -5,7 +5,7 @@ import {
   IM_RULES, charOf, toughnessBonusOf, armourOf, damageBonus, rangeMetres, tierOf, tierIdOf, damageType,
   qualitiesOf, penOf, isWeapon, weaponString, primaryWeapon, convertThreat, IM_CONVERTED
 } from './imconvert.js';
-import { BESTIARY, bestiaryEntry, byGroup } from './bestiary.js';
+import { BESTIARY, bestiaryEntry, GROUPS, SUPERSEDED } from './bestiary.js';
 import { bestiaryToNpc } from './npcgen.js';
 
 /* ---- the book's creatures, each once ---- */
@@ -140,16 +140,46 @@ const EXPECTED = [
   assert.deepEqual(convertThreat(IM_THREATS[3]), convertThreat(IM_THREATS[3]), 'deterministic');
 }
 
-/* ---- in the bestiary, and on the board ---- */
+/* ---- in the bestiary, and on the board ----
+
+   Twenty are converted and the bestiary keeps the ones that are not a creature
+   it already has (see SUPERSEDED in bestiary.js). A daemon goes with the
+   Denizens of the Warp, filed by its god; a heretic with the Chaos group; and
+   every xenos with the Sentient Xenos. */
 {
-  assert.equal(byGroup('im_inq').length, 20);
-  assert.equal(BESTIARY.filter((b) => b.source && b.source.book === IM_BOOK).length, 20);
+  const dropped = SUPERSEDED.filter(([book]) => book === 'im');
+  assert.deepEqual(dropped.map((d) => d[1]).sort(), ['Kroot Carnivore', 'Wraithguard'], 'two are a creature the bestiary already had');
+  const kept = BESTIARY.filter((b) => b.source && b.source.book === IM_BOOK);
+  assert.equal(kept.length, 20 - dropped.length, 'the other eighteen reach it');
+  assert.equal(GROUPS.some((g) => g.id === 'im_inq'), false, 'there is no group of its own for the book');
+  assert.equal(bestiaryEntry('Wraithguard').converted, undefined, 'the Rogue Trader Wraithguard stays');
+  assert.equal(bestiaryEntry('Wraithguard (IM)').name, 'Wraithguard');
+  assert.equal(bestiaryEntry('Kroot Carnivore').name, 'Kroot Mercenary');
+
+  const where = (n) => { const b = bestiaryEntry(n); return b && `${b.group}/${b.faction}`; };
+  assert.equal(where('Gaazrek Weavemaster'), 'warp/Tzeentch');
+  assert.equal(where('The Reaper'), 'warp/Nurgle');
+  assert.equal(where('Valastra'), 'warp/Slaanesh');
+  assert.equal(where('Disc of Tzeentch'), 'warp/Tzeentch', 'the god is in its name');
+  assert.equal(where('Daemonhost'), 'warp/Undivided', 'bound to no god');
+  assert.equal(where('Mizrax Tallian'), 'chaos/Heretics and cultists');
+  assert.equal(where('Traitor Enforcer'), 'chaos/Heretics and cultists');
+  assert.equal(where('Kroot Hound'), 'xenos/Kroot');
+  assert.equal(where('Varon Vipersong'), 'xenos/Drukhari');
+  assert.equal(where('Acolyte Hybrid'), 'xenos/Genestealer Cult');
+  assert.equal(where('Hernkyn Yaegir'), 'xenos/Xenos');
+
+  // A Poxwalker is in once, and it is this book's: the Wrath & Glory one gave way.
+  const pox = BESTIARY.filter((b) => b.name === 'Poxwalker');
+  assert.equal(pox.length, 1);
+  assert.equal(pox[0].source.book, IM_BOOK);
+  assert.equal(bestiaryEntry('Poxwalker (IM)').name, 'Poxwalker');
+
   const g = bestiaryToNpc('Traitor Enforcer');
   assert.equal(g.max, 15);
   assert.equal(g.toughnessBonus, 4);
   assert.match(g.note, /Converted from Imperium Maledictum/);
-  assert.equal(bestiaryEntry('Mizrax Tallian').group, 'im_inq');
-  for (const b of BESTIARY.filter((x) => x.group === 'im_inq')) {
+  for (const b of kept) {
     const note = bestiaryToNpc(b.name).note;
     assert.ok(note.length <= 480, `${b.name}: the board note is ${note.length} characters`);
     assert.match(note, /p\.\d+/, `${b.name}: and still has its page`);

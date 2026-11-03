@@ -366,7 +366,7 @@ export function rollNpc({
 import { bestiaryEntry } from './bestiary.js';
 
 export { BESTIARY, bestiaryEntry, GROUPS as BESTIARY_GROUPS, byGroup, CONFLICTS,
-  TIER_NAMES, describeTier } from './bestiary.js';
+  TIER_NAMES, describeTier, pickerLabel } from './bestiary.js';
 
 // Shapes a bestiary entry into the npc_add payload shape. `weapon` here is
 // almost always a bespoke ability string, not a gear.js label — pass it to

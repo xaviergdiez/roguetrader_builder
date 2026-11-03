@@ -201,3 +201,56 @@ last set of references.
 
 Cover and hazards are drawn for the same reason, and because they have to
 recolour per theme.
+
+## The fixtures sheet
+
+The first prop sheet (sixteen everyday tokens, one per environment) was joined
+by a second for what the map gained afterwards: the equipment a party works or
+fears. It is cut, keyed and sized exactly as the first is (4x4, pitch-black
+background, black becomes transparency), and it is the same sheet wherever it
+is drawn, dressed in the place's materials.
+
+```
+node tools/fixtures-prompt.mjs                       # a voidship deck
+node tools/fixtures-prompt.mjs "a flooded cargo hold, rusted plate"
+node tools/fixtures-prompt.mjs --environment ice --condition frozen
+```
+
+Paste what it prints into the image model. The cells, left to right, top to
+bottom, and what the map will use each for:
+
+| # | Cell | Used for |
+|---|------|----------|
+| 1 | terminal_locked | cogitator terminal, locked (red screen) |
+| 2 | terminal_open | cogitator terminal, accessed (green screen) |
+| 3 | terminal_dead | cogitator terminal, burnt out |
+| 4 | turret | sentry turret, barrel straight up |
+| 5 | turret_off | sentry turret, switched off |
+| 6 | shrine | shrine (sanctified ground) |
+| 7 | vent | vent / crawlway mouth |
+| 8 | tanks | promethium tanks |
+| 9 | rift_a | warp rift |
+| 10 | rift_b | warp rift, second picture (a spreading rift alternates the two) |
+| 11 | airlock_closed | airlock, sealed |
+| 12 | airlock_open | airlock, open (the opening is pure black, so the floor shows through) |
+| 13 | breach | vacuum breach |
+| 14 | radiation | radiation |
+| 15 | zero_g | dead gravity |
+| 16 | torpedo_breach | torpedo breach marker |
+
+Three things to look at in what comes back, because they are what goes wrong:
+
+- **Dark is not black.** Pure black is cut out. The vent shaft, the warp core,
+  the breach and a cracked screen must be a very dark colour, not #000, or the
+  deck shows through a hole that is not a hole. Only the open airlock is allowed
+  a true black opening.
+- **The screens.** The three terminals differ only by the colour of the screen
+  (red, green, dead). If they come back as three grey boxes, generate again.
+- **Which way is up.** Turret barrels point straight up the picture (the map
+  turns them to their facing) and terminal screens face the bottom of the cell.
+  A turret pointing sideways will be drawn sideways.
+
+Nothing draws from this sheet yet. `FIXTURE_SLOTS` and `fixtureRole()` in
+`src/spritesheet.js` are the table that will, and `mapprompt.check.mjs` holds
+the prompt's cell order to it, so the picture and the code cannot disagree about
+which cell is the turret. Keep the two lists in step if a cell is ever added.

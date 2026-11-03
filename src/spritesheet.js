@@ -186,6 +186,92 @@ export function spriteRole(kind, id, state = null, at = null) {
   return null;
 }
 
+/* ---- the fixtures sheet ----
+
+   A SECOND 4x4 sheet, for what the map gained after the first sixteen: the
+   things on a deck that are WORKED or that ACT rather than sit there. Cut and
+   keyed exactly as the first is (same grid, same black, same rules), but it is
+   not a replacement for it: the first sheet is per environment and carries the
+   everyday props, this one is the equipment of a ship or station and is the
+   same wherever it is drawn, only dressed in the place's materials.
+
+   Why a sheet and not sixteen calls: the same reason as before. A terminal,
+   its burnt-out twin and the turret next to it have to share a palette and a
+   light direction, or a deck dressed with them looks like a collage.
+
+   Four rows, read left to right:
+     1  the cogitator terminal in its three states, and the sentry turret
+     2  the turret switched off, the shrine, the vent, the promethium tanks
+     3  two pictures of the warp rift, and the airlock shut and open
+     4  the hull breach, radiation, dead gravity, the boarding torpedo
+
+   `turn` is the same question as before, and it matters more here. A turret is
+   drawn pointing straight UP and the map turns it to its facing, so the sheet
+   must not also be turned by position: it is false for everything with a front
+   (the terminal's screen, the turret's barrel, the airlock in its wall, the
+   shrine's altar, the torpedo's nose). The rift has two pictures so that a run
+   of them, which is what a spreading rift is, is not one stamp.
+
+   The order is load-bearing and is asked for in the same words by
+   FIXTURE_SLOTS in lib/mapprompt.js; mapprompt.check.mjs holds the two to each
+   other, as it does for the first sheet. */
+export const FIXTURE_SLOTS = [
+  { slot: 0, role: 'terminal_locked', name: 'Terminal, locked', turn: false },
+  { slot: 1, role: 'terminal_open', name: 'Terminal, accessed', turn: false },
+  { slot: 2, role: 'terminal_dead', name: 'Terminal, burnt out', turn: false },
+  { slot: 3, role: 'turret', name: 'Sentry turret', turn: false },
+  { slot: 4, role: 'turret_off', name: 'Sentry turret, switched off', turn: false },
+  { slot: 5, role: 'shrine', name: 'Shrine', turn: false },
+  { slot: 6, role: 'vent', name: 'Vent or crawlway', turn: true },
+  { slot: 7, role: 'tanks', name: 'Promethium tanks', turn: true },
+  { slot: 8, role: 'rift_a', name: 'Warp rift', turn: true },
+  { slot: 9, role: 'rift_b', name: 'Warp rift, second picture', turn: true },
+  { slot: 10, role: 'airlock_closed', name: 'Airlock, sealed', turn: false },
+  { slot: 11, role: 'airlock_open', name: 'Airlock, open', turn: false },
+  { slot: 12, role: 'breach', name: 'Hull breach', turn: true },
+  { slot: 13, role: 'radiation', name: 'Radiation', turn: true },
+  { slot: 14, role: 'zero_g', name: 'Dead gravity', turn: true },
+  { slot: 15, role: 'torpedo_breach', name: 'Boarding torpedo breach', turn: false }
+];
+export const FIXTURE_ROLES = FIXTURE_SLOTS.map((s) => s.role);
+
+/* Which fixture picture an element gets, or null for "draw it as before".
+   Separate from spriteRole() on purpose: that one answers for the first sheet,
+   this one for the second, and an element that has a picture on both (the vent
+   has the grating and the crawlway mouth) is asked of each. Nothing draws from
+   the second sheet yet; this is the table that will, written down and tested
+   while the decisions are fresh.
+
+   The warp alternates its two pictures by position, so the same deck draws the
+   same way every time it opens and a spreading rift does not look stamped. */
+export function fixtureRole(kind, id, state = null, at = null) {
+  if (kind === 'marker') {
+    if (id === 'cogitator') return state === 'open' ? 'terminal_open' : state === 'dead' ? 'terminal_dead' : 'terminal_locked';
+    if (id === 'turret') return state === 'off' ? 'turret_off' : 'turret';
+    if (id === 'shrine') return 'shrine';
+    if (id === 'vent') return 'vent';
+    if (id === 'breach') return 'torpedo_breach';
+    return null;
+  }
+  if (kind === 'cover') return id === 'tank' ? 'tanks' : null;
+  if (kind === 'door') {
+    if (id !== 'airlock') return null;
+    return state === 'open' ? 'airlock_open' : 'airlock_closed';
+  }
+  if (kind === 'hazard') {
+    if (id === 'warp') {
+      const x = at ? Math.round(Number(at.x)) : 0;
+      const y = at ? Math.round(Number(at.y)) : 0;
+      return (((x + y) % 2) + 2) % 2 ? 'rift_b' : 'rift_a';
+    }
+    if (id === 'void') return 'breach';
+    if (id === 'radiation') return 'radiation';
+    if (id === 'zerog') return 'zero_g';
+    return null;
+  }
+  return null;
+}
+
 /* ---- the grid ----
    Where a cell sits on a sheet of any size. The shipped sheets are 2048 and a
    generated one may be 1024, so nothing here may assume 512px cells; the only

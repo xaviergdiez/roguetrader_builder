@@ -19,7 +19,11 @@ export async function launch({ port = 9333, width = 1500, height = 1000 } = {}) 
   const proc = spawn(CHROME, [
     '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`,
     `--window-size=${width},${height}`, '--disable-popup-blocking', '--no-first-run',
-    '--hide-scrollbars', 'about:blank'
+    '--hide-scrollbars',
+    // A CI runner has no user namespaces for Chrome's sandbox (and a small /dev/shm): there the
+    // sandbox is off, which is safe for a browser that only opens this app.
+    ...(process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : []),
+    'about:blank'
   ], { stdio: 'ignore' });
   let targets;
   for (let i = 0; i < 50; i++) {

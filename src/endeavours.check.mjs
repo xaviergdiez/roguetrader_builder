@@ -303,5 +303,36 @@ import {
   assert.equal(red(e1, { isGm: false }).diary, undefined, "the diary is the GM's");
   assert.equal(readDiary([null, 3, { text: 'x', xp: -5 }])[0].xp, 0);
 }
+/* ---- an Inquisition campaign: the patron, Subtlety, and the debriefing ---- */
+{
+  const { redactEndeavour: red } = await import('./endeavours.js');
+  const plain = readEndeavour({ name: 'E', missions: [{ name: 'M', objectives: [{ name: 'o' }] }] });
+  assert.equal(plain.inquisition, undefined, 'a plain Endeavour carries nothing new');
+  assert.equal(plain.missions[0].debrief, undefined);
+
+  const e = readEndeavour({
+    name: 'For the Ordo', inquisition: { patron: 'horst', subtlety: 4 },
+    missions: [{ name: 'The Thrax family', objectives: [{ name: 'Evidence' }],
+      debrief: { evidence: 2, strayed: 'broke', superiority: [{ foe: 'The Thrax cult', points: 1 }],
+        legitimacy: [{ who: 'Ilsa Vane', gained: 2 }], notes: 'They hid the tome.' } }]
+  });
+  assert.deepEqual(e.inquisition, { patron: 'horst', patronName: '', subtlety: 4 });
+  assert.equal(e.missions[0].debrief.evidence, 2);
+  assert.deepEqual(readEndeavour(e), e, 'it survives a round trip');
+
+  // The GM keeps everything.
+  assert.equal(red(e, { isGm: true }).inquisition.subtlety, 4);
+  // The table learns whose work it is and the Superiority it earned, never
+  // how exposed it is or how the GM rates an Interrogator.
+  const seen = red(e, { isGm: false });
+  assert.deepEqual(seen.inquisition, { patron: 'horst', patronName: '' });
+  assert.equal('subtlety' in seen.inquisition, false);
+  assert.deepEqual(seen.missions[0].debrief.legitimacy, []);
+  assert.deepEqual(seen.missions[0].debrief.superiority, [{ foe: 'The Thrax cult', points: 1 }]);
+  assert.equal(seen.missions[0].debrief.evidence, 2);
+  // And redaction leaves a plain Endeavour exactly as it was.
+  assert.equal(red(plain, { isGm: false }).inquisition, undefined);
+}
+
 console.log('endeavours.js OK (%d objective kinds, %d statuses)',
   OBJECTIVE_KINDS.length, STATUSES.length);

@@ -1,7 +1,7 @@
 // Self-check for the named Elite Advances. Run: node src/elite.check.mjs
 import assert from 'node:assert/strict';
-import { ELITE_ADVANCES, eliteById, meetsRequirement, elitePresets } from './elite.js';
-import { CAREERS_WITH_TABLES } from './advances.js';
+import { ELITE_ADVANCES, eliteById, meetsRequirement, elitePresets, heldNames, INQUISITION_KINDS } from './elite.js';
+import { CAREERS_WITH_TABLES, ALTERNATE_RANKS, alternateRankByName } from './advances.js';
 
 /* ---- the catalogue is well formed ---- */
 
@@ -114,39 +114,52 @@ for (const career of CAREERS_WITH_TABLES) {
 
 /* ---- the Inquisition ladder stands on itself ---- */
 
-// Dark Heresy models the Inquisition as an Alternate Career Rank — a detour
-// taken mid-career, not a career you start in — which is why it is here at
-// all. The three rungs must gate on each other, or "become an Interrogator"
-// is three unrelated purchases rather than a path.
+// Dark Heresy models the Inquisition as an Alternate Career Rank, a detour
+// taken mid-career, and the Legate Investigator is now exactly that, in
+// advances.js. The rungs above stand on it and on each other, or "become an
+// Interrogator" is three unrelated purchases rather than a path.
 {
   const seneschal = (rank, owned = []) => ({ careerName: 'Seneschal', rank, owned });
-  const legate = eliteById('legate-investigator');
   const interrogator = eliteById('interrogator');
   const rosette = eliteById('inquisitorial-rosette');
 
+  // The Legature left the catalogue for the alternate ranks, taking its own
+  // table's advances with it: no duplicate to buy twice at two prices.
+  for (const gone of ['legate-investigator', 'ciphers-of-the-ordos', 'talented-interrogation']) {
+    assert.equal(eliteById(gone), null, gone + ' is on the Legate Investigator table now');
+  }
+  const legate = alternateRankByName('Legate Investigator');
+  assert.ok(legate, 'the Legature is an alternate rank');
   assert.equal(legate.minRank, 4, "the Handbook's own Rank 4+");
-  assert.equal(meetsRequirement(legate, seneschal(3)), false);
-  assert.equal(meetsRequirement(legate, seneschal(4)), true);
-
   // The Tech-Priest is the one career the book bars from this path.
-  assert.equal(legate.careers.includes('Explorator'), false,
-    'the Explorator has the Magos road instead');
+  assert.equal(legate.careers.includes('Explorator'), false, 'the Explorator has the Magos road instead');
 
-  // Rank alone is not enough: each rung needs the one below it.
+  // Rank alone is not enough: each rung needs the one below it, and the
+  // Legature counts whether it is held as the alternate rank or (on an older
+  // sheet) as the Elite Advance it used to be.
   assert.equal(meetsRequirement(interrogator, seneschal(8)), false, 'no Legature yet');
   assert.equal(meetsRequirement(interrogator, seneschal(8, ['Legate Investigator'])), true);
+  assert.equal(meetsRequirement(interrogator, seneschal(8, heldNames({ altRank: 'Legate Investigator' }))), true,
+    'the alternate rank is the Legature');
+  assert.equal(meetsRequirement(interrogator, seneschal(8, heldNames({ eliteAdvances: [{ name: 'Legate Investigator' }] }))), true,
+    'and so is an older sheet that bought it as an Elite Advance');
   assert.equal(meetsRequirement(interrogator, seneschal(5, ['Legate Investigator'])), false,
     'and the rank still applies');
 
   assert.equal(meetsRequirement(rosette, seneschal(8, ['Legate Investigator'])), false);
   assert.equal(meetsRequirement(rosette, seneschal(8, ['Legate Investigator', 'Interrogator'])), true);
 
-  // The names a rung stands on must be names that actually exist, or the
-  // ladder has a missing step nobody can ever climb.
+  // The names a rung stands on must be names that exist, in the catalogue,
+  // among the alternate ranks or on one of their tables, or the ladder has a
+  // step nobody can ever climb.
+  const known = new Set([
+    ...ELITE_ADVANCES.map((x) => x.name),
+    ...ALTERNATE_RANKS.map((r) => r.name),
+    ...ALTERNATE_RANKS.flatMap((r) => r.advances.map((a) => a.name))
+  ]);
   for (const e of ELITE_ADVANCES) {
     if (!e.prereqElite) continue;
-    assert.ok(ELITE_ADVANCES.some((x) => x.name === e.prereqElite),
-      e.id + ': stands on "' + e.prereqElite + '", which is not in the catalogue');
+    assert.ok(known.has(e.prereqElite), e.id + ': stands on "' + e.prereqElite + '", which nobody can hold');
     assert.match(e.requires, /before it/, e.id + ': the ladder step must be readable');
   }
 
@@ -154,6 +167,33 @@ for (const career of CAREERS_WITH_TABLES) {
   assert.deepEqual(rosette.careers, []);
   assert.equal(meetsRequirement(rosette,
     { careerName: 'Void-Master', rank: 8, owned: ['Legate Investigator', 'Interrogator'] }), true);
+
+  // Every Inquisition entry says which part of the ladder it is, so the
+  // dialog can show the ladder as one.
+  const kinds = INQUISITION_KINDS.map((k) => k.id);
+  const inq = ELITE_ADVANCES.filter((e) => e.inquisition);
+  for (const e of inq) assert.ok(kinds.includes(e.inquisition), e.id + ': unknown part ' + e.inquisition);
+  for (const k of kinds) assert.ok(inq.some((e) => e.inquisition === k), 'nothing in ' + k);
+  assert.equal(eliteById('interrogator').inquisition, 'rank');
+  assert.equal(eliteById('forbidden-knowledge').inquisition, 'radical');
+}
+
+/* ---- heldNames: everything a rung may stand on ---- */
+assert.deepEqual(heldNames({}), []);
+assert.deepEqual(heldNames({
+  eliteAdvances: [{ name: 'Interrogator' }], advances: [{ name: 'Talented (Interrogation)' }], altRank: 'Legate Investigator'
+}), ['Interrogator', 'Talented (Interrogation)', 'Legate Investigator']);
+// The Long Question stands on an advance from the Legate's own table.
+assert.equal(meetsRequirement(eliteById('the-long-question'),
+  { careerName: 'Missionary', rank: 4, owned: heldNames({ advances: [{ name: 'Talented (Interrogation)' }] }) }), true);
+
+/* ---- the Radical's rung is the GM's to grant, to anyone ---- */
+{
+  const fk = eliteById('forbidden-knowledge');
+  assert.deepEqual(fk.careers, [], 'the book\u2019s examples are Acolytes, not titled Inquisitors');
+  assert.match(fk.requires, /GM/);
+  assert.match(fk.effect, /Corruption/);
+  assert.match(fk.effect, /Willpower/);
 }
 
 // An entry with no ladder step is unaffected by what is already owned.
@@ -198,7 +238,7 @@ assert.equal(meetsRequirement(eliteById('executioner'),
 
   // The craft is reachable before the rosette, so an investigator can be
   // equipped to investigate long before anyone hands them one.
-  assert.ok(eliteById('read-the-room').minRank < eliteById('legate-investigator').minRank,
+  assert.ok(eliteById('read-the-room').minRank < alternateRankByName('Legate Investigator').minRank,
     'the first tool should come before the warrant');
 }
 

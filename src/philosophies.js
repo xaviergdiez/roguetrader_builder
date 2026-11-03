@@ -9,7 +9,9 @@
    Modus Operandi, how to roleplay one, and mission hooks).
 
    This is GM material: the book is for the GM’s eyes, and so is this. Nothing
-   here is in the Lore tab.
+   here is in the Lore tab. A player reads a philosophy in two places only,
+   both on their own sheet (LegaturePanel): the creed they declare with their
+   own rosette, and their master’s, once the GM has let it slip.
 
    Pure: see philosophies.check.mjs. */
 

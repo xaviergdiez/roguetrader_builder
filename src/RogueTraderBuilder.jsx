@@ -23,6 +23,7 @@ import {
 } from './heal.js';
 import MapWindow from './MapWindow.jsx';
 import InquisitionCard from './InquisitionCard.jsx';
+import LegaturePanel from './LegaturePanel.jsx';
 import { armourSummary, parseArmour, soakAt } from './armour.js';
 import {
   readMap as readBattleMap, newBattleMap, publishMap,
@@ -63,7 +64,8 @@ import {
 import {
   allAdvances, advanceStatus, MAX_TABLED_RANK, alternateRanksFor, alternateRankByName, alternateAdvances
 } from './advances.js';
-import { elitePresets } from './elite.js';
+import { elitePresets, heldNames, INQUISITION_KINDS } from './elite.js';
+import { readLegature, onTheInquisitionPath } from './legature.js';
 import {
   HULLS, COMPONENTS, ESSENTIAL_CATEGORIES, ESSENTIAL_LABELS, CREW_RATINGS,
   SLOT_NAMES, WEAPON_CLASSES, allHulls, allComponents, isHomebrew, damageText,
@@ -90,6 +92,8 @@ import {
 } from './attackroll.js';
 import NervePanel, { SpotPanel } from './NervePanel.jsx';
 import CampaignPanel from './CampaignPanel.jsx';
+import DebriefPanel from './DebriefPanel.jsx';
+import { superiorityByFoe, SUPERIORITY_RULE, patronById } from './patrons.js';
 import { situationFor } from './awareness.js';
 import { insanityTrack, corruptionTrack, INSANITY_STEP, MALIGNANCY_STEP } from './sanity.js';
 import {
@@ -1898,6 +1902,36 @@ const CSS = `
 .rt-over{color:var(--crimson);font-weight:600;}
 .rt-advrank{margin-bottom:14px;}
 .rt-advrank.locked{opacity:.5;}
+.rt-altgrant{margin:8px 0 0;padding:7px 10px;border-left:2px solid #8a6f31;font-size:13.5px;line-height:1.5;}
+
+/* ---- the Inquisition panel (LegaturePanel) ---- */
+.rt-leg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:4px 12px;}
+.rt-leg-grid label,.rt-leg-full{display:block;}
+.rt-leg-k{display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:#6d5726;margin:6px 0 3px;}
+.rt-psyrow .rt-leg-k{display:inline;margin:0;}
+.rt-leg-k b{color:var(--parch-ink);font-size:12px;}
+.rt-leg-in{padding:8px 10px;font-size:15px;margin-bottom:6px;}
+.rt-select.rt-leg-narrow{width:auto;max-width:100%;margin-bottom:0;}
+.rt-leg-creed{margin:8px 0 10px;padding:7px 10px;border-left:2px solid #8a6f31;font-size:14px;line-height:1.5;color:var(--parch-ink);}
+.rt-leg-creed p{margin:3px 0;}
+.rt-leg-creed ul,.rt-leg-list{margin:4px 0 6px;padding-left:18px;font-size:13.5px;line-height:1.45;color:var(--parch-ink);}
+.rt-leg-stance{font-style:normal;font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  padding:1px 6px;border:1px solid #8a6f31;color:#6d5726;}
+.rt-leg-stance.radical{color:var(--crimson);border-color:var(--crimson);}
+.rt-leg-fk{margin:0 0 10px;font-size:13.5px;line-height:1.45;color:var(--parch-ink);}
+.rt-leg-fk p{margin:3px 0;}
+.rt-leg-check{display:flex;gap:7px;align-items:flex-start;margin:3px 0;font-size:13.5px;color:var(--parch-ink);cursor:pointer;}
+.rt-psyrow .rt-leg-check{align-items:center;margin:0;}
+.rt-leg-contact{padding:8px 0 4px;border-bottom:1px solid rgba(109,87,38,.28);}
+.rt-leg-contact.burned{opacity:.55;}
+.rt-leg-step{display:inline-flex;align-items:center;gap:6px;}
+.rt-leg-step b{min-width:22px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--parch-ink);}
+.rt-leg-tag.on{color:#161004;border-color:var(--gold-lit);background:linear-gradient(180deg,var(--gold-lit),var(--gold));}
+.rt-leg-more{margin-top:10px;font-size:13.5px;line-height:1.45;color:var(--parch-ink);}
+.rt-leg-more > summary{cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#6d5726;}
+.rt-leg-more p{margin:5px 0;}
+.rt-elite-k{margin:10px 0 6px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);}
 .rt-advlist{list-style:none;margin:0;padding:0;}
 .rt-adv{display:flex;flex-wrap:wrap;align-items:center;gap:7px;
   padding:6px 2px;border-bottom:1px solid rgba(109,87,38,.28);}
@@ -4459,6 +4493,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       : { ...p, advances: [...p.advances, { name: a.name, type: a.type, cost: a.cost, rank: a.rank, ...(a.alt ? { alt: a.alt } : {}) }] }
   ));
   const setAltRank = (name) => setExtras((p) => ({ ...p, altRank: name || '' }));
+  const setInquisition = (patch) => setExtras((p) => ({ ...p, inquisition: readLegature({ ...p.inquisition, ...patch }) }));
   // A weapon's rounds and jam, written as a patch over what is there.
   const setWeaponState = (label, patch) => setExtras((p) => ({
     ...p,
@@ -4679,7 +4714,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
             avatar={avatar} setAvatar={setAvatar}
             extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
-            onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance} onAltRank={setAltRank} onWeaponState={setWeaponState}
+            onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance} onAltRank={setAltRank} onInquisition={setInquisition} onWeaponState={setWeaponState}
             onBuyCharAdvance={buyCharAdvance} onRefundCharAdvance={refundCharAdvance}
             onGrantThrones={grantThrones} onSpendThrones={spendThrones}
             onRefundThrones={refundThrones}
@@ -4961,7 +4996,9 @@ const EMPTY_EXTRAS = {
   altRank: '',
   // Rounds left and whether it is jammed, per weapon label: { 'Lasgun': { rounds: 41, jammed: false } }.
   // Kept with the character so a clip survives a reload; a weapon not listed is full.
-  weaponState: {}
+  weaponState: {},
+  // Their place in the Inquisition: master, remit, rosette, contacts (legature.js).
+  inquisition: readLegature({})
 };
 // merges a stored extras object over the empty shape, so an older save that
 // predates a category still loads
@@ -4969,7 +5006,8 @@ const readExtras = (v) => ({
   ...EMPTY_EXTRAS, ...(v || {}),
   // normalised rather than spread, so a stored purse with junk in it cannot
   // put NaN Thrones on the sheet
-  purse: readPurse(v && v.purse)
+  purse: readPurse(v && v.purse),
+  inquisition: readLegature(v && v.inquisition)
 });
 
 /* --------------------------- EQUIPMENT ROWS ---------------------------
@@ -5918,9 +5956,38 @@ function EliteAdvanceDialog({ onAdd, onClose, careerName = '', rank = 0, owned =
   const [name, setName] = useState('');
   const [type, setType] = useState('Talent');
   const [cost, setCost] = useState(200);
-  // owned carries the names already bought, so a rung can stand on the one
-  // below it — see prereqElite in elite.js.
-  const presets = elitePresets({ careerName, rank, owned });
+  // owned carries every name held, so a rung can stand on the one below it,
+  // the Legate Investigator rank included — see prereqElite in elite.js.
+  const all = elitePresets({ careerName, rank, owned });
+  // The Inquisition's entries are a ladder, so they are shown as one, below
+  // the rest; within each part, in the order they open.
+  const presets = all.filter((e) => !e.inquisition);
+  const ladder = INQUISITION_KINDS.map((k) => ({
+    ...k, rows: all.filter((e) => e.inquisition === k.id).sort((a, b) => (a.minRank || 0) - (b.minRank || 0))
+  })).filter((k) => k.rows.length);
+  const row = (e) => (
+    <div key={e.id} className={'rt-elite' + (e.met ? ' met' : '')}>
+      <div className="rt-elite-h">
+        <b>{e.name}</b>
+        <span className="rt-entry-c">{e.type}</span>
+        <span className="rt-elite-c">{e.cost.toLocaleString()} XP</span>
+      </div>
+      {e.requires && (
+        <p className="rt-elite-r">
+          {e.met ? '\u2713 ' : ''}Requires {e.requires}
+          {!e.met && ' \u2014 yours to waive'}
+        </p>
+      )}
+      <p className="rt-elite-e">{e.effect}</p>
+      {e.note && <p className="rt-elite-r">{e.note}</p>}
+      {/* Fills the form rather than adding outright: the cost is the
+          GM's to set, and they may well want a different number. */}
+      <button className="rt-btn ghost"
+        onClick={() => { setName(e.name); setType(e.type); setCost(e.cost); }}>
+        Use this
+      </button>
+    </div>
+  );
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -5949,32 +6016,25 @@ function EliteAdvanceDialog({ onAdd, onClose, careerName = '', rank = 0, owned =
         one, or a defining quirk like being Untouchable. Rank-gating does not
         apply: it was never on the table to begin with.
       </p>
-      {presets.length > 0 && (
+      {all.length > 0 && (
         <>
           <div className="rt-choice-l">OFF THE SHELF</div>
-          {presets.map((e) => (
-            <div key={e.id} className={'rt-elite' + (e.met ? ' met' : '')}>
-              <div className="rt-elite-h">
-                <b>{e.name}</b>
-                <span className="rt-entry-c">{e.type}</span>
-                <span className="rt-elite-c">{e.cost.toLocaleString()} XP</span>
-              </div>
-              {e.requires && (
-                <p className="rt-elite-r">
-                  {e.met ? '\u2713 ' : ''}Requires {e.requires}
-                  {!e.met && ' \u2014 yours to waive'}
-                </p>
-              )}
-              <p className="rt-elite-e">{e.effect}</p>
-              {e.note && <p className="rt-elite-r">{e.note}</p>}
-              {/* Fills the form rather than adding outright: the cost is the
-                  GM's to set, and they may well want a different number. */}
-              <button className="rt-btn ghost"
-                onClick={() => { setName(e.name); setType(e.type); setCost(e.cost); }}>
-                Use this
-              </button>
-            </div>
-          ))}
+          {presets.map(row)}
+          {ladder.length > 0 && (
+            <>
+              <div className="rt-choice-l">THE INQUISITION</div>
+              <p className="rt-vox-hint">
+                The first step is the Legate Investigator, an Alternate Career Rank taken on the Advances tab
+                when an Inquisitor offers it. These stand on it.
+              </p>
+              {ladder.map((k) => (
+                <React.Fragment key={k.id}>
+                  <p className="rt-elite-k">{k.name}</p>
+                  {k.rows.map(row)}
+                </React.Fragment>
+              ))}
+            </>
+          )}
           <div className="rt-choice-l">OR WRITE YOUR OWN</div>
         </>
       )}
@@ -7203,7 +7263,7 @@ const ADD_SOURCES = {
 function DossierPaneBase({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   corruption = 0, insanity = 0, onCorruption, onInsanity,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
-  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onAltRank, onWeaponState,
+  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onAltRank, onInquisition, onWeaponState,
   onBuyCharAdvance, onRefundCharAdvance, onAddEliteAdvance, onRemoveEliteAdvance,
   onGrantThrones, onSpendThrones, onRefundThrones,
   onFate, onProfit, spentAdj = 0, onSpentAdj }) {
@@ -7246,6 +7306,9 @@ function DossierPaneBase({ name, gender, background, setBackground, build, total
   const altRanks = career ? alternateRanksFor(career.name) : [];
   const altChosen = alternateRankByName(extras.altRank);
   const altTable = altChosen && altRanks.includes(altChosen) ? alternateAdvances(altChosen.name) : [];
+  // Everything held that an Elite Advance may stand on: elites, table advances
+  // and the alternate rank. The Inquisition panel keys off the same list.
+  const held = heldNames(extras);
   // Each characteristic's tier (and so cost) depends on the career, so a sold
   // or swapped career re-prices whatever was already bought rather than
   // grandfathering the old cost in.
@@ -7773,10 +7836,17 @@ function DossierPaneBase({ name, gender, background, setBackground, build, total
                   </div>
                   <p className="rt-psynote">
                     {altChosen && altTable.length
-                      ? `${altChosen.blurb} Needs ${altChosen.requires}, and the GM's leave. Taken in place of a rank from Rank ${romanRank(altChosen.minRank)}: what is passed up can be bought later as an Elite Advance at a price the GM sets, which the guide suggests is twice the printed cost.`
+                      ? `${altChosen.blurb} Needs ${altChosen.requires}, and the GM's leave. Taken in place of a rank from Rank ${romanRank(altChosen.minRank)}: what is passed up can be bought later as an Elite Advance at a price the GM sets, which the book suggests is ${altChosen.missed}.`
                       : 'With the GM\u2019s leave an Explorer who meets the requirements can take one of these in place of a rank of the career, and buy from its table instead.'}
                   </p>
+                  {altChosen && altTable.length > 0 && altChosen.grants && (
+                    <p className="rt-advsum rt-altgrant">{altChosen.grants}</p>
+                  )}
                 </div>
+              )}
+
+              {onTheInquisitionPath(held) && (
+                <LegaturePanel legature={extras.inquisition} held={held} onChange={onInquisition} />
               )}
 
               {Array.from({ length: MAX_TABLED_RANK }, (_, i) => i + 1).map((r) => {
@@ -7911,7 +7981,7 @@ function DossierPaneBase({ name, gender, background, setBackground, build, total
           onAdd={onAddEliteAdvance}
           careerName={career ? career.name : ''}
           rank={charRank}
-          owned={extras.eliteAdvances.map((a) => a.name)}
+          owned={held}
           onClose={() => setAddingElite(false)}
         />
       )}
@@ -9347,6 +9417,20 @@ function BridgePanelBase({ onLore, code, setCode, characterName, charId, shipRol
                     <span>ACHIEVEMENT <b>{prog.earned}/{prog.target}</b></span>
                   )}
                 </div>
+                {/* An Inquisition campaign: whose work it is, and the
+                    Superiority the debriefings have earned. Subtlety and
+                    Legitimacy never arrive here (redactEndeavour). */}
+                {end.inquisition && (patronById(end.inquisition.patron) || end.inquisition.patronName) && (
+                  <p className="rt-vox-hint">
+                    For {patronById(end.inquisition.patron) ? `Inquisitor ${patronById(end.inquisition.patron).name}` : end.inquisition.patronName}
+                  </p>
+                )}
+                {Object.keys(superiorityByFoe(end)).length > 0 && (
+                  <p className="rt-vox-hint">
+                    Superiority: {Object.entries(superiorityByFoe(end)).map(([f, n]) => `${f} ${n}`).join(' \u00B7 ')}.
+                    {' '}{SUPERIORITY_RULE}
+                  </p>
+                )}
                 {end.missions.map((m) => {
                   const mp = missionProgress(m, end.apModifier);
                   return (
@@ -10540,6 +10624,11 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
             {/* The campaign between fights: scenario and secret sub-plots,
                 the session log with its XP suggestion, and downtime. */}
             <CampaignPanel code={bridgeCode} journal={journal}
+              editMission={editMission} putEndeavour={putEndeavour} />
+
+            {/* An Inquisition campaign: the patron, Subtlety, briefings and
+                each mission's debriefing. See patrons.js. */}
+            <DebriefPanel journal={journal} endeavours={endeavours}
               editMission={editMission} putEndeavour={putEndeavour} />
           </>
         );

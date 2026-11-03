@@ -180,90 +180,29 @@ export const ELITE_ADVANCES = [
   },
 
   /* ---- the Inquisition, after Dark Heresy ----
-     The Inquisitor's Handbook models this as an ALTERNATE CAREER RANK: not a
-     career you start in, but a detour taken mid-career with the GM's leave —
-     "you won't swap Career Paths, but rather your character's fate simply
-     takes an unusual detour along the way" (p. 53). That is this app's Elite
-     Advance almost word for word, which is why the Inquisition arrives here
-     rather than as a fourteenth career.
+     The Inquisitor's Handbook makes the first step an ALTERNATE CAREER RANK:
+     a detour taken mid-career with the GM's leave, "you won't swap Career
+     Paths, but rather your character's fate simply takes an unusual detour
+     along the way". That is the Legate Investigator, and it lives with the
+     other alternate ranks in advances.js, table and all; its Ciphers
+     (Inquisition) and Talented (Interrogation) are bought there.
 
-     Legate Investigator is the book's own entry, Rank 4+, open to the Adept,
-     Arbitrator, Cleric, Guardsman and Psyker — rendered here as the
-     Seneschal, Arch-Militant, Missionary and Astropath. The Explorator is
-     left off deliberately: the Tech-Priest is the one career the book bars
-     from this path, having the Magos road instead.
+     What stands above it is here. Interrogator and the rosette are
+     Ascension's rungs, where a Legate who does well is "popularly viewed as a
+     sign that the recipient may be headed for an Inquisitorial rosette
+     themselves one day", so they stand on the Legature and on each other
+     rather than being unrelated purchases. A rung may stand on an alternate
+     rank or on an advance from one: `prereqElite` is matched by name against
+     everything the character holds (see meetsRequirement).
 
-     The two rungs above it are Ascension's, where a Legate who does well is
-     "popularly viewed as a sign that the recipient may be headed for an
-     Inquisitorial rosette themselves one day" — so they stand on each other
-     rather than being three unrelated purchases. */
+     `inquisition` sorts the dialog: 'rank' is who you are allowed to be,
+     'craft' what an investigator does, 'radical' what a Puritan would burn
+     you for. */
 
-  {
-    id: 'ciphers-of-the-ordos',
-    name: 'Ciphers (Inquisition)',
-    type: 'Skill',
-    cost: 200,
-    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
-    minRank: 2,
-    requires: 'Seneschal, Missionary, Arch-Militant or Astropath, Rank II',
-    effect: 'You read and write the coded tongues the Ordos use among themselves — '
-      + 'Augustinian\u2019s phrases and pictograms, Cryptos Cognos and the rest. A sentence '
-      + 'in one of them means nothing to anyone outside the Inquisition and its agents.',
-    note: 'An advance on the Legate Investigator\u2019s own list (Inquisitor\u2019s Handbook). '
-      + 'The cheapest way to start looking like somebody\u2019s Acolyte.'
-  },
-  {
-    id: 'talented-interrogation',
-    name: 'Talented (Interrogation)',
-    type: 'Talent',
-    cost: 200,
-    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
-    minRank: 3,
-    requires: 'Rank III, and the Interrogation skill',
-    effect: '+10 to all Interrogation Tests. Where the subject is already broken, frightened '
-      + 'or in your custody, the GM may rule that no test is needed at all.',
-    note: 'An advance on the Legate Investigator\u2019s own list (Inquisitor\u2019s Handbook).'
-  },
-  {
-    id: 'legate-investigator',
-    name: 'Legate Investigator',
-    type: 'Trait',
-    cost: 300,
-    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
-    minRank: 4,
-    requires: 'Seneschal, Missionary, Arch-Militant or Astropath, Rank IV',
-    effect: 'Bearing the Sigil of Question: you carry a carta of inquiry naming one locale and '
-      + 'one focus of concern, and a silver chalice sigil bearing the mark of the Inquisition, '
-      + 'code-keyed for verification. Within that remit you hold the absolute right to question '
-      + 'and examine whoever you wish, and command authority over local law enforcement, '
-      + 'detention and requisition. The authority ends formally when the enquiry does.',
-    note: 'An Alternate Career Rank from the Inquisitor\u2019s Handbook, Rank 4+. The Ordos '
-      + 'Calixis call them cult breakers, hounds, and brothers of question. Misuse of the office '
-      + 'carries censure and harsh punishment \u2014 the GM should hold you to the remit.'
-  },
-  {
-    id: 'interrogator',
-    name: 'Interrogator',
-    type: 'Trait',
-    cost: 500,
-    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
-    minRank: 6,
-    prereqElite: 'Legate Investigator',
-    requires: 'Rank VI, and Legate Investigator before it',
-    effect: 'An apprentice Inquisitor, no longer merely seconded authority: you speak with your '
-      + 'master\u2019s voice outside any single enquiry, may field a cell of Acolytes of your own, '
-      + 'and may requisition from Inquisitorial stores without petitioning a higher power. '
-      + 'Your master remains answerable for what you do with it.',
-    note: 'Ascension\u2019s stepping stone. A Legate who does well is held to be headed for a '
-      + 'rosette; some reach it quickly, and some never do.'
-  },
   /* ---- the working trade of an investigation ----
-     The ladder above is RANK: who you are allowed to be. These are the
-     CRAFT: what a cult breaker actually does between the warrant and the
-     arrest. They are keyed to the Legature rather than to the rosette,
-     because that is the rung where a character starts running enquiries of
-     their own, and priced below it so a Legate can afford a toolkit instead
-     of saving for the next title.
+     These are the CRAFT: what a cult breaker actually does between the
+     warrant and the arrest. Priced below the Interrogator rung so a Legate
+     can afford a toolkit instead of saving for the next title.
 
      Skill names are Rogue Trader's own (Scrutiny, Inquiry, Interrogation,
      Logic, Search, Forbidden Lore), so a GM adjudicates these with the
@@ -274,6 +213,7 @@ export const ELITE_ADVANCES = [
     name: 'Scrutiny (Inquisition)',
     type: 'Skill',
     cost: 200,
+    inquisition: 'craft',
     careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
     minRank: 2,
     requires: 'Seneschal, Missionary, Arch-Militant or Astropath, Rank II',
@@ -288,12 +228,13 @@ export const ELITE_ADVANCES = [
     name: 'Canvass the Locale',
     type: 'Talent',
     cost: 300,
+    inquisition: 'craft',
     careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Void-Master'],
     minRank: 3,
     requires: 'Seneschal, Missionary, Arch-Militant or Void-Master, Rank III',
-    effect: 'Working a district rather than a person. One Inquiry Test covering a day\u2019s '
+    effect: 'Working a district rather than a person. One Inquiry Test covering a day’s '
       + 'canvassing returns a lead on each Degree of Success instead of a single answer, and '
-      + 'a failure still names who refused to talk \u2014 which is a lead of its own.',
+      + 'a failure still names who refused to talk — which is a lead of its own.',
     note: 'Slow, unglamorous and how most heresies are actually found.'
   },
   {
@@ -301,6 +242,7 @@ export const ELITE_ADVANCES = [
     name: 'Scene of the Deed',
     type: 'Talent',
     cost: 300,
+    inquisition: 'craft',
     careers: ['Seneschal', 'Missionary', 'Explorator', 'Arch-Militant'],
     minRank: 3,
     requires: 'Seneschal, Missionary, Explorator or Arch-Militant, Rank III',
@@ -312,12 +254,31 @@ export const ELITE_ADVANCES = [
       + 'somebody chose what to take away.'
   },
   {
+    id: 'cult-signifiers',
+    name: 'Forbidden Lore (Cult Signifiers)',
+    type: 'Skill',
+    cost: 300,
+    inquisition: 'craft',
+    careers: ['Seneschal', 'Missionary', 'Astropath Transcendent', 'Arch-Militant'],
+    minRank: 3,
+    requires: 'Seneschal, Missionary, Astropath or Arch-Militant, Rank III',
+    effect: 'You know the marks: the eight-pointed star worked into a ledger’s margin, '
+      + 'the wrong number of candles, a hymn with a verse that is not in the hymnal. A '
+      + 'successful Forbidden Lore Test identifies which Ruinous Power or xenos influence a '
+      + 'sign belongs to; a second Degree of Success tells you whether it was made by a '
+      + 'believer or copied by somebody who is not one.',
+    note: 'Carries the usual risk the Ordos accept in their own agents: knowing the signs '
+      + 'means having studied them. The GM may call for a Willpower Test on a bad result.'
+  },
+  {
     id: 'the-long-question',
     name: 'The Long Question',
     type: 'Talent',
     cost: 400,
+    inquisition: 'craft',
     careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
     minRank: 4,
+    // Talented (Interrogation) is on the Legate Investigator's table.
     prereqElite: 'Talented (Interrogation)',
     requires: 'Rank IV, and Talented (Interrogation) before it',
     effect: 'An interrogation conducted over days rather than an evening. Spend a week with a '
@@ -328,44 +289,53 @@ export const ELITE_ADVANCES = [
       + 'use for anything afterwards.'
   },
   {
-    id: 'cult-signifiers',
-    name: 'Forbidden Lore (Cult Signifiers)',
-    type: 'Skill',
-    cost: 300,
-    careers: ['Seneschal', 'Missionary', 'Astropath Transcendent', 'Arch-Militant'],
-    minRank: 3,
-    requires: 'Seneschal, Missionary, Astropath or Arch-Militant, Rank III',
-    effect: 'You know the marks: the eight-pointed star worked into a ledger\u2019s margin, '
-      + 'the wrong number of candles, a hymn with a verse that is not in the hymnal. A '
-      + 'successful Forbidden Lore Test identifies which Ruinous Power or xenos influence a '
-      + 'sign belongs to; a second Degree of Success tells you whether it was made by a '
-      + 'believer or copied by somebody who is not one.',
-    note: 'Carries the usual risk the Ordos accept in their own agents: knowing the signs '
-      + 'means having studied them. The GM may call for a Willpower Test on a bad result.'
-  },
-  {
     id: 'cell-handler',
     name: 'Cell Handler',
     type: 'Trait',
     // Priced below the Interrogator rung on purpose: a Legate should be able
     // to afford the craft of the job without saving for the next title.
     cost: 400,
+    inquisition: 'craft',
     careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
     minRank: 5,
     prereqElite: 'Legate Investigator',
-    requires: 'Rank V, and Legate Investigator before it',
+    requires: 'Rank V, and the Legate Investigator rank before it',
     effect: 'You run informants rather than merely question them. Keep a standing roster of '
       + 'three contacts in any locale you have worked; each may be called on once per enquiry '
       + 'for information the GM judges they could plausibly have, without a Fellowship Test. '
-      + 'A contact spent on something they should not have known is burned.',
+      + 'A contact spent on something they should not have known is burned. The roster is '
+      + 'kept on the Inquisition panel of the Advances tab.',
     note: 'The difference between an Acolyte and a handler is that a handler loses people and '
       + 'keeps working.'
+  },
+
+  /* ---- the rungs above the Legature ---- */
+
+  {
+    id: 'interrogator',
+    name: 'Interrogator',
+    type: 'Trait',
+    cost: 500,
+    inquisition: 'rank',
+    careers: ['Seneschal', 'Missionary', 'Arch-Militant', 'Astropath Transcendent'],
+    minRank: 6,
+    prereqElite: 'Legate Investigator',
+    requires: 'Rank VI, and the Legate Investigator rank before it',
+    effect: 'An apprentice Inquisitor, no longer merely seconded authority: you speak with your '
+      + 'master’s voice outside any single enquiry, may field a cell of Acolytes of your own, '
+      + 'and may requisition from Inquisitorial stores without petitioning a higher power. '
+      + 'Your master may trust you with a sanctioned copy of their rosette. Your master remains '
+      + 'answerable for what you do with it.',
+    note: 'Ascension’s stepping stone. A Legate who does well is held to be headed for a '
+      + 'rosette; some reach it quickly, and some never do. The GM may keep a hidden '
+      + 'Legitimacy count in the Endeavour journal to decide when.'
   },
   {
     id: 'inquisitorial-rosette',
     name: 'Inquisitorial Rosette',
     type: 'Trait',
     cost: 1000,
+    inquisition: 'rank',
     // Open to any career by the time anyone gets here: the rosette is granted
     // for what a character has done, not for the path they began on.
     careers: [],
@@ -374,10 +344,38 @@ export const ELITE_ADVANCES = [
     requires: 'Rank VIII, and Interrogator before it',
     effect: 'The rosette is yours. You answer to no authority in the Imperium save the Ordos '
       + 'themselves, may commandeer any Imperial asset including a voidship and its crew, and '
-      + 'your word alone is sufficient warrant to detain, question or execute. Few live long '
-      + 'enough to use it well.',
-    note: 'The end of the road the Legature starts. Granting this changes a campaign\u2019s '
-      + 'shape \u2014 an Inquisitor outranks the dynasty they sail with.'
+      + 'your word alone is sufficient warrant to detain, question or execute. What your rosette '
+      + 'is made of and what it can do are rolled on the Inquisition panel, by your Ordo; there '
+      + 'too you declare the philosophy you will serve the Emperor by.',
+    note: 'The end of the road the Legature starts. Granting this changes a campaign’s '
+      + 'shape — an Inquisitor outranks the dynasty they sail with.'
+  },
+
+  /* ---- the Radical's rung ----
+     Imperium Maledictum's Forbidden Knowledge talent, which no character may
+     buy without the GM's permission and which is usually handed out as the
+     consequence of something that happened in play. Open to anyone, because
+     the book's examples are Acolytes who found a tome or a cube, not titled
+     Inquisitors. */
+
+  {
+    id: 'forbidden-knowledge',
+    name: 'Forbidden Knowledge',
+    type: 'Talent',
+    cost: 300,
+    inquisition: 'radical',
+    careers: [],
+    minRank: 3,
+    requires: 'Rank III, and the GM’s leave: it is granted after the character has studied something they should not have',
+    effect: 'You hold what one of the Ordos keeps from everyone else: minor (what a thing is and '
+      + 'how to know it) or major (how to summon, bind or bargain with it). The GM may sell you '
+      + 'Forbidden Lore in that subject, and drawing on it against its subject can earn the party '
+      + 'Superiority in the journal. Studying a further source is a Difficult (−10) test to make '
+      + 'sense of it and a Difficult (−10) Willpower Test to resist it; each failure costs 1 '
+      + 'Corruption Point. Record whose knowledge you hold on the Inquisition panel, which says '
+      + 'what holding it costs.',
+    note: 'Puritans call holding it the first step to heresy; Radicals call it the only way to win. '
+      + 'If it gets out, other Inquisitors come to cleanse it, and the enemy comes to take it.'
   },
 
   /* ---- campaign conversions, generalised ----
@@ -485,7 +483,9 @@ export function meetsRequirement(entry, { careerName = '', rank = 0, owned = [] 
     || entry.careers.includes(careerName);
   const rankOk = !entry.minRank || (Number(rank) || 0) >= entry.minRank;
   // A ladder: an entry may stand on another. Matched by NAME because that is
-  // what a bought advance stores — {name, type, cost} and nothing else.
+  // what a bought advance stores — {name, type, cost} and nothing else — and
+  // `owned` is every name the character holds: Elite Advances, table advances
+  // and the alternate rank (see heldNames), so a rung can stand on any of them.
   const belowOk = !entry.prereqElite || (owned || []).includes(entry.prereqElite);
   return Boolean(careerOk && rankOk && belowOk);
 }
@@ -499,3 +499,18 @@ export const elitePresets = (who) => ELITE_ADVANCES
   // stable: equal-met entries keep catalogue order
   .sort((a, b) => (b.met - a.met) || (a.i - b.i))
   .map(({ i, ...e }) => e);
+
+/* Every name a character holds that a rung may stand on: the Elite Advances,
+   the advances bought from a table, and the alternate rank taken. */
+export const heldNames = ({ eliteAdvances = [], advances = [], altRank = '' } = {}) => [
+  ...eliteAdvances.map((a) => a.name),
+  ...advances.map((a) => a.name),
+  ...(altRank ? [altRank] : [])
+];
+
+// The Inquisition entries, in the order the dialog shows them.
+export const INQUISITION_KINDS = [
+  { id: 'rank', name: 'The rungs' },
+  { id: 'craft', name: 'The craft' },
+  { id: 'radical', name: 'The Radical\u2019s rung' }
+];

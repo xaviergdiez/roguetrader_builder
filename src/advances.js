@@ -1163,12 +1163,15 @@ export function advanceStatus(advance, ctx) {
    A side path a character takes in place of one rank of their career (Tau
    Character Guide, pp.18-24): from a minimum Rank, with the GM\u2019s leave, their
    advances come from this table instead of that rank\u2019s. What they pass up they
-   may buy later as Elite Advances at the GM\u2019s price, which the guide suggests
-   should be twice the printed cost. The tables are the guide\u2019s as printed. */
+   may buy later as Elite Advances at the GM\u2019s price; `missed` says what each
+   book suggests that price is. The tables are the books\u2019 as printed.
+
+   `grants`, where present, is what taking the rank gives besides its table. */
 export const ALTERNATE_RANKS = [
   {
     name: 'Pathfinder', careers: ["T'au Fire Warrior"], minRank: 2, xp: 7000,
     requires: 'Ag 35, Nerves of Steel, Silent Move',
+    missed: 'twice the printed cost',
     blurb: 'The Fire caste’s scouts and markerlight spotters: stealth, snipers and bait.',
     advances: [
       A('Awareness +10', 'Skill', 'Awareness', 100),
@@ -1201,6 +1204,7 @@ export const ALTERNATE_RANKS = [
   {
     name: 'Drone Handler', careers: ["T'au Fire Warrior"], minRank: 3, xp: 10000,
     requires: 'Int 40, Tech-Use +10',
+    missed: 'twice the printed cost',
     blurb: 'A Fire Warrior with the aptitude to direct drones.',
     advances: [
       A('Awareness +10', 'Skill', 'Awareness', 100),
@@ -1229,6 +1233,7 @@ export const ALTERNATE_RANKS = [
   {
     name: 'Battlesuit Pilot', careers: ["T'au Fire Warrior"], minRank: 5, xp: 17000,
     requires: 'Ag 45, and the rank of Shas’ui',
+    missed: 'twice the printed cost',
     blurb: 'A veteran trusted with a battlesuit.',
     advances: [
       A('Pilot (Personal)', 'Skill', null, 100),
@@ -1250,6 +1255,54 @@ export const ALTERNATE_RANKS = [
       A('Exemplar of the Selfless Cause', 'Talent', 'Bonding Ritual, Command +10', 800),
       A('Disciple of Kauyon', 'Talent', 'Bonding Ritual', 800),
       A('Veteran’s Reflexes', 'Talent', 'Ag 45, Talented (Pilot)', 1000)
+    ]
+  },
+
+  /* The Inquisitor's Handbook (Dark Heresy). Its careers are rendered as this
+     app's: the Adept as the Seneschal, the Arbitrator and the Guardsman as the
+     Arch-Militant, the Cleric as the Missionary, the Imperial Psyker as the
+     Astropath. The Tech-Priest is the one career the book leaves off, and so
+     is the Explorator here. Rank 4 is the book's own figure, and 13,000 XP is
+     where this app's Rank IV begins. The book prints "Interrogate" in the
+     table and "Interrogation" in its prerequisites; the skill is Interrogation. */
+  {
+    name: 'Legate Investigator',
+    careers: ['Seneschal', 'Arch-Militant', 'Missionary', 'Astropath Transcendent'],
+    minRank: 4, xp: 13000,
+    requires: 'Literacy, and an Inquisitor who offers it to you',
+    missed: 'the printed cost plus 50 XP',
+    blurb: 'An Acolyte trusted with a share of an Inquisitor’s authority for one enquiry: '
+      + 'a cult breaker, a hound, a brother of question. Holding it well is taken as a sign '
+      + 'that a rosette may follow one day.',
+    grants: 'Bearing the Sigil of Question. You carry a carta of inquiry naming one locale and one '
+      + 'concern, and a silver sigil of the chalice and the Inquisition, worn as a medallion or a ring '
+      + 'and code-keyed for verification. Within that remit you may question and examine whoever you '
+      + 'wish, and command local law enforcement, detention and requisition. The authority ends with '
+      + 'the enquiry; the table stays yours for good. Misuse of it brings censure and worse.',
+    advances: [
+      A('Command', 'Skill', null, 100),
+      A('Forbidden Lore (Cults)', 'Skill', null, 100),
+      A('Forbidden Lore (Heresy)', 'Skill', null, 100),
+      A('Forbidden Lore (Mutants)', 'Skill', null, 100),
+      A('Forbidden Lore (Psykers)', 'Skill', null, 100),
+      A('Inquiry', 'Skill', null, 100),
+      A('Inquiry +10', 'Skill', 'Inquiry', 100),
+      A('Interrogation', 'Skill', null, 100),
+      A('Interrogation +10', 'Skill', 'Interrogation', 100),
+      A('Scrutiny', 'Skill', null, 100),
+      A('Scrutiny +10', 'Skill', 'Scrutiny', 100),
+      A('Ciphers (Inquisition)', 'Skill', null, 200),
+      A('Forbidden Lore (Cults) +10', 'Skill', 'Forbidden Lore (Cults)', 200),
+      A('Forbidden Lore (Heresy) +10', 'Skill', 'Forbidden Lore (Heresy)', 200),
+      A('Forbidden Lore (Mutants) +10', 'Skill', 'Forbidden Lore (Mutants)', 200),
+      A('Forbidden Lore (Psykers) +10', 'Skill', 'Forbidden Lore (Psykers)', 200),
+      A('Inquiry +20', 'Skill', 'Inquiry +10', 200),
+      A('Interrogation +20', 'Skill', 'Interrogation +10', 200),
+      A('Scholastic Lore (Judgement)', 'Skill', null, 200),
+      A('Scrutiny +20', 'Skill', 'Scrutiny +10', 200),
+      A('Air of Authority', 'Talent', 'Fel 30', 200),
+      A('Talented (Inquiry)', 'Talent', 'Inquiry', 200),
+      A('Talented (Interrogation)', 'Talent', 'Interrogation', 200)
     ]
   }
 ];

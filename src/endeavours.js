@@ -20,6 +20,8 @@
 // Objective can name an encounter out of the encounter library, which is the
 // one place the two halves of GM prep meet.
 
+import { readDebrief, readInquisitionJournal } from './patrons.js';
+
 /* ------------------------------ objective kinds ------------------------------ */
 
 const K = (id, name, note) => ({ id, name, note });
@@ -134,7 +136,9 @@ export function readMission(m) {
     note: str(src && src.note, 400),
     objectives: objectives.filter((o) => o && typeof o === 'object').map(readObjective),
     // Only present when the GM has set one up, so a plain Mission is unchanged.
-    ...(src && src.scenario ? { scenario: readScenario(src.scenario) } : {})
+    ...(src && src.scenario ? { scenario: readScenario(src.scenario) } : {}),
+    // An Inquisition mission's debriefing: evidence, Superiority, Legitimacy.
+    ...(src && src.debrief ? { debrief: readDebrief(src.debrief) } : {})
   };
 }
 
@@ -153,7 +157,9 @@ export function readEndeavour(e) {
     apModifier: int(src && src.apModifier, 0),
     missions: missions.filter((m) => m && typeof m === 'object').map(readMission),
     // The campaign diary: one entry per session, GM-only (redactEndeavour).
-    ...(Array.isArray(src && src.diary) ? { diary: readDiary(src.diary) } : {})
+    ...(Array.isArray(src && src.diary) ? { diary: readDiary(src.diary) } : {}),
+    // Whose work this is and how quietly the cell goes about it (patrons.js).
+    ...(src && src.inquisition ? { inquisition: readInquisitionJournal(src.inquisition) } : {})
   };
 }
 
@@ -258,17 +264,21 @@ export function endeavourProgress(end) {
 export function redactEndeavour(end, { isGm = false } = {}) {
   if (!end) return null;
   if (isGm) return end;
-  const { diary, ...pub } = end;
+  const { diary, inquisition, ...pub } = end;
   const missions = (end.missions || [])
     .map((m) => {
-      const { scenario, ...rest } = m;
+      const { scenario, debrief, ...rest } = m;
       // The sub-plots are secret; sides and concept are what the table plays.
       const shown = scenario ? { ...scenario, subplots: [] } : null;
-      return { ...rest, ...(shown ? { scenario: shown } : {}),
+      // Legitimacy is the GM's own count, never the player's to read.
+      const told = debrief ? { ...debrief, legitimacy: [] } : null;
+      return { ...rest, ...(shown ? { scenario: shown } : {}), ...(told ? { debrief: told } : {}),
         objectives: (m.objectives || []).filter((o) => !o.hidden) };
     })
     .filter((m) => (m.objectives || []).length > 0);
-  return { ...pub, missions };
+  // Who the patron is, the party knows; how exposed they are, they must work out.
+  const { subtlety, ...known } = inquisition || {};
+  return { ...pub, ...(inquisition ? { inquisition: known } : {}), missions };
 }
 
 /* ---- what a list prints ---- */

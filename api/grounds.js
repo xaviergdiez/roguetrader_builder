@@ -13,9 +13,15 @@
 //   GET    /api/grounds?g=<id>    -> { id, ..., texture }
 //   PUT    /api/grounds?g=<id>    -> { id, ... }   (upsert)
 //   DELETE /api/grounds?g=<id>    -> { ok: true }
+//   POST   /api/grounds?reindex=1 -> { recovered, grounds, unreadable, remaining }
+//                                    lists floors stored under this account's keys
+//                                    that the index has lost; adds entries only
 
 import { groundKey, isCharId, redis } from "../lib/storage.js";
 import { requireUser, getUser, saveUser } from "../lib/auth.js";
+import {
+  MAX_TEXTURE_BYTES, MAX_SPRITES_BYTES, MAX_GROUNDS, IMAGE_URL, meta, runGroundsReindex,
+} from "../lib/grounds.js";
 
 /* A ground's sixteen props, as ONE sheet, under a key of its own.
 
@@ -25,50 +31,6 @@ import { requireUser, getUser, saveUser } from "../lib/auth.js";
    sheet is read only by a deck that actually has props on it. Three sizes of
    thing, three places to keep them. */
 const spritesKey = (uid, gid) => `${groundKey(uid, gid)}:sprites`;
-
-const MAX_NAME = 60;
-// Upstash rejects a record over 1MB. A ground is shrunk to 512px client-side,
-// which lands near 60KB as a data URL, so anything approaching this is a
-// surprise worth reporting rather than an opaque failure from the driver.
-const MAX_TEXTURE_BYTES = 900_000;
-/* A sheet is sixteen tokens in one image, kept at 1024px — four times the
-   area of a floor and mostly transparent, which WebP packs well. Its own
-   ceiling because it is its own record: were it sharing the floor's budget,
-   a ground with props would be refused for a floor that is perfectly fine. */
-const MAX_SPRITES_BYTES = 900_000;
-// Enough for a campaign's worth without the index itself becoming a payload.
-const MAX_GROUNDS = 60;
-
-const text = (v, fallback = "", max = MAX_NAME) => {
-  const s = String(v ?? "").trim().slice(0, max);
-  return s || fallback;
-};
-
-const colour = (v, fallback) =>
-  (typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v)) ? v : fallback;
-
-const num = (v, fallback, lo, hi) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
-};
-
-// The index entry: everything the picker and the renderer need EXCEPT the
-// floor itself. Kept narrow on purpose — this is fetched on every load.
-const meta = (gid, body, hasSprites) => ({
-  id: gid,
-  name: text(body.name, "Saved ground"),
-  subtitle: text(body.subtitle, "", 120),
-  prompt: text(body.prompt, "", 800),
-  grid: colour(body.grid, "#8fe0a8"),
-  accent: colour(body.accent, "#8a7442"),
-  fallback: colour(body.fallback, "#2a2a24"),
-  wash: num(body.wash, 0.2, 0, 0.5),
-  gridAlpha: num(body.gridAlpha, 0.35, 0.11, 1),
-  // Whether this ground has props, not the props themselves: the picker wants
-  // to say so, and the renderer wants to know whether to ask for the sheet.
-  sprites: !!hasSprites,
-  updatedAt: Date.now(),
-});
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
@@ -110,8 +72,7 @@ export default async function handler(req, res) {
     // A ground with no floor is not a ground: it would sit in the picker
     // and render nothing.
     const texture = body.texture;
-    if (typeof texture !== "string"
-      || !/^data:image\/(png|jpeg|webp);base64,/.test(texture)) {
+    if (typeof texture !== "string" || !IMAGE_URL.test(texture)) {
       return res.status(400).json({ error: "texture_required" });
     }
     if (texture.length > MAX_TEXTURE_BYTES) {
@@ -137,8 +98,7 @@ export default async function handler(req, res) {
     const sprites = body.sprites;
     const sendingSprites = sprites !== undefined;
     if (sendingSprites && sprites !== null) {
-      if (typeof sprites !== "string"
-        || !/^data:image\/(png|jpeg|webp);base64,/.test(sprites)) {
+      if (typeof sprites !== "string" || !IMAGE_URL.test(sprites)) {
         return res.status(400).json({ error: "bad_sprites" });
       }
       if (sprites.length > MAX_SPRITES_BYTES) {
@@ -178,6 +138,16 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true });
   }
 
-  res.setHeader("Allow", "GET, PUT, DELETE");
+  /* Find floors this account stores that its index has lost. Not a read and
+     not a write of one ground, so it is its own action. The prefix is built
+     from the signed-in account's id and nothing the caller sends. */
+  if (req.method === "POST" && req.query.reindex === "1") {
+    const out = await runGroundsReindex({
+      user, redis, prefix: groundKey(uid, ""), save: (u) => saveUser(uid, u),
+    });
+    return res.status(out.status).json(out.json);
+  }
+
+  res.setHeader("Allow", "GET, PUT, DELETE, POST");
   return res.status(405).end();
 }

@@ -8,6 +8,7 @@ import { shrinkToDataUrl } from './imageshrink.js';
 import {
   readLocal as readLocalGrounds, writeLocal as writeLocalGrounds,
   cloudList as groundsList, cloudGet as groundGet, cloudPut as groundPut, cloudDelete as groundDelete,
+  cloudReindexAll as groundsReindex, describeRecoveredGrounds,
   takeLegacy as takeLegacyGrounds
 } from './grounds.js';
 import {
@@ -16,9 +17,14 @@ import {
 import {
   readLocal as readLocalDecks, writeLocal as writeLocalDecks,
   cloudList as decksList, cloudGet as deckGet, cloudPut as deckPut, cloudDelete as deckDelete,
+  cloudReindexAll as decksReindex, describeRecovered,
   takeLegacy as takeLegacyDecks, deckSize
 } from './decks.js';
-import { movedIds, markMoved, toMove, describeMove } from './localmove.js';
+import { movedIds, markMoved, describeMove } from './localmove.js';
+import {
+  HOMEBREW_LISTS, BACKUP_KEY, syncedIds, rememberSynced, restorable, mergeHomebrew, putBack,
+  homebrewIds, describeRestore, reindexTried, markReindexTried
+} from './heal.js';
 import MapWindow from './MapWindow.jsx';
 import CodexDialog from './CodexDialog.jsx';
 import InquisitionCard from './InquisitionCard.jsx';
@@ -120,7 +126,7 @@ import {
 } from './bridge.js';
 import {
   EMPTY as EMPTY_HOMEBREW, normalise as readHomebrew, isEmpty as homebrewEmpty,
-  readLocal as readLocalHomebrew, writeLocal as writeLocalHomebrew,
+  readLocal as readLocalHomebrew, writeLocal as writeLocalHomebrew, forStorage as forStorageHomebrew,
   cloudGet as homebrewGet, cloudPut as homebrewPut
 } from './homebrew.js';
 import { parseCsv, parseCharacterSheet, sheetIdFrom } from './sheet.js';
@@ -3267,6 +3273,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
      during a session, and until now its save button was simply dead. */
   const [grounds, setGrounds] = useState([]);
   const [groundErr, setGroundErr] = useState('');
+  const groundsReached = useRef(false);
+  const [groundRecoverNote, setGroundRecoverNote] = useState('');
+  const groundReindexing = useRef(null);   // as decksReached, for the grounds the account holds
   /* What a signed-in browser carried up from its own storage, said once. The
      decks and the grounds are moved by separate effects, so the tally is kept
      here and the sentence rebuilt from it each time one of them adds to it. */
@@ -3289,7 +3298,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
            device too; a floor that will not go (over the account's size
            limit) stays here and is counted, not dropped. */
         if (cloud && owner) {
-          const mine = toMove(readLocalGrounds(), list, movedIds('grounds', owner), (g) => Boolean(g.texture));
+          const mine = restorable(readLocalGrounds(), list, [...movedIds('grounds', owner), ...syncedIds('grounds', owner)], (g) => Boolean(g.texture));
           if (mine.length) {
             const sent = [];
             for (const g of mine) {
@@ -3300,13 +3309,35 @@ export default function RogueTraderBuilder({ me, cloud }) {
             if (live) tallyMove({ grounds: sent.length, left: mine.length - sent.length });
           }
         }
+        /* Floors stored in the account whose entry in its list was lost are
+           listed again, once per browser; after that it is the library's own
+           button. One request at a time, as for decks. */
+        if (cloud && owner && !reindexTried(owner + ':grounds')) {
+          try {
+            groundReindexing.current = groundReindexing.current || groundsReindex();
+            const { recovered } = await groundReindexing.current;
+            markReindexTried(owner + ':grounds');
+            if (recovered) {
+              list = await groundsList();
+              if (live) setGroundRecoverNote(describeRecoveredGrounds(recovered));
+            }
+          } catch { groundReindexing.current = null; /* asked again next time */ }
+        }
+        groundsReached.current = Boolean(cloud);
         if (live) setGrounds(list);
       } catch (e) {
+        groundsReached.current = false;
         if (live) { setGrounds(readLocalGrounds()); setGroundErr(e.message); }
       }
     })();
     return () => { live = false; };
   }, [cloud]);
+
+  useEffect(() => {
+    if (cloud && owner && groundsReached.current) {
+      rememberSynced('grounds', owner, grounds.map((g) => g.id));
+    }
+  }, [grounds, cloud, owner]);
 
   // Grounds lived in the homebrew library for one release. Move them, never
   // drop them: losing them at the store layer is the failure this split came
@@ -3390,6 +3421,10 @@ export default function RogueTraderBuilder({ me, cloud }) {
      `renamed` that only the name did. */
   const [decks, setDecks] = useState([]);
   const [decksLoaded, setDecksLoaded] = useState(false);
+  // True once the account's own list has been read: only then is `decks` a record of what the account holds.
+  const decksReached = useRef(false);
+  const [deckRecoverNote, setDeckRecoverNote] = useState('');
+  const reindexing = useRef(null);
   const [deckErr, setDeckErr] = useState('');
 
   useEffect(() => {
@@ -3399,7 +3434,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         let list = cloud ? await decksList() : readLocalDecks().map(readSavedMap);
         // The same for decks drawn while signed out: see the grounds above.
         if (cloud && owner) {
-          const mine = toMove(readLocalDecks().map(readSavedMap), list, movedIds('decks', owner), (d) => Boolean(d.map));
+          const mine = restorable(readLocalDecks().map(readSavedMap), list, [...movedIds('decks', owner), ...syncedIds('decks', owner)], (d) => Boolean(d.map));
           if (mine.length) {
             const sent = [];
             for (const d of mine) {
@@ -3410,13 +3445,39 @@ export default function RogueTraderBuilder({ me, cloud }) {
             if (live) tallyMove({ decks: sent.length, left: mine.length - sent.length });
           }
         }
+        /* Decks stored in the account whose entry in its list was lost (a
+           sign-in used to erase the list) are listed again, once per browser;
+           after that it is the library's own button. */
+        if (cloud && owner && !reindexTried(owner)) {
+          try {
+            // One request at a time: the effect can run twice in a row, and
+            // two scans of the same account would find the same decks twice.
+            reindexing.current = reindexing.current || decksReindex();
+            const { recovered } = await reindexing.current;
+            markReindexTried(owner);
+            if (recovered) {
+              list = await decksList();
+              if (live) setDeckRecoverNote(describeRecovered(recovered));
+            }
+          } catch { reindexing.current = null; /* asked again next time: nothing was recorded */ }
+        }
+        decksReached.current = Boolean(cloud);
         if (live) { setDecks(list); setDecksLoaded(true); }
       } catch (e) {
+        decksReached.current = false;
         if (live) { setDecks(readLocalDecks().map(readSavedMap)); setDeckErr(e.message); setDecksLoaded(true); }
       }
     })();
     return () => { live = false; };
   }, [cloud]);
+
+  // What the account holds of decks, remembered so the next load can tell a
+  // deck another device removed from an account that lost everything (heal.js).
+  useEffect(() => {
+    if (cloud && owner && decksLoaded && decksReached.current) {
+      rememberSynced('decks', owner, decks.filter((d) => !d.dirty).map((d) => d.id));
+    }
+  }, [decks, decksLoaded, cloud, owner]);
 
   // Decks lived in the homebrew library until now. Move them, never drop
   // them, and write the library back only for those that are safely stored:
@@ -3737,6 +3798,24 @@ export default function RogueTraderBuilder({ me, cloud }) {
     saveHere: saveLiveDeck,
     needDeck: fetchDeck,
     needTexture: loadGroundTexture,
+    // Signed in only: lists decks the account stores but has lost the entries for.
+    findLost: cloud ? async () => {
+      const { recovered } = await decksReindex();
+      if (recovered) {
+        const list = await decksList();
+        setDecks((prev) => [...prev, ...list.filter((d) => !prev.some((x) => x.id === d.id))]);
+      }
+      return recovered;
+    } : null,
+    // The same for environments: floors the account stores but no longer lists.
+    findLostGrounds: cloud ? async () => {
+      const { recovered } = await groundsReindex();
+      if (recovered) {
+        const list = await groundsList();
+        setGrounds((prev) => [...prev, ...list.filter((g) => !prev.some((x) => x.id === g.id))]);
+      }
+      return recovered;
+    } : null,
     duplicate: async (id) => {
       const full = await fetchDeck(id);
       if (!full) return null;
@@ -4081,17 +4160,44 @@ export default function RogueTraderBuilder({ me, cloud }) {
   /* ---- homebrew library: per account when signed in, per browser otherwise ---- */
 
   const legacyHomebrew = useRef(null);
+  // False when the account's library could not be read: then nothing is
+  // uploaded, because this browser's copy might be older than the account's.
+  const homebrewReached = useRef(true);
+  const [homebrewNote, setHomebrewNote] = useState('');
+  const [homebrewLeft, setHomebrewLeft] = useState([]);
 
   useEffect(() => {
     let live = true;
     (async () => {
       let lib = EMPTY_HOMEBREW;
+      let reached = !cloud;           // signed out, this browser IS the library
       try {
         lib = cloud ? await homebrewGet() : readLocalHomebrew();
+        reached = true;
       } catch (e) {
         // Fall back to whatever this browser has rather than showing none.
         lib = readLocalHomebrew();
         if (live) setHomebrewErr(e.message);
+      }
+      /* Put this browser's copy back before anything is written. Taking the
+         account's library as it came meant that an account which had lost its
+         library (a sign-in used to erase it) overwrote the browser's copy with
+         an empty one the moment it loaded. The account's own version of an
+         entry always stands, and nothing it holds is removed: see heal.js. */
+      if (cloud && reached && owner) {
+        const known = Object.fromEntries(HOMEBREW_LISTS.map((n) => [n, syncedIds('hb.' + n, owner)]));
+        const local = readLocalHomebrew();
+        const { merged, added, left } = mergeHomebrew(lib, local, known);
+        if (left.length) {
+          // What the browser held and the account no longer does: kept in a
+          // backup, and offered back, never silently dropped.
+          try { localStorage.setItem(BACKUP_KEY, JSON.stringify(forStorageHomebrew(local))); } catch { /* quota */ }
+        }
+        if (added) lib = merged;
+        if (live) {
+          setHomebrewLeft(left);
+          setHomebrewNote(describeRestore({ restored: added, left: left.length }));
+        }
       }
       // First run on an account, or a browser whose library predates its own
       // storage key: adopt what the sheet was carrying rather than lose it.
@@ -4099,6 +4205,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         && !homebrewEmpty(legacyHomebrew.current)) {
         lib = legacyHomebrew.current;
       }
+      homebrewReached.current = reached;
       if (live) { setHomebrew(lib); setHomebrewLoaded(true); }
     })();
     return () => { live = false; };
@@ -4110,13 +4217,28 @@ export default function RogueTraderBuilder({ me, cloud }) {
       // Written to this browser either way, so a library survives being
       // signed out and is there to fall back on.
       writeLocalHomebrew(homebrew);
-      if (!cloud) return;
+      if (!cloud || !homebrewReached.current) return;
       homebrewPut(homebrew)
-        .then(() => setHomebrewErr(''))
+        .then(() => {
+          setHomebrewErr('');
+          // What the account now holds, for the next load to tell a removal
+          // by another device from a loss of everything.
+          if (owner) {
+            const ids = homebrewIds(homebrew);
+            for (const n of HOMEBREW_LISTS) rememberSynced('hb.' + n, owner, ids[n]);
+          }
+        })
         .catch((e) => setHomebrewErr(e.message));
     }, 600);
     return () => clearTimeout(t);
   }, [homebrew, homebrewLoaded, cloud]);
+
+  // The entries another device removed, put back at the person's word.
+  const putHomebrewBack = () => {
+    setHomebrew((h) => putBack(h, homebrewLeft));
+    setHomebrewLeft([]);
+    setHomebrewNote('Put back. They will be in your account on every device.');
+  };
 
   /* ---- roster: save / open / delete / start fresh ---- */
 
@@ -4652,6 +4774,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       {brewOpen && (
         <HomebrewEditor homebrew={homebrew} setHomebrew={setHomebrew}
           err={homebrewErr} cloud={cloud}
+          note={homebrewNote} leftCount={homebrewLeft.length} onPutBack={putHomebrewBack}
           onClose={() => setBrewOpen(false)} />
       )}
 
@@ -4669,7 +4792,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           voidWindowErr={voidWindowErr} setVoidWindowErr={setVoidWindowErr}
           voidShot={voidShot} setVoidShot={setVoidShot} gun={gun} voidLib={voidLib} mapLib={mapLib}
           grounds={grounds} onSaveGround={saveGroundToLibrary}
-          onNeedGroundTexture={loadGroundTexture} groundErr={groundErr} moveNote={moveNote}
+          onNeedGroundTexture={loadGroundTexture} groundErr={groundErr} moveNote={[moveNote, deckRecoverNote, groundRecoverNote].filter(Boolean).join(' ')}
           decks={decksForMap} deckErr={deckErr} deckId={deckId} openDeck={openDeck}
           createDeck={createDeck} renameDeck={renameDeck} deleteDeck={deleteDeck}
           mapView={mapView} setMapView={setMapView}
@@ -10725,7 +10848,7 @@ const BLANK_COMPONENT = {
   note: ''
 };
 
-function HomebrewEditor({ homebrew, setHomebrew, err, cloud, onClose }) {
+function HomebrewEditor({ homebrew, setHomebrew, err, cloud, note = '', leftCount = 0, onPutBack, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -10788,6 +10911,12 @@ function HomebrewEditor({ homebrew, setHomebrew, err, cloud, onClose }) {
       </div>
 
       {err && <div className="rt-warn"><p>{err}</p></div>}
+      {note && (
+        <div className="rt-note" role="status">
+          <p>{note}</p>
+          {leftCount > 0 && <button type="button" className="rt-opt" onClick={onPutBack}>Put {leftCount === 1 ? 'it' : 'them'} back</button>}
+        </div>
+      )}
 
       <p className="rt-vox-hint">
         Hulls and components of your own. They appear alongside the built-ins

@@ -16,6 +16,9 @@
 //   PUT    /api/decks?d=<id>     -> { id, ... }   upsert; body { name, map }
 //                                   or { name } alone to rename without re-sending the map
 //   DELETE /api/decks?d=<id>     -> { ok: true }
+//   POST   /api/decks?reindex=1  -> { recovered, decks, unreadable, remaining }
+//                                   lists decks stored under this account's keys
+//                                   that the index has lost; adds entries only
 
 import { deckKey, redis } from "../lib/storage.js";
 import { requireUser, getUser, saveUser } from "../lib/auth.js";
@@ -38,10 +41,11 @@ export default async function handler(req, res) {
     redis,
     key: (did) => deckKey(uid, did),
     save: (u) => saveUser(uid, u),
+    reindex: req.query.reindex === "1",
   });
 
   if (out.status === 405) {
-    res.setHeader("Allow", "GET, PUT, DELETE");
+    res.setHeader("Allow", "GET, PUT, DELETE, POST");
     return res.status(405).end();
   }
   return res.status(out.status).json(out.json);

@@ -77,6 +77,27 @@ export const cloudPut = ({ id, name, map }) =>
 export const cloudDelete = (id) =>
   callApi(`?d=${encodeURIComponent(id)}`, { method: 'DELETE' });
 
+/* Asks the account to list decks it holds the bodies of but has lost the index
+   entries for (see runReindex in lib/decks.js). One request adds a bounded
+   number, so this asks again while there are more, and says how many in all.
+   Only ever adds entries: it is safe to run whenever. */
+export async function cloudReindexAll(maxRequests = 8) {
+  let recovered = 0;
+  let unreadable = 0;
+  for (let i = 0; i < maxRequests; i++) {
+    const r = await callApi('?reindex=1', { method: 'POST', body: '{}' });
+    recovered += r.recovered || 0;
+    unreadable = Math.max(unreadable, r.unreadable || 0);
+    if (!r.remaining || !r.recovered) break;
+  }
+  return { recovered, unreadable };
+}
+
+export const describeRecovered = (n) => (n
+  ? `Found ${n} ${n === 1 ? 'deck' : 'decks'} stored in your account that had dropped out of the list, and listed `
+    + `${n === 1 ? 'it' : 'them'} as \u201cRecovered deck\u201d. Rename ${n === 1 ? 'it' : 'them'} in the library.`
+  : '');
+
 /* -------------------------------- migration --------------------------------
 
    Decks lived in homebrew.battlemaps until now. Anything found there is moved

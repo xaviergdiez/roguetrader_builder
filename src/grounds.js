@@ -79,6 +79,25 @@ export const cloudPut = async (ground) =>
 export const cloudDelete = (id) =>
   callApi(`?g=${encodeURIComponent(id)}`, { method: 'DELETE' });
 
+/* Asks the account to list floors it holds but has lost the index entries for
+   (see runGroundsReindex in lib/grounds.js). One request adds a bounded number,
+   so this asks again while there are more, and says how many in all. Only ever
+   adds entries: it is safe to run whenever. */
+export async function cloudReindexAll(maxRequests = 8) {
+  let recovered = 0;
+  for (let i = 0; i < maxRequests; i++) {
+    const r = await callApi('?reindex=1', { method: 'POST', body: '{}' });
+    recovered += r.recovered || 0;
+    if (!r.remaining || !r.recovered) break;
+  }
+  return { recovered };
+}
+
+export const describeRecoveredGrounds = (n) => (n
+  ? `Found ${n} ${n === 1 ? 'environment' : 'environments'} stored in your account that had dropped out of the list, and listed `
+    + `${n === 1 ? 'it' : 'them'} as \u201cRecovered environment\u201d. Rename ${n === 1 ? 'it' : 'them'} in the library.`
+  : '');
+
 /* -------------------------------- migration --------------------------------
 
    Grounds lived in homebrew.mapgrounds for one release. Anything found there

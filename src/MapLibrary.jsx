@@ -245,6 +245,15 @@ export default function MapLibrary({
             <button type="button" className="rt-btn" onClick={saveCurrent}
               title="Keep the map on screen as a new deck in the library">Save the map on screen</button>
           </>)}
+          {lib.findLost && (
+            <button type="button" className="rt-btn ghost"
+              title="Look for decks stored in your account that have dropped out of this list"
+              onClick={() => run('Looking…', async () => {
+                const n = await lib.findLost();
+                setNote(n ? `Found ${n} ${n === 1 ? 'deck' : 'decks'} that had dropped out of the list, now listed as \u201cRecovered deck\u201d. Rename ${n === 1 ? 'it' : 'them'} here.`
+                  : 'Nothing lost: every deck stored in your account is already in this list.');
+              })}>Find lost decks</button>
+          )}
           <span className="rt-bm-hint">
             {decks.length === 0 ? 'No saved decks yet.' : `${shownDecks.length} of ${decks.length}`}
           </span>
@@ -299,6 +308,17 @@ export default function MapLibrary({
       </>)}
 
       {section === 'envs' && (<>
+        {lib.findLostGrounds && (
+          <div className="rt-ml-bar">
+            <button type="button" className="rt-btn ghost"
+              title="Look for environments stored in your account that have dropped out of this list"
+              onClick={() => run('Looking…', async () => {
+                const n = await lib.findLostGrounds();
+                setNote(n ? `Found ${n} ${n === 1 ? 'environment' : 'environments'} that had dropped out of the list, now listed as \u201cRecovered environment\u201d. Rename ${n === 1 ? 'it' : 'them'} here.`
+                  : 'Nothing lost: every environment stored in your account is already in this list.');
+              })}>Find lost environments</button>
+          </div>
+        )}
         <p className="rt-bm-hint">
           Environments are the floors a deck is drawn on: the ones you generated or uploaded. Use puts one under the deck
           that is open. Deleting one does not touch the decks drawn on it; they fall back to a built-in floor.

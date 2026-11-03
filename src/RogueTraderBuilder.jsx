@@ -89,6 +89,10 @@ import {
   ammoCost, spendAmmo, jamCheck, overheatResult, clearJam, reload as gcReload, weaponAllowsAction,
   actionById as gcActionById
 } from './groundcombat.js';
+import {
+  weaponsFor, actionsFor, actionBonus, roundsLeft, attack as weaponAttack, damageSpec, overheatDamage,
+  reloaded, jamCleared
+} from './attackroll.js';
 import NervePanel, { SpotPanel } from './NervePanel.jsx';
 import CampaignPanel from './CampaignPanel.jsx';
 import { situationFor } from './awareness.js';
@@ -1542,6 +1546,10 @@ const CSS = `
 .rt-roller{margin:0 0 8px;padding:11px 12px;
   border:1px solid var(--brass-dim);border-left:2px solid var(--green-dim);
   background:rgba(6,14,9,.72);}
+.rt-wpn{margin:0 0 10px;padding-bottom:8px;border-bottom:1px solid var(--brass-dim);}
+.rt-wpn-pick{display:block;margin-bottom:6px;}
+.rt-wpn .rt-sel{margin-bottom:6px;}
+.rt-wpn .rt-btnrow{align-items:center;}
 .rt-roller-h{display:flex;align-items:baseline;gap:10px;margin-bottom:9px;}
 .rt-roller-t{flex:1;font-family:var(--display);font-size:12px;font-weight:600;
   letter-spacing:.12em;text-transform:uppercase;color:var(--brass-lit);}
@@ -4420,6 +4428,11 @@ export default function RogueTraderBuilder({ me, cloud }) {
       : { ...p, advances: [...p.advances, { name: a.name, type: a.type, cost: a.cost, rank: a.rank, ...(a.alt ? { alt: a.alt } : {}) }] }
   ));
   const setAltRank = (name) => setExtras((p) => ({ ...p, altRank: name || '' }));
+  // A weapon's rounds and jam, written as a patch over what is there.
+  const setWeaponState = (label, patch) => setExtras((p) => ({
+    ...p,
+    weaponState: { ...(p.weaponState || {}), [label]: { ...((p.weaponState || {})[label] || {}), ...patch } }
+  }));
   const refundAdvance = (name) =>
     setExtras((p) => ({ ...p, advances: p.advances.filter((x) => x.name !== name) }));
 
@@ -4633,7 +4646,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
             avatar={avatar} setAvatar={setAvatar}
             extras={extras} onAddExtra={addExtra} onRemoveExtra={removeExtra}
             psyRating={psyRating} onPsyRating={setPsyRating} xp={xp} onXp={setXp}
-            onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance} onAltRank={setAltRank}
+            onBuyAdvance={buyAdvance} onRefundAdvance={refundAdvance} onAltRank={setAltRank} onWeaponState={setWeaponState}
             onBuyCharAdvance={buyCharAdvance} onRefundCharAdvance={refundCharAdvance}
             onGrantThrones={grantThrones} onSpendThrones={spendThrones}
             onRefundThrones={refundThrones}
@@ -4912,7 +4925,10 @@ const EMPTY_EXTRAS = {
   skills: [], talents: [], traits: [], gear: [], notes: [], gearDropped: [], powers: [], advances: [],
   charAdvances: {}, eliteAdvances: [], purse: EMPTY_PURSE,
   // the Alternate Career Rank taken in place of one of the career's own ('' = none)
-  altRank: ''
+  altRank: '',
+  // Rounds left and whether it is jammed, per weapon label: { 'Lasgun': { rounds: 41, jammed: false } }.
+  // Kept with the character so a clip survives a reload; a weapon not listed is full.
+  weaponState: {}
 };
 // merges a stored extras object over the empty shape, so an older save that
 // predates a category still loads
@@ -6321,14 +6337,63 @@ function ConditionChips({ list = [], onClear }) {
 
 const ROLL_LOG_MAX = 6;
 
-function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [] }) {
+function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [],
+  weapons = [], weaponState = {}, onWeaponState = null, strengthBonus = 0 }) {
   const [mod, setMod] = useState(0);
   const [on, setOn] = useState([]);   // indexes of applied conditionals
+
+  /* WITH A WEAPON. A Weapon Skill or Ballistic Skill test is an attack, and an
+     attack is made with something: the weapons the character carries are
+     offered, the roll spends their rounds, can jam or overheat them, and the
+     hit that follows arrives with the weapon's own damage. The rules are in
+     attackroll.js (and groundcombat.js under it). With no weapon chosen, or
+     none carried, it is the plain skill test it always was. */
+  const armed = weapons.length > 0 && Boolean(onWeaponState);
+  const [pick, setPick] = useState(armed ? weapons[0].label : '');
+  const [actionId, setActionId] = useState('standard_attack');
+  const [note, setNote] = useState('');
+  const [oh, setOh] = useState(null);     // overheat damage, once rolled
+  const weapon = armed ? (weapons.find((w) => w.label === pick) || null) : null;
+  const actions = weapon ? actionsFor(weapon) : [];
+  const action = actions.find((a) => a.id === actionId) || actions[0] || null;
+  const st = weapon ? (weaponState[weapon.label] || {}) : {};
+  const left = weapon ? roundsLeft(st, weapon) : null;
 
   const toggle = (i) => setOn((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i]));
   const condMod = on.reduce((n, i) => n + (conditionals[i] ? conditionals[i].mod : 0), 0);
   const total = mod + condMod;
-  const target = base + total;
+  const stance = weapon && action ? actionBonus(action, weapon.skillType) : 0;
+  const target = base + total + stance;
+
+  const rollIt = () => {
+    setNote(''); setOh(null);
+    if (!weapon) { onRoll(resolveTest(base, total, roll1d100())); return; }
+    const r = weaponAttack({
+      weapon, state: st, base, modifier: total, actionId: action ? action.id : 'standard_attack',
+      roll: roll1d100(), d10: d(10)
+    });
+    // An empty or jammed weapon is not fired, and nothing is rolled or spent.
+    if (r.blocked) { setNote(r.reason); return; }
+    onWeaponState(weapon.label, r.patch);
+    onRoll({
+      roll: r.roll, target: r.target, success: r.success, degrees: r.degrees, automatic: r.automatic,
+      weapon: weapon.label, action: r.actionId, hits: r.hits, cost: r.cost,
+      jammed: r.jammed, saved: r.jam.reliableSaved, overheated: r.overheated
+    });
+  };
+  const reload = () => { onWeaponState(weapon.label, reloaded(weapon)); setNote(`${weapon.label} reloaded.`); };
+  const unjam = () => {
+    const t = clearJam({ bs: base, roll: roll1d100() });
+    if (t.cleared) {
+      onWeaponState(weapon.label, jamCleared(weapon));
+      setNote('Jam cleared. The weapon needs reloading and its ammo is lost.');
+    } else {
+      setNote(`Still jammed (rolled ${t.roll} vs ${t.target}). Try again next round.`);
+    }
+  };
+
+  const latest = history[0] || null;
+  const latestWeapon = latest && latest.weapon ? gcWeaponProfile(latest.weapon) : null;
 
   return (
     <div className="rt-roller">
@@ -6336,6 +6401,46 @@ function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [
         <span className="rt-roller-t">{charName} test</span>
         <span className="rt-roller-tg">TARGET <b>{target}</b></span>
       </div>
+
+      {armed && (
+        <div className="rt-wpn">
+          <label className="rt-wpn-pick">
+            <span className="rt-conds-h">Weapon</span>
+            <select className="rt-sel" value={pick} aria-label="Weapon for this test"
+              onChange={(e) => { setPick(e.target.value); setNote(''); setOh(null); }}>
+              {weapons.map((w) => <option key={w.label} value={w.label}>{w.label}</option>)}
+              <option value="">{'\u2014 no weapon: roll the skill \u2014'}</option>
+            </select>
+          </label>
+          {weapon && <WeaponLine label={weapon.label} className="rt-vox-hint" />}
+          {weapon && actions.length > 1 && (
+            <div className="rt-diffs" role="group" aria-label="How it is used">
+              {actions.map((a) => {
+                const b = actionBonus(a, weapon.skillType);
+                return (
+                  <button key={a.id} className={'rt-diff' + (action && action.id === a.id ? ' on' : '')}
+                    onClick={() => setActionId(a.id)} aria-pressed={Boolean(action && action.id === a.id)}>
+                    {a.name}
+                    {b !== 0 && <span>{b > 0 ? '+' : ''}{b}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {weapon && left != null && (
+            <div className="rt-btnrow">
+              <span className="rt-vox-hint">
+                Rounds {left}/{weapon.clip}{st.jammed ? ' \u00b7 JAMMED' : ''}
+              </span>
+              <button className="rt-opt" disabled={left === weapon.clip} onClick={reload}>Reload</button>
+              {st.jammed && charKey === 'bs' && (
+                <button className="rt-opt" onClick={unjam}>Clear jam (BS Test)</button>
+              )}
+            </div>
+          )}
+          {note && <p className="rt-vox-hint" role="status">{note}</p>}
+        </div>
+      )}
 
       <div className="rt-diffs">
         {DIFFICULTIES.map((d) => (
@@ -6362,16 +6467,49 @@ function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [
         </div>
       )}
 
-      <button className="rt-rollbtn" onClick={() => onRoll(resolveTest(base, total, roll1d100()))}>
-        Roll d100
+      <button className="rt-rollbtn" onClick={rollIt}>
+        {weapon ? `Roll attack with the ${weapon.label}` : 'Roll d100'}
       </button>
+
+      {/* What the weapon did on the last attack, before the hit. */}
+      {latest && latest.weapon && latest.jammed && (weaponState[latest.weapon] || {}).jammed && (
+        <div className="rt-warn" role="status">
+          <p>
+            <b>{latest.weapon} JAMMED</b> {'\u2014'} an automatic miss. Clear the jam (a Full Action and a Ballistic
+            Skill Test) before it can fire again.
+          </p>
+        </div>
+      )}
+      {latest && latest.weapon && latest.saved && (
+        <p className="rt-vox-hint">Reliable: it would have jammed, but the d10 saved it. A miss.</p>
+      )}
+      {latest && latestWeapon && latest.overheated && (
+        <div className="rt-warn" role="status">
+          <p>
+            <b>{latest.weapon} OVERHEATS.</b> The wielder takes the weapon{'\u2019'}s own damage (no Penetration) to an
+            arm, or drops it as a Free Action. It cannot fire again until the second round after.
+          </p>
+          <div className="rt-btnrow">
+            <button className="rt-opt" onClick={() => setOh(overheatDamage(latestWeapon, d))}>
+              Roll the overheat damage
+            </button>
+            {oh && (
+              <span className="rt-vox-hint">
+                {oh.total} {latestWeapon.damage.type} damage ({oh.dice.join(' + ')}
+                {latestWeapon.damage.bonus ? ` + ${latestWeapon.damage.bonus}` : ''}) to an arm
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* A landed Weapon Skill or Ballistic Skill test is an attack, so the
           hit follows it here rather than in a separate screen. Keyed on the
-          roll, so each new attack starts from a clean panel. */}
-      {(charKey === 'ws' || charKey === 'bs') && history[0] && history[0].success && (
-        <HitPanel key={history[0].id} roll={history[0].roll} target={target}
-          melee={charKey === 'ws'} />
+          roll, so each new attack starts from a clean panel. With a weapon, the
+          hit comes with its damage and one panel's worth for each hit scored. */}
+      {(charKey === 'ws' || charKey === 'bs') && latest && latest.success && (
+        <HitPanel key={latest.id} roll={latest.roll} target={latest.target != null ? latest.target : target}
+          melee={charKey === 'ws'} weapon={latestWeapon} hits={latest.hits || 1} strengthBonus={strengthBonus} />
       )}
 
       {history.length > 0 && (
@@ -6381,9 +6519,12 @@ function TestRoller({ charKey, charName, base, history, onRoll, conditionals = [
               <b className="rt-rollr-d">{r.roll}</b>
               <span className="rt-rollr-v">vs {r.target}</span>
               <span className="rt-rollr-o">
-                {r.success ? 'Success' : 'Failure'}
-                {r.degrees > 0 && ` · ${r.degrees} ${r.success ? 'DoS' : 'DoF'}`}
+                {r.jammed ? 'JAMMED' : r.success ? 'Success' : 'Failure'}
+                {r.degrees > 0 && !r.jammed && ` · ${r.degrees} ${r.success ? 'DoS' : 'DoF'}`}
                 {r.automatic && ' · automatic'}
+                {r.weapon && ` · ${r.weapon}`}
+                {r.success && r.hits > 1 && ` · ${r.hits} hits`}
+                {r.overheated && ' · overheated'}
               </span>
             </li>
           ))}
@@ -6409,21 +6550,28 @@ const N = (v) => {
 
 const MOD_LABEL = { arm: 'that arm' };
 
-function HitPanel({ roll, target, melee }) {
+function HitPanel({ roll, target, melee, weapon = null, hits = 1, strengthBonus = 0 }) {
   const auto = hitLocation(roll);
+  // The weapon's own damage, when one was used: its dice, its bonus (a blade
+  // adds the wielder's Strength Bonus), its type and its Penetration, all
+  // filled in. By hand otherwise, as it always was.
+  const spec = weapon ? damageSpec(weapon, strengthBonus) : null;
+  const die = spec ? spec.die : 10;
   const [loc, setLoc] = useState(auto ? auto.id : 'body');
-  const [type, setType] = useState(melee ? 'rending' : 'impact');
-  const [dice, setDice] = useState('1');
-  const [bonus, setBonus] = useState('0');
+  const [type, setType] = useState(spec ? spec.type : (melee ? 'rending' : 'impact'));
+  const [dice, setDice] = useState(spec ? String(spec.dice) : '1');
+  const [bonus, setBonus] = useState(spec ? String(spec.bonus) : '0');
   const [dmg, setDmg] = useState(null);     // { dice, total, fury }
   const [fury, setFury] = useState(null);   // null, or the confirmation roll
-  const [t, setT] = useState({ pen: '0', armour: '0', tb: '0', wounds: '0', crit: '0' });
+  const [t, setT] = useState({ pen: spec ? String(spec.pen) : '0', armour: '0', tb: '0', wounds: '0', crit: '0' });
+  const [n, setN] = useState(1);            // which of the hits this is
+  const [lost, setLost] = useState(0);      // Wounds the earlier hits took
 
   const set = (k) => (e) => setT((p) => ({ ...p, [k]: e.target.value }));
   const count = Math.max(1, Math.min(10, N(dice)));
 
   const rollDamage = () => {
-    const faces = Array.from({ length: count }, () => d(10));
+    const faces = Array.from({ length: count }, () => d(die));
     setFury(null);
     setDmg({
       dice: faces,
@@ -6448,8 +6596,23 @@ function HitPanel({ roll, target, melee }) {
   const rows = res ? [...res.rows, ...res.furyRows] : [];
   const sum = res ? res.summary : null;
 
+  // The next of the hits a burst scored: the target is where the last one left
+  // it, so its Wounds and the critical damage it has taken carry over.
+  const nextHit = () => {
+    setLost((x) => x + res.woundsLost);
+    setT((p) => ({ ...p, wounds: String(res.woundsLeft), crit: String(res.critTotal) }));
+    setDmg(null); setFury(null); setN((x) => x + 1);
+  };
+
   return (
     <div className="rt-hit">
+      {weapon && (
+        <div className="rt-hit-h">
+          {weapon.label}
+          {hits > 1 && <b>{`hit ${n} of ${hits}`}</b>}
+          {spec && spec.strengthBonus > 0 && <span>{`includes +${spec.strengthBonus} Strength Bonus`}</span>}
+        </div>
+      )}
       <div className="rt-hit-h">
         Hit location <b>{locationById(loc).name}</b>
         {auto && <span>d100 {roll} reversed = {auto.roll}</span>}
@@ -6471,7 +6634,7 @@ function HitPanel({ roll, target, melee }) {
       </div>
 
       <div className="rt-nums">
-        <label className="rt-num">d10
+        <label className="rt-num">d{die}
           <input inputMode="numeric" value={dice}
             onChange={(e) => setDice(e.target.value)} /></label>
         <label className="rt-num">Bonus
@@ -6490,7 +6653,7 @@ function HitPanel({ roll, target, melee }) {
       </div>
 
       <button className="rt-rollbtn" onClick={rollDamage}>
-        Roll {count}d10{N(bonus) ? (N(bonus) > 0 ? '+' : '') + N(bonus) : ''} damage
+        Roll {count}d{die}{N(bonus) ? (N(bonus) > 0 ? '+' : '') + N(bonus) : ''} damage
       </button>
 
       {res && (
@@ -6546,6 +6709,17 @@ function HitPanel({ roll, target, melee }) {
               ))}
             </div>
           )}
+
+          {hits > 1 && n < hits && (
+            <button className="rt-opt" onClick={nextHit}>
+              Next hit ({n + 1} of {hits}) {'\u2014'} the target as this one left it
+            </button>
+          )}
+          {hits > 1 && n === hits && (
+            <p className="rt-hitline">
+              That was the last hit: {lost + res.woundsLost} Wounds lost across {hits} hits.
+            </p>
+          )}
         </>
       )}
     </div>
@@ -6557,7 +6731,7 @@ function HitPanel({ roll, target, melee }) {
    modifier delta, bonus. onReroll is optional — the dossier renders the
    same sheet read-only rather than keeping a second copy of this markup. */
 
-function StatSheet({ totals, mods, rolls, onReroll, picked, gear = [] }) {
+function StatSheet({ totals, mods, rolls, onReroll, picked, gear = [], armed = null }) {
   const [rollFor, setRollFor] = useState(null);  // characteristic key, or null
   const [log, setLog] = useState({});            // key -> most recent results
 
@@ -6606,6 +6780,12 @@ function StatSheet({ totals, mods, rolls, onReroll, picked, gear = [] }) {
               base={totals[k]}
               history={log[k] || []}
               onRoll={(r) => record(k, r)}
+              /* The weapons carried, for the two skills that attack with one.
+                 Only on the dossier, where the gear list is the whole of it. */
+              weapons={armed && (k === 'ws' || k === 'bs') ? weaponsFor(gear, k) : []}
+              weaponState={armed ? armed.state : {}}
+              onWeaponState={armed ? armed.set : null}
+              strengthBonus={Math.floor((totals.s || 0) / 10)}
               /* Origin-path traits and worn augmetics both surface here as
                  toggles rather than moving the total: +20 Strength from a
                  powered suit applies while the suit is on, and a bionic arm's
@@ -6920,7 +7100,7 @@ const ADD_SOURCES = {
 function DossierPane({ name, gender, background, setBackground, build, totals, ws, onDamage, onAdjustMax, fatePoints, profitFactor,
   corruption = 0, insanity = 0, onCorruption, onInsanity,
   avatar, setAvatar, extras, onAddExtra, onRemoveExtra,
-  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onAltRank,
+  psyRating, onPsyRating, xp, onXp, onBuyAdvance, onRefundAdvance, onAltRank, onWeaponState,
   onBuyCharAdvance, onRefundCharAdvance, onAddEliteAdvance, onRemoveEliteAdvance,
   onGrantThrones, onSpendThrones, onRefundThrones,
   onFate, onProfit, spentAdj = 0, onSpentAdj }) {
@@ -7250,7 +7430,8 @@ function DossierPane({ name, gender, background, setBackground, build, totals, w
       </div>
 
       {totals && (
-        <StatSheet totals={totals} mods={build.mods} picked={build.picked} gear={allGear} />
+        <StatSheet totals={totals} mods={build.mods} picked={build.picked} gear={allGear}
+          armed={onWeaponState ? { state: extras.weaponState || {}, set: onWeaponState } : null} />
       )}
 
       {/* Tabbed lower panel, after the CRPG sheet: one parchment panel with
@@ -8054,7 +8235,7 @@ function BridgePanel({ onLore, code, setCode, characterName, charId, shipRole,
       setErr(`${gMyWeapon} has ${left} round${left === 1 ? '' : 's'}; that needs ${cost}. Reload.`);
       return;
     }
-    const jam = jamCheck(w, roll, gMyAction, { d10: d(10) });
+    const jam = jamCheck(w, roll, gMyAction, { craftsmanship: w.quality || 'common', d10: d(10) });
     if (w.clip != null) setGAmmo((a) => ({ ...a, [gMyWeapon]: left - cost }));
     if (jam.jammed) setGJammed((j) => ({ ...j, [gMyWeapon]: true }));
     const jammedMiss = jam.jammed ? { success: false, hits: 0 } : {};

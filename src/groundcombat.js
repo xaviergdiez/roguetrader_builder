@@ -102,6 +102,8 @@ const hasQuality = (weapon, name) =>
 export function jamCheck(weapon, roll, actionId = 'standard_attack', { craftsmanship = 'common', untrained = false, d10 = 10 } = {}) {
   const none = { jammed: false, overheated: false, threshold: null, reliableSaved: false };
   if (!weapon || weapon.skillType !== 'bs') return none;
+  // A grenade or a thrown blade has no mechanism to jam.
+  if (weapon.kind === 'Thrown') return none;
   if (craftsmanship === 'best') return { ...none, bestCraft: true };
   const action = actionById(actionId);
   const auto = Boolean(action && action.requiresMode);

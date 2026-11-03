@@ -539,6 +539,9 @@ console.log('groundcombat.check.mjs: damage resolver passed');
   assert.equal(jamCheck(rifle, 94, 'suppressing_fire').jammed, true, 'so does suppressing fire');
   assert.equal(jamCheck({ ...rifle, qualities: ['Unreliable'] }, 91).jammed, true);
   assert.equal(jamCheck({ ...rifle, qualities: ['Unreliable'] }, 90).jammed, false);
+  // A thrown weapon has no mechanism to jam, whatever the dice say.
+  assert.equal(jamCheck({ ...rifle, kind: 'Thrown' }, 99).jammed, false);
+  assert.equal(jamCheck({ ...rifle, kind: 'Basic' }, 99).jammed, true, 'a gun still does');
   // p.116: Reliable — a jam only counts on a d10 of 10, otherwise it is a miss.
   const reliable = { ...rifle, qualities: ['Reliable'] };
   assert.equal(jamCheck(reliable, 97, 'standard_attack', { d10: 4 }).jammed, false);

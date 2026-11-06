@@ -95,7 +95,7 @@ import CampaignPanel from './CampaignPanel.jsx';
 import DebriefPanel from './DebriefPanel.jsx';
 import AmbiencePanel from './AmbiencePanel.jsx';
 import HandoutsPanel, { TableHandout, PlayerHandouts } from './HandoutsPanel.jsx';
-import { readHandouts } from './handouts.js';
+import { readHandouts, handoutLabel } from './handouts.js';
 import { getBoard as getAmbienceBoard, playCue } from './ambienceEngine.js';
 import { superiorityByFoe, SUPERIORITY_RULE, patronById } from './patrons.js';
 import { situationFor } from './awareness.js';
@@ -1988,6 +1988,10 @@ const CSS = `
 .rt-ho.big .rt-ho-img{max-height:62vh;}
 .rt-ho-stage{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
   background:rgba(2,3,5,.78);padding:4vh 4vw;}
+.rt-bm-sprung{margin:8px 0;padding:10px 14px;border:1px solid rgba(200,140,255,.6);background:rgba(40,16,60,.85);
+  color:#eadcff;box-shadow:0 0 0 1px rgba(168,85,247,.25) inset;}
+.rt-bm-sprung p{margin:0 0 6px;font-size:14px;}
+.rt-bm-sprung strong{color:#d8b4fe;}
 .rt-ho-close{position:absolute;top:14px;right:18px;width:40px;height:40px;border:1px solid rgba(255,255,255,.25);
   background:rgba(0,0,0,.5);color:#ddd;font-size:22px;cursor:pointer;}
 .rt-advlist{list-style:none;margin:0;padding:0;}
@@ -3353,6 +3357,24 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // A handout on the table's screen (HandoutsPanel.jsx): over the boarding
   // map's window, or the void chart's, or in a window of its own.
   const [tableHandout, setTableHandout] = useState(null);
+  /* TRIGGER ZONES going off on the map (triggers.js): the sound played, the
+     handout put up, and the note kept here so every copy of the map and the
+     dashboard show the GM the same thing. */
+  const [sprung, setSprung] = useState(null);
+  const onTriggers = (fired) => {
+    setSprung(fired);
+    const mine = readHandouts(homebrew && homebrew.handouts);
+    for (const f of fired) {
+      if (f.cue) playCue(f.cue);
+      const h = f.handout ? mine.find((x) => x.id === f.handout) : null;
+      if (h) setTableHandout(h);
+    }
+  };
+  const triggerCues = getAmbienceBoard().cues.map((c) => ({ id: c.id, name: c.name }));
+  const triggerHandouts = readHandouts(homebrew && homebrew.handouts).map((h) => ({ id: h.id, name: handoutLabel(h) }));
+  const triggerProps = {
+    cues: triggerCues, handouts: triggerHandouts, onTriggers, sprung, onDismissSprung: () => setSprung(null)
+  };
   /* The tab and the tool, held here rather than inside the map, because there
      may be two copies of the map: the one on the projector and the control
      panel the GM may open on the dashboard beside it. One selection between
@@ -4939,7 +4961,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           createDeck={createDeck} renameDeck={renameDeck} deleteDeck={deleteDeck}
           mapView={mapView} setMapView={setMapView}
           activeMap={activeMap} setActiveMap={setActiveMap} activeMapKey={activeMapKey}
-          tableHandout={tableHandout} setTableHandout={setTableHandout}
+          tableHandout={tableHandout} setTableHandout={setTableHandout} triggerProps={triggerProps}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -4982,6 +5004,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               onLoadDeck={loadDeckOntoMap}
               onDeleteDeck={deleteSavedDeck}
               shared={sharedMapTools}
+              {...triggerProps}
             />
           </>)}
         </MapWindow>
@@ -9974,7 +9997,7 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
   grounds, onSaveGround, onNeedGroundTexture, groundErr, moveNote,
   decks, deckErr, deckId, openDeck, createDeck, renameDeck, deleteDeck,
   mapView, setMapView, activeMap, setActiveMap, activeMapKey,
-  tableHandout = null, setTableHandout = () => {}, onClose }) {
+  tableHandout = null, setTableHandout = () => {}, triggerProps = {}, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -11100,6 +11123,7 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           {mapControls && (
             <BattleMap
               controlsOnly
+              {...triggerProps}
               shared={sharedMapTools}
               map={activeMap}
               onChange={setActiveMap}
@@ -11117,6 +11141,7 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           <BattleMap
             // The same selection the window's copy uses, so popping the map
             // out does not land the GM on a different tool than they left.
+            {...triggerProps}
             shared={sharedMapTools}
             map={activeMap}
             onChange={setActiveMap}

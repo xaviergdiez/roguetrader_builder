@@ -30,7 +30,11 @@ import {
 } from './motion.js';
 import { putLocalFile, getLocalFile } from './localfiles.js';
 import { readUvtt, uvttToMap, UVTT_METRES_PER_SQUARE } from './uvtt.js';
-import { runFrames } from './gsapcdn.js';
+import { runFrames, reveal } from './gsapcdn.js';
+import {
+  TRIGGER_WHEN, TRIGGER_DOORS, newTrigger, triggerById, triggerAt, paintTrigger, updateTrigger, rearmAll, anyArmed
+} from './triggers.js';
+import { springTriggers, springNow } from './triggerfire.js';
 import { SITUATION_MODIFIERS } from './groundcombat.js';
 import { NOISE, noiseById, noisePing } from './awareness.js';
 import { GEAR } from './gear.js';
@@ -80,6 +84,7 @@ const MODES = [
   { id: 'start', label: 'Starting room', icon: 'flag' },
   { id: 'fog', label: 'Fog and doors in play', icon: 'fog' },
   { id: 'marker', label: 'Marker', icon: 'marker' },
+  { id: 'trigger', label: 'Trigger zones', icon: 'trigger' },
   { id: 'overlay', label: 'Overlay', icon: 'overlay' },
   { id: 'measure', label: 'Measure', icon: 'measure' }
 ];
@@ -94,8 +99,8 @@ const MODES = [
    deck. It lives on Play only. */
 /* Light is on both: a deck is built with its dark corridors, and the lumens
    go out mid-session. */
-const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'wall', 'cover', 'hazard', 'obscure', 'light', 'marker', 'measure'];
-const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'light', 'overlay', 'measure'];
+const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'wall', 'cover', 'hazard', 'obscure', 'light', 'marker', 'trigger', 'measure'];
+const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'light', 'trigger', 'overlay', 'measure'];
 
 /* Markers that are part of the deck rather than laid on it mid-session: a
    click in play WORKS them (or leaves them be), it never lifts them. */
@@ -206,6 +211,7 @@ const ICONS = {
   erase: <><path d="M4 15l9-9 6 6-7 7H8z" /><path d="M9 10l6 6M13 20h7" /></>,
   door: <><path d="M6 21V4h12v17M4 21h16" /><circle cx="15" cy="12.5" r="1" fill="currentColor" /></>,
   wall: <><rect x="3" y="6" width="18" height="12" /><path d="M3 12h18M9 6v6M15 12v6" /></>,
+  trigger: <><path d="M4 4h16v16H4z" strokeDasharray="3 2.5" /><path d="M12 8v5M12 16v.5" /></>,
   picture: <><rect x="3" y="5" width="18" height="14" /><path d="M3 16l5-5 4 4 3-3 6 6" /><circle cx="16" cy="9" r="1.5" /></>,
   cover: <><rect x="4" y="5" width="16" height="14" /><path d="M4 5l16 14M20 5L4 19" /></>,
   hazard: <><path d="M12 3l10 18H2z" /><path d="M12 10v5M12 18v.5" /></>,
@@ -891,7 +897,12 @@ export default function BattleMap({
   controlsOnly = false,
   /* { tab, setTab, mode, setMode } when the owner keeps the selection, so a
      control panel and the map it drives agree on what is in hand. */
-  shared = null
+  shared = null,
+  /* TRIGGER ZONES (triggers.js). The sounds and handouts a trigger may set
+     off, as { id, name }, for its pickers; what to do when triggers go off
+     (play the sound, put up the handout, tell the GM); and what went off
+     last, held by the owner so every copy of the map shows the same note. */
+  cues = [], handouts = [], onTriggers = null, sprung = null, onDismissSprung = null
 }) {
   const m = useMemo(() => readMap(map), [map]);
   const theme = resolveTheme(m.theme, customThemes);
@@ -1185,6 +1196,13 @@ export default function BattleMap({
   // A stroke of the thin-wall tool puts walls up or takes them down for its
   // whole length, decided by the first edge it touched.
   const wallStrokeRef = useRef(null);
+  // The trigger zone being painted, and whether this stroke adds or lifts.
+  const [trigId, setTrigId] = useState(null);
+  const trigStrokeRef = useRef(null);
+  const sprungRef = useRef(null);
+  useEffect(() => {
+    if (sprung && sprung.length && sprungRef.current) reveal(sprungRef.current, { w: win || window, from: 0.98 });
+  }, [sprung, win]);
   const [hoverEdge, setHoverEdge] = useState(null);
   const reducedMotion = useMemo(() => {
     const w = win || window;
@@ -1283,10 +1301,31 @@ export default function BattleMap({
     setHistTick((t) => t + 1);
   };
 
+  /* Every change to a deck being PLAYED is asked whether it set a trigger
+     off: the party placed in a zone, or a zone come into view. What went off
+     is applied in the same write, so one undo takes back the step and the
+     trap together. */
   const patch = (next) => {
     if (!onChange) return;
     if (!gestureRef.current) { remember(m); gestureRef.current = true; }
-    onChange({ ...m, ...next });
+    let merged = { ...m, ...next };
+    if (tabRef.current === 'play' && merged.fog && anyArmed(m.triggers)) {
+      const s = springTriggers(m, merged);
+      if (s.fired.length) {
+        merged = s.map;
+        if (onTriggers) onTriggers(s.fired);
+      }
+    }
+    onChange(merged);
+  };
+  // Sprung by the GM's hand, armed or not, as its own undoable step.
+  const fireByHand = (t) => {
+    if (!onChange || !t) return;
+    const s = springNow(m, t);
+    remember(m);
+    gestureRef.current = false;
+    onChange(s.map);
+    if (onTriggers) onTriggers(s.fired);
   };
 
   // Refs rather than closures: the key handler is bound once, and the
@@ -1320,7 +1359,7 @@ export default function BattleMap({
 
   useEffect(() => {
     const w = win || window;
-    const end = () => { gestureRef.current = false; wallStrokeRef.current = null; };
+    const end = () => { gestureRef.current = false; wallStrokeRef.current = null; trigStrokeRef.current = null; };
     w.addEventListener('mouseup', end);
     return () => w.removeEventListener('mouseup', end);
   }, [win]);
@@ -1887,6 +1926,30 @@ export default function BattleMap({
     }
     if (mode === 'noise') {
       patch({ contacts: noisePing(m, pos, noiseKind) });
+      return;
+    }
+    /* TRIGGER ZONES. Played, a click on a zone springs it by hand. Built, a
+       click or a drag paints squares into the zone in hand, or lifts them
+       when the stroke began on one of its squares; with none in hand, the
+       first square starts a new one. */
+    if (mode === 'trigger') {
+      if (tab === 'play') {
+        if (!dragging) fireByHand(triggerAt(m.triggers, k));
+        return;
+      }
+      const cur = trigId ? triggerById(m.triggers, trigId) : null;
+      if (!cur) {
+        if (dragging) return;
+        const t = newTrigger(m.triggers.length + 1);
+        setTrigId(t.id);
+        trigStrokeRef.current = true;
+        patch({ triggers: paintTrigger([...m.triggers, t], t.id, [k], true) });
+        return;
+      }
+      if (!dragging) trigStrokeRef.current = !cur.cells.includes(k);
+      const on = trigStrokeRef.current;
+      if (on === null || cur.cells.includes(k) === on) return;
+      patch({ triggers: paintTrigger(m.triggers, cur.id, [k], on) });
       return;
     }
     if (mode === 'contact') {
@@ -3119,6 +3182,40 @@ export default function BattleMap({
           ctx.restore();
         }
       }
+
+      // 6b2. Trigger zones: the GM's own, over their dimmed fog. Never on the
+      //      table's screen while it is being played.
+      if (m.triggers.length && (!projecting || tab === 'build')) {
+        ctx.save();
+        for (const t of m.triggers) {
+          const on = mode === 'trigger' && t.id === trigId;
+          ctx.fillStyle = t.armed ? `rgba(168,85,247,${on ? 0.3 : 0.16})` : 'rgba(140,140,150,0.12)';
+          const pts = t.cells.map(parseKey).filter((c) => c && c.x >= c0 && c.x <= c1 && c.y >= r0 && c.y <= r1);
+          for (const c of pts) ctx.fillRect(c.x * px, c.y * px, px, px);
+          if (pts.length) {
+            ctx.setLineDash([px * 0.15, px * 0.1]);
+            ctx.strokeStyle = t.armed ? 'rgba(200,140,255,0.9)' : 'rgba(170,170,180,0.6)';
+            ctx.lineWidth = Math.max(1.5, px * (on ? 0.07 : 0.04));
+            const inSet = new Set(t.cells);
+            ctx.beginPath();
+            for (const c of pts) {
+              const x0 = c.x * px, y0 = c.y * px;
+              if (!inSet.has(c.x + ',' + (c.y - 1))) { ctx.moveTo(x0, y0); ctx.lineTo(x0 + px, y0); }
+              if (!inSet.has(c.x + ',' + (c.y + 1))) { ctx.moveTo(x0, y0 + px); ctx.lineTo(x0 + px, y0 + px); }
+              if (!inSet.has((c.x - 1) + ',' + c.y)) { ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + px); }
+              if (!inSet.has((c.x + 1) + ',' + c.y)) { ctx.moveTo(x0 + px, y0); ctx.lineTo(x0 + px, y0 + px); }
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+            const first = pts[0];
+            ctx.font = `${Math.max(9, Math.floor(px * 0.26))}px system-ui, sans-serif`;
+            ctx.textAlign = 'left';
+            ctx.fillStyle = t.armed ? 'rgba(235,215,255,0.95)' : 'rgba(200,200,205,0.8)';
+            ctx.fillText((t.name || 'Trigger') + (t.armed ? '' : ' \u2713'), first.x * px + 3, first.y * px + Math.max(10, px * 0.3));
+          }
+        }
+        ctx.restore();
+      }
     }
 
     // 6c. Contacts. The fight is played with miniatures, so these are not
@@ -3402,7 +3499,7 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick,
-      tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab, mediaTick, hoverEdge, moving]);
+      tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab, mediaTick, hoverEdge, moving, trigId]);
 
   // Scrolling and resizing the stage move the window over the deck.
   useEffect(() => {
@@ -4785,6 +4882,79 @@ export default function BattleMap({
         </div>
       )}
 
+      {mode === 'trigger' && (() => {
+        const cur = trigId ? triggerById(m.triggers, trigId) : null;
+        const set = (patchT) => patch({ triggers: updateTrigger(m.triggers, cur.id, patchT) });
+        const pick = (label, value, onSet, options, aria) => (
+          <label className="rt-bm-num"><span>{label}</span>
+            <select value={value} aria-label={aria || label} onChange={(e) => onSet(e.target.value)}>
+              {options.map(([v, n]) => <option key={v} value={v}>{n}</option>)}
+            </select>
+          </label>
+        );
+        return (
+          <div className="rt-bm-gen">
+            <div className="rt-sechead"><h4>Trigger zones</h4></div>
+            <p className="rt-bm-hint">
+              {tab === 'build'
+                ? 'Squares that do something when the party gets there. Pick a trigger and paint its squares; a stroke that starts on one of its squares lifts them. With none picked, the first square painted starts a new one.'
+                : 'They go off on their own: when the party is placed on one (revealing where they stand, or opening a door from it) or when one first comes into view. Click a zone to spring it by hand. Only you see them.'}
+            </p>
+            <div className="rt-bm-bar">
+              <select value={cur ? cur.id : ''} aria-label="Trigger in hand" onChange={(e) => setTrigId(e.target.value || null)}>
+                <option value="">{tab === 'build' ? '\u2014 a new one \u2014' : '\u2014 pick one \u2014'}</option>
+                {m.triggers.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name || 'Trigger'} ({t.armed ? 'armed' : 'spent'}, {t.cells.length} sq)</option>
+                ))}
+              </select>
+              {tab === 'build' && (
+                <button type="button" className="rt-btn" onClick={() => setTrigId(null)}>New trigger</button>
+              )}
+              {m.triggers.some((t) => !t.armed) && (
+                <button type="button" className="rt-btn ghost" onClick={() => patch({ triggers: rearmAll(m.triggers) })}>Arm them all</button>
+              )}
+            </div>
+            {cur && (<>
+              <div className="rt-bm-bar">
+                <input className="rt-field" value={cur.name} maxLength={40} aria-label="Trigger name"
+                  onChange={(e) => set({ name: e.target.value })} />
+                {pick('Goes off', cur.when, (v) => set({ when: v }), TRIGGER_WHEN.map((w) => [w.id, w.name]), 'When it goes off')}
+                <label className="rt-bm-num"><input type="checkbox" checked={!cur.once}
+                  onChange={(e) => set({ once: !e.target.checked })} /><span>Every time</span></label>
+                <span className="rt-bm-hint">{cur.cells.length} square{cur.cells.length === 1 ? '' : 's'} {'\u00b7'} {cur.armed ? 'armed' : 'spent'}</span>
+              </div>
+              <div className="rt-bm-bar">
+                <label className="rt-bm-num"><input type="checkbox" checked={cur.reveal}
+                  onChange={(e) => set({ reveal: e.target.checked })} /><span>Lift the fog off its room</span></label>
+                <label className="rt-bm-num"><input type="checkbox" checked={cur.contacts}
+                  onChange={(e) => set({ contacts: e.target.checked })} /><span>Bring out what waits in its room</span></label>
+                {pick('Doors', cur.doors, (v) => set({ doors: v }), TRIGGER_DOORS.map((d) => [d.id, d.name]), 'Its room\u2019s doors')}
+              </div>
+              <div className="rt-bm-bar">
+                {pick('Light', cur.light, (v) => set({ light: v }), [['', 'Leave the light'], ...LIGHTING_PRESETS.map((lp) => [lp.id, lp.name])], 'Its room\u2019s light')}
+                {pick('Sets off', cur.hazard, (v) => set({ hazard: v }), [['', 'Nothing'], ...HAZARD_TYPES.map((h) => [h.id, h.name])], 'A hazard on its squares')}
+                {pick('Noise', cur.noise, (v) => set({ noise: v }), [['', 'None'], ...NOISE.map((n) => [n.id, n.name])], 'A noise from it')}
+              </div>
+              <div className="rt-bm-bar">
+                {pick('Sound', cur.cue, (v) => set({ cue: v }), [['', 'No sound'], ...cues.map((c) => [c.id, c.name])], 'A sound from the ambience board')}
+                {pick('Handout', cur.handout, (v) => set({ handout: v }), [['', 'No handout'], ...handouts.map((h) => [h.id, h.name])], 'A handout on the table\u2019s screen')}
+              </div>
+              <textarea className="rt-ta" rows={2} value={cur.note} maxLength={600} aria-label="Note for the GM"
+                placeholder={'For you alone: what happened, and what they roll. \u201cClick. Awareness (+0) to step off it in time.\u201d'}
+                onChange={(e) => set({ note: e.target.value })} />
+              <div className="rt-bm-bar">
+                <button type="button" className="rt-btn" onClick={() => fireByHand(cur)}>Spring it now</button>
+                <button type="button" className="rt-btn ghost" onClick={() => set({ armed: !cur.armed })}>{cur.armed ? 'Disarm it' : 'Arm it'}</button>
+                <button type="button" className="rt-btn ghost" onClick={() => {
+                  patch({ triggers: m.triggers.filter((t) => t.id !== cur.id) });
+                  setTrigId(null);
+                }}>Take the trigger off</button>
+              </div>
+            </>)}
+          </div>
+        );
+      })()}
+
       {libOpen && (
         <div className="rt-bm-gen">
           <div className="rt-sechead">
@@ -5400,6 +5570,12 @@ export default function BattleMap({
           </span>
         </>)}
 
+        {mode === 'trigger' && (
+          <span className="rt-bm-hint">
+            {m.triggers.filter((t) => t.armed).length} armed, {m.triggers.filter((t) => !t.armed).length} spent.
+          </span>
+        )}
+
         {mode === 'wall' && (
           <span className="rt-bm-hint">
             A wall on a grid line, between two squares that are both deck: the walls of a room drawn over a picture, or a
@@ -5685,7 +5861,7 @@ export default function BattleMap({
             if (spaceRef.current || panOnRef.current || rHeldRef.current) return;   // panning, or turning the map
             if (e.buttons === 1 && mode === 'wall') { strokeWall(e, false); return; }
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure'
-              || (mode === 'light' && lightScope === 'brush'))) {
+              || (mode === 'light' && lightScope === 'brush') || (mode === 'trigger' && tab === 'build'))) {
               applyAt(pos, true);
             }
           }}
@@ -5706,6 +5882,19 @@ export default function BattleMap({
         </div>
       </div>
       </>)}
+
+      {/* WHAT WENT OFF, for the GM: on every copy of the map but the table's
+          own screen, with the note written for it. */}
+      {sprung && sprung.length > 0 && !projecting && (
+        <div className="rt-bm-sprung" ref={sprungRef} role="status">
+          {sprung.map((f) => (
+            <p key={f.id}><strong>{f.name || 'A trigger'} went off.</strong>{f.note ? ' ' + f.note : ''}</p>
+          ))}
+          {onDismissSprung && (
+            <button type="button" className="rt-btn ghost" onClick={onDismissSprung}>Dismiss</button>
+          )}
+        </div>
+      )}
 
       {/* Deliberately outside the toolbars' own gate: the map is run with the
           options hidden on a projector, and a question asked there has to be

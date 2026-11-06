@@ -29,6 +29,7 @@
 import { rangeBand, RANGE_MODIFIERS, parseWeaponStats } from './groundcombat.js';
 import { spriteRole } from './spritesheet.js';
 import { readBackdrop } from './backdrop.js';
+import { readTriggers, rearmAll } from './triggers.js';
 
 /* ------------------------------ themes ------------------------------ */
 
@@ -306,6 +307,8 @@ export const EMPTY_MAP = {
   // Rain falling, smoke drifting, fire and lumens flickering. A deck's own
   // choice, on unless switched off; never for anyone who asks for less motion.
   motion: true,
+  // Squares that do something when the party gets there (see triggers.js).
+  triggers: [],
   /* PER-CELL GROUND. One deck is rarely one terrain: a boarding action runs
      from the ice outside to the deck plate inside, and an agri-world fight
      crosses ploughed soil, an irrigation ditch and the rockcrete apron.
@@ -968,7 +971,8 @@ export function readMap(m) {
     })(),
     floor, doors, cover, hazards, obscuring, markers, explored, mapped, light, contacts, ground, walls,
     backdrop: readBackdrop(src.backdrop),
-    motion: src.motion !== false
+    motion: src.motion !== false,
+    triggers: readTriggers(src.triggers)
   };
 }
 
@@ -1948,7 +1952,9 @@ export function publishMap(saved) {
     // A terminal the party broke into last session is locked again; one the
     // GM drew burnt out stays burnt out.
     markers: Object.fromEntries(Object.entries(s.map.markers).map(([k, v]) =>
-      [k, v.type === 'cogitator' && v.state === 'open' ? { ...v, state: 'locked' } : v]))
+      [k, v.type === 'cogitator' && v.state === 'open' ? { ...v, state: 'locked' } : v])),
+    // Every trap set again: last session's sprung tripwire is tonight's.
+    triggers: rearmAll(s.map.triggers)
   };
 }
 
@@ -2102,13 +2108,15 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   for (const [k, v] of Object.entries(src.contacts)) if (inside(k)) contacts[k] = v;
   const viewpoint = src.viewpoint && inside(cellKey(src.viewpoint.x, src.viewpoint.y))
     ? src.viewpoint : null;
+  // A trigger is one trap, like a contact is one creature: kept where it is.
+  const triggers = src.triggers.map((t) => ({ ...t, cells: t.cells.filter(inside) }));
   const start = src.start && inside(cellKey(src.start.x, src.start.y)) ? src.start : null;
 
   return {
     ...src,
     cols: w, rows: h,
     floor, cover, hazards, doors, markers, ground, obscuring, light, walls,
-    explored, mapped, contacts, viewpoint, start
+    explored, mapped, contacts, viewpoint, start, triggers
   };
 }
 
@@ -2218,6 +2226,11 @@ function turnContent(m, t) {
     markers: move(m.markers, (v) => (v.type === 'turret'
       ? { ...v, facing: (((v.facing || 0) + 2 * t) % 8 + 8) % 8 } : { ...v })),
     contacts: move(m.contacts, (c) => ({ ...c })),
+    // A trigger's squares turn with the deck they are on.
+    triggers: m.triggers.map((tr) => ({
+      ...tr,
+      cells: tr.cells.map(parseKey).filter(Boolean).map((p) => at(p.x, p.y)).filter(inGrid).map((q) => cellKey(q.x, q.y))
+    })),
     /* A thin wall is an EDGE, and turning moves which side of its square it
        is on: a quarter turn clockwise stands an east side on the south, and
        a south side becomes the west one — the east side of the square

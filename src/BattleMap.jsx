@@ -19,8 +19,17 @@ import {
   setStartRoom, startPlay, playDoor, regionAt, coverAt,
   wearCover, detonateTank, turretAt, turretCells, setTurret, setDeckTurrets,
   spreadWarp, sealWarp, sanctified, placeVent, ventPartner, crawlThrough, ventField, VENT_REACH_SQUARES,
-  lightAt, lightingById
+  lightAt, lightingById,
+  WALL_EAST, WALL_SOUTH, edgeNear, hasWall, setWall, clearWallsAround
 } from './battlemap.js';
+import {
+  readBackdrop, newBackdropId, backdropKindOf, squaresFor, gridFor, squaresUnder, TV_SIZES, tvSquaresAcross
+} from './backdrop.js';
+import {
+  deckMoves, MOTION_FRAME_MS, VIDEO_FRAME_MS, MOTION_MAX_SQUARES, rainStreaks, drift, flicker, sparkArc, rush
+} from './motion.js';
+import { putLocalFile, getLocalFile } from './localfiles.js';
+import { runFrames } from './gsapcdn.js';
 import { SITUATION_MODIFIERS } from './groundcombat.js';
 import { NOISE, noiseById, noisePing } from './awareness.js';
 import { GEAR } from './gear.js';
@@ -60,6 +69,7 @@ const MODES = [
   { id: 'ground', label: 'Paint ground', icon: 'ground' },
   { id: 'erase', label: 'Erase', icon: 'erase' },
   { id: 'door', label: 'Door', icon: 'door' },
+  { id: 'wall', label: 'Thin wall', icon: 'wall' },
   { id: 'cover', label: 'Cover', icon: 'cover' },
   { id: 'hazard', label: 'Hazard', icon: 'hazard' },
   { id: 'obscure', label: 'Foliage / smoke', icon: 'foliage' },
@@ -83,7 +93,7 @@ const MODES = [
    deck. It lives on Play only. */
 /* Light is on both: a deck is built with its dark corridors, and the lumens
    go out mid-session. */
-const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'cover', 'hazard', 'obscure', 'light', 'marker', 'measure'];
+const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'wall', 'cover', 'hazard', 'obscure', 'light', 'marker', 'measure'];
 const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'light', 'overlay', 'measure'];
 
 /* Markers that are part of the deck rather than laid on it mid-session: a
@@ -194,6 +204,8 @@ const ICONS = {
   ground: <><path d="M3 18l6-9 4 5 3-4 5 8z" /><path d="M3 21h18" /></>,
   erase: <><path d="M4 15l9-9 6 6-7 7H8z" /><path d="M9 10l6 6M13 20h7" /></>,
   door: <><path d="M6 21V4h12v17M4 21h16" /><circle cx="15" cy="12.5" r="1" fill="currentColor" /></>,
+  wall: <><rect x="3" y="6" width="18" height="12" /><path d="M3 12h18M9 6v6M15 12v6" /></>,
+  picture: <><rect x="3" y="5" width="18" height="14" /><path d="M3 16l5-5 4 4 3-3 6 6" /><circle cx="16" cy="9" r="1.5" /></>,
   cover: <><rect x="4" y="5" width="16" height="14" /><path d="M4 5l16 14M20 5L4 19" /></>,
   hazard: <><path d="M12 3l10 18H2z" /><path d="M12 10v5M12 18v.5" /></>,
   foliage: <><path d="M7 18a4 4 0 010-8 5 5 0 019.5-1A4.5 4.5 0 0117 18z" /></>,
@@ -1150,6 +1162,92 @@ export default function BattleMap({
   const texturesRef = useRef(new Map());
   const [textureTick, setTextureTick] = useState(0);
 
+  /* ---- the picture floor ----
+     The file is in this browser's own store, not on the deck (see
+     localfiles.js), so it is looked up by the id the deck carries and decoded
+     here: an image, or a video playing muted on a loop. Each window drawing
+     the map decodes its own, which is what lets the projector's copy go on
+     playing while the dashboard is behind it. A controls-only copy draws
+     nothing and only asks whether the file is here. */
+  const mediaRef = useRef(null);         // { id, kind, el, url, width, height }
+  const [mediaState, setMediaState] = useState('none');   // none | loading | ready | missing
+  const [mediaTick, setMediaTick] = useState(0);
+  const [picOpen, setPicOpen] = useState(false);
+  const [picNote, setPicNote] = useState('');
+  const [picHow, setPicHow] = useState('grid');
+  const [picPps, setPicPps] = useState('100');
+  const [picTv, setPicTv] = useState('40');
+  const [picAcross, setPicAcross] = useState('30');
+  const picFileRef = useRef(null);
+  const relinkFileRef = useRef(null);
+  // A stroke of the thin-wall tool puts walls up or takes them down for its
+  // whole length, decided by the first edge it touched.
+  const wallStrokeRef = useRef(null);
+  const [hoverEdge, setHoverEdge] = useState(null);
+  const reducedMotion = useMemo(() => {
+    const w = win || window;
+    return Boolean(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }, [win]);
+
+  const dropMedia = () => {
+    const old = mediaRef.current;
+    mediaRef.current = null;
+    if (!old) return;
+    if (old.kind === 'video' && old.el) { try { old.el.pause(); } catch { /* gone */ } old.el.remove(); }
+    if (old.url) URL.revokeObjectURL(old.url);
+  };
+  const backdropId = m.backdrop ? m.backdrop.id : null;
+  const [mediaAsk, setMediaAsk] = useState(0);
+  useEffect(() => {
+    if (mediaRef.current && mediaRef.current.id !== backdropId) dropMedia();
+    if (!backdropId) { setMediaState('none'); return undefined; }
+    if (mediaRef.current && mediaRef.current.id === backdropId) return undefined;
+    let cancelled = false;
+    setMediaState('loading');
+    const kind = m.backdrop.kind;
+    getLocalFile(backdropId).then((rec) => {
+      if (cancelled) return;
+      if (!rec || !rec.blob) { setMediaState('missing'); return; }
+      if (controlsOnly) { setMediaState('ready'); return; }
+      const w = win || window;
+      const url = URL.createObjectURL(rec.blob);
+      const done = (el, width, height) => {
+        if (cancelled) { URL.revokeObjectURL(url); if (kind === 'video') el.remove(); return; }
+        mediaRef.current = { id: backdropId, kind, el, url, width, height };
+        setMediaState('ready');
+        setMediaTick((t) => t + 1);
+      };
+      const fail = () => { URL.revokeObjectURL(url); if (!cancelled) setMediaState('missing'); };
+      if (kind === 'image') {
+        const img = new w.Image();
+        img.onload = () => done(img, img.naturalWidth, img.naturalHeight);
+        img.onerror = fail;
+        img.src = url;
+        return;
+      }
+      /* In the document of the window that draws it, and IN the document:
+         a browser may stop decoding a video it cannot find on any page. It is
+         a pixel, out of the way and out of reach of the pointer. */
+      const v = w.document.createElement('video');
+      v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = !reducedMotion;
+      v.setAttribute('aria-hidden', 'true');
+      Object.assign(v.style, { position: 'fixed', left: '0', top: '0', width: '2px', height: '2px', opacity: '0.01', pointerEvents: 'none' });
+      v.onloadeddata = () => {
+        done(v, v.videoWidth, v.videoHeight);
+        if (!reducedMotion) v.play().catch(() => {});
+      };
+      v.onerror = fail;
+      // A file with no length in it (a browser recording, some exports) can
+      // stop at its end with `loop` set: start it again by hand.
+      v.onended = () => { v.currentTime = 0; if (!reducedMotion) v.play().catch(() => {}); };
+      w.document.body.appendChild(v);
+      v.src = url;
+    }).catch(() => { if (!cancelled) setMediaState('missing'); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backdropId, mediaAsk, win, controlsOnly]);
+  useEffect(() => () => dropMedia(), []);   // eslint-disable-line react-hooks/exhaustive-deps
+
   // The two-click tools read their first click back on the second one. State
   // is not readable that soon — two clicks inside one React batch both see
   // the old value, and the second click overwrites the origin it was meant
@@ -1220,7 +1318,7 @@ export default function BattleMap({
 
   useEffect(() => {
     const w = win || window;
-    const end = () => { gestureRef.current = false; };
+    const end = () => { gestureRef.current = false; wallStrokeRef.current = null; };
     w.addEventListener('mouseup', end);
     return () => w.removeEventListener('mouseup', end);
   }, [win]);
@@ -1235,7 +1333,9 @@ export default function BattleMap({
     const write = onChangeRef.current;
     if (!write) return;
     if (!rotationFits(mapRef.current, turns)) {
-      const msg = 'The painted map is too big to turn inside this grid. Make the grid bigger first.';
+      const msg = mapRef.current.backdrop
+        ? 'A deck laid over a picture lies the way the picture does, and does not turn.'
+        : 'The painted map is too big to turn inside this grid. Make the grid bigger first.';
       setTurnNote(msg);
       if (!showOptions) (win || window).alert(msg);
       return;
@@ -1570,6 +1670,31 @@ export default function BattleMap({
     return { x, y };
   };
 
+  /* The thin-wall tool works on the EDGE under the pointer, not the square,
+     so it needs the position in fractions of a square. */
+  const edgeFromEvent = (e) => {
+    const stage = stageRef.current;
+    if (!stage) return null;
+    const rect = stage.getBoundingClientRect();
+    const fx = (e.clientX - rect.left - stage.clientLeft + stage.scrollLeft) / zoom / px;
+    const fy = (e.clientY - rect.top - stage.clientTop + stage.scrollTop) / zoom / px;
+    const edge = edgeNear(fx, fy);
+    if (!edge) return null;
+    // Both its sides on the grid: the deck's outer edge is a wall already.
+    const inside = edge.bit === WALL_EAST
+      ? edge.x + 1 < m.cols && edge.y < m.rows
+      : edge.y + 1 < m.rows && edge.x < m.cols;
+    return inside ? edge : null;
+  };
+  const strokeWall = (e, starting) => {
+    const edge = edgeFromEvent(e);
+    if (!edge) return;
+    if (starting) wallStrokeRef.current = !hasWall(m.walls, edge);
+    const on = wallStrokeRef.current;
+    if (on === null || hasWall(m.walls, edge) === on) return;
+    patch({ walls: setWall(m.walls, edge, on) });
+  };
+
   /* A door clicked in play. `to` sets a state directly (the menu); without it
      the door steps on. Opening one is a noise, the same as under the door tool:
      anything hidden within earshot comes up on the scope as a ping. */
@@ -1654,7 +1779,10 @@ export default function BattleMap({
         delete doors[ck]; delete markers[ck]; delete cover[ck]; delete hazards[ck];
         delete ground[ck]; delete obscuring[ck]; delete light[ck];
       }
-      patch({ floor: paintCells(m.floor, cells, false), doors, markers, cover, hazards, ground, obscuring, light });
+      patch({
+        floor: paintCells(m.floor, cells, false), doors, markers, cover, hazards, ground, obscuring, light,
+        walls: clearWallsAround(m.walls, cells)
+      });
       return;
     }
     // Foliage and smoke are laid down by dragging, like the deck itself, and
@@ -2211,7 +2339,7 @@ export default function BattleMap({
     setMode(next);
     // Ground, Deck and Grid are panels for drawing a deck; they do not follow
     // the GM to a table with the fog on.
-    if (t === 'play') { setGenOpen(false); setDeckOpen(false); setGridOpen(false); }
+    if (t === 'play') { setGenOpen(false); setDeckOpen(false); setGridOpen(false); setPicOpen(false); }
   };
   // Picking a tool by any road (the toolbar, the menu) is remembered for its tab.
   // The flag is a one-shot and is never what a tab is "left on": remembering
@@ -2281,32 +2409,132 @@ export default function BattleMap({
   }, [m.markers]);
   const warpInHand = mode === 'overlay' && Boolean(origin) && Boolean(weapon)
     && weapon.power === 'psy' && !weapon.fire;
+  /* AND THE DECK ITSELF, when it has something that moves (motion.js) or a
+     video for a floor. Each at the rate it needs: a video near its own,
+     rain and smoke at twenty frames, the warp at fifteen. */
+  const moving = useMemo(() => !controlsOnly && deckMoves(m), [m, controlsOnly]);
+  const videoUp = !controlsOnly && mediaState === 'ready' && Boolean(m.backdrop) && m.backdrop.kind === 'video';
+  // On the GSAP ticker of the window the map is in (gsapcdn.js), or that
+  // window's own frames when GSAP cannot be had.
   useEffect(() => {
-    if (!warpOnDeck && !warpInHand) return undefined;
-    const w = win || window;
-    if (w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
-    let id = 0;
-    let last = 0;
-    const loop = (t) => {
-      if (t - last > 66) { last = t; drawRef.current(); }
-      id = w.requestAnimationFrame(loop);
-    };
-    id = w.requestAnimationFrame(loop);
-    return () => w.cancelAnimationFrame(id);
-  }, [warpOnDeck, warpInHand, win]);
+    if (reducedMotion) return undefined;
+    const warp = warpOnDeck || warpInHand;
+    if (!warp && !moving && !videoUp) return undefined;
+    const every = videoUp ? VIDEO_FRAME_MS : moving ? MOTION_FRAME_MS : 66;
+    return runFrames(win || window, every, () => drawRef.current());
+  }, [warpOnDeck, warpInHand, moving, videoUp, reducedMotion, win]);
+
+  /* What moves on the deck, drawn over the squares in view (see motion.js).
+     Rain falls wherever the deck is lit by rain and not painted otherwise;
+     smoke and shadow swell and thin; a lit square in a darker deck flickers
+     like a failing lumen; smoke and foliage drift; fire flickers, current
+     arcs, gas swirls, radiation pulses, and the air runs to a breach. */
+  const drawMotion = (ctx, v, t) => {
+    const deckRain = m.lighting === 'rain';
+    const thin = Math.max(1, px * 0.03);
+    ctx.save();
+    for (let x = v.c0; x <= v.c1; x++) {
+      for (let y = v.r0; y <= v.r1; y++) {
+        const k = x + ',' + y;
+        if (!m.floor[k]) continue;
+        const x0 = x * px, y0 = y * px;
+        const painted = m.light[k] && m.light[k] !== m.lighting ? m.light[k] : null;
+        if (painted ? painted === 'rain' : deckRain) {
+          ctx.strokeStyle = 'rgba(190,215,240,0.42)';
+          ctx.lineWidth = thin;
+          ctx.beginPath();
+          for (const r of rainStreaks(x, y, t, 2)) {
+            ctx.moveTo(x0 + r.x0 * px, y0 + Math.max(0, r.y0) * px);
+            ctx.lineTo(x0 + r.x1 * px, y0 + r.y1 * px);
+          }
+          ctx.stroke();
+        }
+        if (painted === 'smoke') {
+          ctx.fillStyle = `rgba(130,132,138,${(0.05 + 0.14 * drift(x, y, t)).toFixed(3)})`;
+          ctx.fillRect(x0, y0, px, px);
+        } else if (painted === 'dim') {
+          ctx.fillStyle = `rgba(10,14,24,${(0.04 + 0.1 * drift(x, y, t, 9)).toFixed(3)})`;
+          ctx.fillRect(x0, y0, px, px);
+        } else if (painted === 'clear') {
+          ctx.fillStyle = `rgba(255,226,150,${(0.02 + 0.06 * flicker(x, y, t * 0.6)).toFixed(3)})`;
+          ctx.fillRect(x0, y0, px, px);
+        }
+        if (m.obscuring[k]) {
+          const d = drift(x, y, t, 7);
+          ctx.fillStyle = `rgba(205,210,214,${(0.04 + 0.08 * d).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(x0 + px * (0.25 + 0.5 * d), y0 + px * (0.35 + 0.3 * drift(x, y, t + 2, 9)), px * 0.32, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        const hz = m.hazards[k];
+        if (hz === 'fire') {
+          const f = flicker(x, y, t);
+          const g = ctx.createRadialGradient(x0 + px / 2, y0 + px * 0.6, px * 0.05, x0 + px / 2, y0 + px * 0.6, px * 0.7);
+          g.addColorStop(0, `rgba(255,190,80,${(0.25 + 0.35 * f).toFixed(3)})`);
+          g.addColorStop(1, 'rgba(255,90,20,0)');
+          ctx.fillStyle = g;
+          ctx.fillRect(x0 - px * 0.2, y0 - px * 0.2, px * 1.4, px * 1.4);
+        } else if (hz === 'electrical') {
+          const arc = sparkArc(x, y, t);
+          if (arc) {
+            ctx.strokeStyle = 'rgba(215,195,255,0.95)';
+            ctx.lineWidth = Math.max(1.5, px * 0.045);
+            ctx.beginPath();
+            arc.forEach((p2, i) => (i ? ctx.lineTo : ctx.moveTo).call(ctx, x0 + p2.x * px, y0 + p2.y * px));
+            ctx.stroke();
+          }
+        } else if (hz === 'toxic') {
+          const d = drift(x, y, t, 4);
+          ctx.fillStyle = `rgba(95,224,106,${(0.06 + 0.12 * d).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(x0 + px * (0.3 + 0.4 * drift(x, y, t + 1, 5)), y0 + px * (0.3 + 0.4 * d), px * 0.35, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (hz === 'radiation') {
+          const d = drift(x, y, t, 2);
+          ctx.strokeStyle = `rgba(227,210,60,${(0.6 * (1 - d)).toFixed(3)})`;
+          ctx.lineWidth = Math.max(1, px * 0.04);
+          ctx.beginPath();
+          ctx.arc(x0 + px / 2, y0 + px / 2, px * (0.12 + 0.36 * d), 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
+    // The air on its way out: a streak riding each square's pull.
+    for (const c of dragField) {
+      if (c.x < v.c0 || c.x > v.c1 || c.y < v.r0 || c.y > v.r1) continue;
+      const r = rush(t + c.x * 0.37 + c.y * 0.61);
+      const cx = c.x * px + px / 2 + c.dx * (r - 0.5) * px * 0.8;
+      const cy = c.y * px + px / 2 + c.dy * (r - 0.5) * px * 0.8;
+      ctx.strokeStyle = `rgba(170,210,255,${(0.7 * (1 - r)).toFixed(3)})`;
+      ctx.lineWidth = Math.max(1, px * 0.05);
+      ctx.beginPath();
+      ctx.moveTo(cx - c.dx * px * 0.15, cy - c.dy * px * 0.15);
+      ctx.lineTo(cx, cy);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
   const overviewRef = useRef(null);
   const OVERVIEW_BELOW = 6;       // screen pixels per square under which only the overview is drawn
 
   // One pixel per square, for when the whole deck is on screen at once.
-  const buildOverview = () => {
+  // With a picture floor, the squares under it are left clear for the picture
+  // to show through, and so is the void, which is drawn dark underneath.
+  const buildOverview = (pic = null) => {
     const have = overviewRef.current;
-    if (have && have.m === m && have.shown === shown && have.projecting === projecting && have.tick === textureTick) return have.canvas;
+    if (have && have.m === m && have.shown === shown && have.projecting === projecting && have.tick === textureTick
+      && have.pic === Boolean(pic)) return have.canvas;
     const doc = (win || window).document;
     const c = have && have.canvas ? have.canvas : doc.createElement('canvas');
     c.width = m.cols; c.height = m.rows;
     const g = c.getContext('2d');
-    g.fillStyle = '#05070a';
-    g.fillRect(0, 0, m.cols, m.rows);
+    g.clearRect(0, 0, m.cols, m.rows);
+    const b = pic ? m.backdrop : null;
+    const under = (x, y) => b && x + 0.5 > b.x && x + 0.5 < b.x + b.w && y + 0.5 > b.y && y + 0.5 < b.y + b.h;
+    if (!pic) {
+      g.fillStyle = '#05070a';
+      g.fillRect(0, 0, m.cols, m.rows);
+    }
     const tint = new Map();
     const colourOf = (id) => {
       if (!tint.has(id)) tint.set(id, (resolveTheme(id, customThemes) || theme).fallback);
@@ -2314,7 +2542,7 @@ export default function BattleMap({
     };
     for (const k of Object.keys(m.floor)) {
       const p = parseKey(k);
-      if (!p) continue;
+      if (!p || under(p.x, p.y)) continue;
       g.fillStyle = colourOf(m.ground[k] || m.theme);
       g.fillRect(p.x, p.y, 1, 1);
     }
@@ -2347,7 +2575,7 @@ export default function BattleMap({
         for (let y = 0; y < m.rows; y++) if (!shown[x + ',' + y]) g.fillRect(x, y, 1, 1);
       }
     }
-    overviewRef.current = { m, shown, projecting, tick: textureTick, canvas: c };
+    overviewRef.current = { m, shown, projecting, tick: textureTick, pic: Boolean(pic), canvas: c };
     return c;
   };
 
@@ -2386,9 +2614,20 @@ export default function BattleMap({
       for (const c of cells) ctx.fillRect(c.x * px, c.y * px, px, px);
     };
 
+    /* The picture floor, under everything: the deck's other layers are laid
+       on it the way they are laid on the tiled ground. Only once its file is
+       decoded — until then, and on a computer that does not have the file,
+       the deck is drawn on its tiled ground as before. */
+    const pic = m.backdrop && mediaRef.current && mediaRef.current.id === m.backdrop.id ? mediaRef.current : null;
+    const bd = pic ? m.backdrop : null;
+    const underPic = (x, y) => Boolean(bd) && x + 0.5 > bd.x && x + 0.5 < bd.x + bd.w && y + 0.5 > bd.y && y + 0.5 < bd.y + bd.h;
+    if (pic) {
+      try { ctx.drawImage(pic.el, bd.x * px, bd.y * px, bd.w * px, bd.h * px); } catch { /* not decoded yet */ }
+    }
+
     if (overview) {
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(buildOverview(), 0, 0, w, h);
+      ctx.drawImage(buildOverview(pic), 0, 0, w, h);
     } else {
       // 1. The deck, textured, clipped to the painted cells so unbuilt grid
       //    stays void rather than becoming a rectangle of corridor.
@@ -2399,7 +2638,7 @@ export default function BattleMap({
       for (let x = c0; x <= c1; x++) {
         for (let y = r0; y <= r1; y++) {
           const k = x + ',' + y;
-          if (!m.floor[k]) continue;
+          if (!m.floor[k] || underPic(x, y)) continue;
           const id = m.ground[k] || m.theme;
           const list = byGround.get(id);
           if (list) list.push(x, y); else byGround.set(id, [x, y]);
@@ -2445,6 +2684,8 @@ export default function BattleMap({
       ctx.lineWidth = 1;
       const line = (ax, ay, bx, by) => { ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke(); };
       each(m.floor, (cx, cy) => {
+        // A picture shows its own walls.
+        if (bd && underPic(cx, cy)) return;
         const x0 = cx * px, y0 = cy * px;
         const mask = wallMask(m.floor, cx, cy);
         if (mask) {
@@ -2468,6 +2709,35 @@ export default function BattleMap({
         if (cornerPillar(m.floor, cx, cy, -1, 1)) ctx.fillRect(x0, y0 + px - c, c, c);
         if (cornerPillar(m.floor, cx, cy, 1, 1)) ctx.fillRect(x0 + px - c, y0 + px - c, c, c);
       });
+
+      // 3a. Thin walls, on the grid lines between two squares of deck. Over a
+      //     picture the picture shows its own, so the table's screen leaves
+      //     these out and the GM's own shows them as a bright line to build
+      //     against; on the tiled ground they are drawn like any other wall.
+      let anyThin = false;
+      for (const _k in m.walls) { anyThin = true; break; }
+      if (anyThin && (!bd || !projecting || tab === 'build')) {
+        ctx.save();
+        ctx.lineCap = 'square';
+        const seg = (ax, ay, bx2, by2) => {
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2);
+          if (bd) {
+            ctx.strokeStyle = 'rgba(0,229,255,0.9)'; ctx.lineWidth = Math.max(2, px * 0.07); ctx.stroke();
+          } else {
+            ctx.strokeStyle = 'rgba(8,10,14,0.95)'; ctx.lineWidth = thick; ctx.stroke();
+            ctx.strokeStyle = theme.accent; ctx.lineWidth = 1; ctx.stroke();
+          }
+        };
+        for (let x = c0 - 1; x <= c1; x++) {
+          for (let y = r0 - 1; y <= r1; y++) {
+            const bits = m.walls[x + ',' + y];
+            if (!bits) continue;
+            if (bits & WALL_EAST) seg((x + 1) * px, y * px, (x + 1) * px, (y + 1) * px);
+            if (bits & WALL_SOUTH) seg(x * px, (y + 1) * px, (x + 1) * px, (y + 1) * px);
+          }
+        }
+        ctx.restore();
+      }
 
       // 3b. Hazards, as a tinted square with a warning stripe. Under the
       //     cover and the markers, because something can stand in a fire.
@@ -2612,7 +2882,9 @@ export default function BattleMap({
       });
 
       // 4. The grid, for the table to count squares off. Only the lines in
-      //    view: a deck 500 across has a thousand of them.
+      //    view: a deck 500 across has a thousand of them. Over a picture
+      //    that carries its own grid, the GM may leave this one off.
+      if (!bd || bd.grid) {
       ctx.save();
       ctx.globalAlpha = theme.gridAlpha;
       ctx.strokeStyle = theme.grid;
@@ -2621,6 +2893,7 @@ export default function BattleMap({
       for (let c = c0; c <= c1 + 1; c++) { ctx.beginPath(); ctx.moveTo(c * px, gy0); ctx.lineTo(c * px, gy1); ctx.stroke(); }
       for (let r = r0; r <= r1 + 1; r++) { ctx.beginPath(); ctx.moveTo(gx0, r * px); ctx.lineTo(gx1, r * px); ctx.stroke(); }
       ctx.restore();
+      }
 
       // 5. Bulkheads.
       each(m.doors, (cx, cy, door) => {
@@ -2720,6 +2993,11 @@ export default function BattleMap({
       each(m.light, (cx, cy, id) => {
         if (id !== m.lighting && m.floor[cx + ',' + cy]) drawLight(ctx, cx * px, cy * px, px, id);
       });
+
+      // 6. And moving, under the fog like everything else on the deck.
+      if (moving && !reducedMotion && (c1 - c0 + 1) * (r1 - r0 + 1) <= MOTION_MAX_SQUARES) {
+        drawMotion(ctx, { c0, c1, r0, r1 }, performance.now() / 1000);
+      }
 
       // 6. The crawlways, while the deck is being built: a dashed line from
       //    each vent to the one it leads to. In play the party finds out by
@@ -3020,6 +3298,17 @@ export default function BattleMap({
           // a green brush would read as "this adds deck".
           : mode === 'ground' ? 'rgba(0,229,255,0.35)'
             : 'rgba(46,204,113,0.4)');
+    } else if (hoverEdge && mode === 'wall') {
+      const e = hoverEdge;
+      const on = hasWall(m.walls, e);
+      ctx.save();
+      ctx.strokeStyle = on ? 'rgba(231,76,60,0.95)' : 'rgba(46,204,113,0.95)';
+      ctx.lineWidth = Math.max(3, px * 0.12);
+      ctx.beginPath();
+      if (e.bit === WALL_EAST) { ctx.moveTo((e.x + 1) * px, e.y * px); ctx.lineTo((e.x + 1) * px, (e.y + 1) * px); }
+      else { ctx.moveTo(e.x * px, (e.y + 1) * px); ctx.lineTo((e.x + 1) * px, (e.y + 1) * px); }
+      ctx.stroke();
+      ctx.restore();
     } else if (hover && mode === 'obscure') {
       fill(brushCells(hover, brush, m), 'rgba(95,159,85,0.45)');
     } else if (hover && mode === 'light' && lightScope === 'brush') {
@@ -3083,7 +3372,7 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick,
-      tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab]);
+      tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab, mediaTick, hoverEdge, moving]);
 
   // Scrolling and resizing the stage move the window over the deck.
   useEffect(() => {
@@ -3305,7 +3594,7 @@ export default function BattleMap({
       title: 'Clear the deck?',
       body: 'Everything drawn on this deck goes: the floor and its walls, the doors,'
         + ' cover, hazards, foliage, markers, contacts, painted terrain and light, and what the'
-        + ' party has explored. The grid size, the ground and the calibration stay.',
+        + ' party has explored. The grid size, the ground, the picture and the calibration stay.',
       yes: 'Clear it'
     })) return;
     /* EVERYTHING THAT STOOD ON THE DECK, not just the floor.
@@ -3317,10 +3606,90 @@ export default function BattleMap({
        photographs of crates it reads as the deck not having cleared at all. */
     patch({
       floor: {}, doors: {}, markers: {}, cover: {}, hazards: {}, obscuring: {},
-      contacts: {}, ground: {}, explored: {}, mapped: {}, light: {}, viewpoint: null
+      contacts: {}, ground: {}, explored: {}, mapped: {}, light: {}, walls: {}, viewpoint: null
     });
     originRef.current = null; measureRef.current = null;
     setMeasureFrom(null); setMeasureTo(null); setOrigin(null); setAim(null);
+  };
+
+  /* ---- laying a picture floor ----
+     Measured before it is laid: its size in pixels is what its size in
+     squares comes from. */
+  const measureFile = (file, kind) => new Promise((resolve) => {
+    const w = win || window;
+    const url = URL.createObjectURL(file);
+    const finish = (width, height) => {
+      URL.revokeObjectURL(url);
+      resolve(width > 0 && height > 0 ? { width, height } : null);
+    };
+    if (kind === 'image') {
+      const img = new w.Image();
+      img.onload = () => finish(img.naturalWidth, img.naturalHeight);
+      img.onerror = () => finish(0, 0);
+      img.src = url;
+      return;
+    }
+    const v = w.document.createElement('video');
+    v.preload = 'metadata';
+    v.muted = true;
+    v.onloadedmetadata = () => finish(v.videoWidth, v.videoHeight);
+    v.onerror = () => finish(0, 0);
+    v.src = url;
+  });
+  const picSquares = (size) => squaresFor(size, picHow === 'grid' ? { pxPerSquare: Number(picPps) }
+    : picHow === 'tv' ? { across: tvSquaresAcross(Number(picTv)) } : { across: Number(picAcross) });
+  // The grid that holds a picture, and deck on every square under it.
+  const fittedTo = (b) => {
+    const g = gridFor(b);
+    const floor = {};
+    for (const c of squaresUnder(b, g.cols, g.rows)) floor[cellKey(c.x, c.y)] = true;
+    return { cols: g.cols, rows: g.rows, floor };
+  };
+  const choosePicture = async (file) => {
+    if (!file) return;
+    const kind = backdropKindOf(file.type);
+    if (!kind) { setPicNote('That is not a picture or a video the map can show: PNG, JPEG, WebP or GIF, MP4 or WebM.'); return; }
+    const size = await measureFile(file, kind);
+    if (!size) { setPicNote(`${file.name} would not open.`); return; }
+    const sq = picSquares(size);
+    if (!sq) { setPicNote('Say how big the picture is first.'); return; }
+    const id = newBackdropId();
+    try { await putLocalFile(id, file, { name: file.name }); } catch {
+      setPicNote('This browser would not keep the file. A private window keeps nothing; try an ordinary one.');
+      return;
+    }
+    const b = readBackdrop({ id, kind, name: file.name, x: 0, y: 0, w: sq.w, h: sq.h, grid: true });
+    /* A deck with nothing on it becomes the picture: the grid fitted round
+       it and every square under it deck, so the fog and the rooms have
+       somewhere to run. A deck already drawn is left as it is. */
+    const empty = Object.keys(m.floor).length === 0;
+    patch(empty ? { backdrop: b, ...fittedTo(b) } : { backdrop: b });
+    setPicNote(`${file.name}: ${size.width}\u00d7${size.height}, laid ${sq.w} squares across and ${sq.h} down. `
+      + (empty ? 'The grid is fitted to it and every square under it is deck.'
+        : 'When it sits right, fit the grid to it and lay the deck under it.'));
+  };
+  // The same deck on a different computer: the file chosen again, under the
+  // id the deck already carries.
+  const relinkPicture = async (file) => {
+    if (!file || !m.backdrop) return;
+    const kind = backdropKindOf(file.type);
+    if (!kind) { setPicNote('That is not a picture or a video the map can show.'); return; }
+    try { await putLocalFile(m.backdrop.id, file, { name: file.name }); } catch {
+      setPicNote('This browser would not keep the file.');
+      return;
+    }
+    dropMedia();
+    if (kind !== m.backdrop.kind || file.name !== m.backdrop.name) patch({ backdrop: { ...m.backdrop, kind, name: file.name } });
+    setMediaAsk((n) => n + 1);
+    setPicNote(`${file.name} is on this computer now.`);
+  };
+  const movePicture = (next) => patch({ backdrop: readBackdrop({ ...m.backdrop, ...next }) });
+  // Wider or narrower, keeping the picture's shape.
+  const sizePicture = (across) => {
+    const b = m.backdrop;
+    const media = mediaRef.current;
+    const ratio = media && media.width ? media.height / media.width : b.h / b.w;
+    movePicture({ w: across, h: across * ratio });
   };
 
   /* Grows the deck by repeating what is already built, rather than adding
@@ -3330,6 +3699,10 @@ export default function BattleMap({
   const expandDeck = async () => {
     const plan = expandPlan(m, growCols, growRows);
     if (!onChange) return;
+    if (m.backdrop) {
+      setDeckMsg('A deck laid over a picture is as big as the picture. Change the grid in the Picture panel instead.');
+      return;
+    }
     /* THE DEFAULT GROWS FROM WHAT IS PAINTED. The painted deck stays where it
        is and new rooms are built in the added space, each joined to the deck
        and carrying its ground on. Repeating the deck (flipped or not) is still
@@ -4165,6 +4538,14 @@ export default function BattleMap({
               Deck
             </button>
           )}
+          {tab === 'build' && (
+            <button type="button"
+              className={'rt-btn rt-bm-mode' + (picOpen ? ' on' : '')}
+              title="Lay one picture or looping video over the grid, in place of the tiled ground"
+              onClick={() => setPicOpen((v) => !v)}>
+              Picture{m.backdrop ? (mediaState === 'missing' ? ' \u00b7 not here' : ' \u00b7 on') : ''}
+            </button>
+          )}
           <IconButton icon="save" label="Save and load decks" on={libOpen} onClick={() => setLibOpen((v) => !v)} />
           {tab === 'build' && <IconButton icon="grid" label="Grid, scale and light" on={gridOpen} onClick={() => setGridOpen((v) => !v)} />}
         </div>
@@ -4215,6 +4596,109 @@ export default function BattleMap({
         </div>
         {turnNote ? <span className="rt-bm-hint">{turnNote}</span> : null}
       </div>
+
+      {m.backdrop && mediaState === 'missing' && !picOpen && (
+        <p className="rt-warn">
+          This deck is laid over {m.backdrop.name ? `\u201c${m.backdrop.name}\u201d` : 'a picture'}, which is not on this
+          computer. It is drawn on its tiled ground until the file is chosen again in the Picture panel.
+        </p>
+      )}
+
+      {picOpen && (
+        <div className="rt-bm-gen">
+          <div className="rt-sechead">
+            <h4>Picture floor</h4>
+            <button type="button" className="rt-btn ghost" onClick={() => setPicOpen(false)}>Close</button>
+          </div>
+          <p className="rt-bm-hint">
+            One picture or looping video laid over the grid in place of the tiled ground: a battle map drawn in another
+            program, or a moving map made for a TV. The file stays in this browser on this computer; the deck only
+            remembers which file it is and where it lies.
+          </p>
+          {!m.backdrop ? (
+            <div className="rt-bm-bar">
+              <label className="rt-bm-num"><span>Its size</span>
+                <select value={picHow} aria-label="How big the picture is" onChange={(e) => setPicHow(e.target.value)}>
+                  <option value="grid">Drawn at so many pixels to the square</option>
+                  <option value="tv">Made for a TV, an inch to the square</option>
+                  <option value="across">So many squares across</option>
+                </select>
+              </label>
+              {picHow === 'grid' && (
+                <label className="rt-bm-num"><span>Pixels / square</span>
+                  <input type="number" min={10} max={2000} value={picPps} aria-label="Pixels to the square"
+                    onWheel={(e) => e.currentTarget.blur()} onChange={(e) => setPicPps(e.target.value)} />
+                </label>
+              )}
+              {picHow === 'tv' && (
+                <label className="rt-bm-num"><span>Screen</span>
+                  <select value={picTv} aria-label="Screen size" onChange={(e) => setPicTv(e.target.value)}>
+                    {TV_SIZES.map((n) => (
+                      <option key={n} value={String(n)}>{n}-inch, {tvSquaresAcross(n)} squares across</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {picHow === 'across' && (
+                <label className="rt-bm-num"><span>Squares across</span>
+                  <input type="number" min={1} max={MAX_GRID} step={0.01} value={picAcross} aria-label="Squares across"
+                    onWheel={(e) => e.currentTarget.blur()} onChange={(e) => setPicAcross(e.target.value)} />
+                </label>
+              )}
+              <button type="button" className="rt-btn" onClick={() => picFileRef.current && picFileRef.current.click()}>
+                Choose a picture or video{'\u2026'}
+              </button>
+              <input ref={picFileRef} type="file" hidden aria-label="Picture or video for the floor"
+                accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
+                onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; choosePicture(f); }} />
+            </div>
+          ) : (<>
+            <div className="rt-bm-bar">
+              <span className="rt-bm-hint">
+                <strong>{m.backdrop.name || 'Picture'}</strong>
+                {' \u00b7 '}{m.backdrop.kind === 'video' ? 'looping video' : 'picture'}
+                {' \u00b7 '}{mediaState === 'missing' ? 'not on this computer'
+                  : mediaState === 'loading' ? 'opening\u2026'
+                    : `${m.backdrop.w} \u00d7 ${m.backdrop.h} squares`}
+              </span>
+              {mediaState === 'missing' && (<>
+                <button type="button" className="rt-btn" onClick={() => relinkFileRef.current && relinkFileRef.current.click()}>
+                  Find the file on this computer{'\u2026'}
+                </button>
+              </>)}
+              <input ref={relinkFileRef} type="file" hidden aria-label="The same picture or video again"
+                accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm"
+                onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; relinkPicture(f); }} />
+            </div>
+            <div className="rt-bm-bar">
+              {num('Squares across', m.backdrop.w, sizePicture, 0.5, MAX_GRID, 0.01)}
+              {num('From the left', m.backdrop.x, (v) => movePicture({ x: v }), -MAX_GRID, MAX_GRID, 0.05)}
+              {num('From the top', m.backdrop.y, (v) => movePicture({ y: v }), -MAX_GRID, MAX_GRID, 0.05)}
+              <label className="rt-bm-num"><input type="checkbox" checked={m.backdrop.grid}
+                onChange={(e) => movePicture({ grid: e.target.checked })} /><span>Grid lines over it</span></label>
+            </div>
+            <div className="rt-bm-bar">
+              <button type="button" className="rt-btn" onClick={() => {
+                const g = gridFor(m.backdrop);
+                patch({ cols: g.cols, rows: g.rows });
+              }} title="Make the grid exactly as big as the picture">Fit the grid to it</button>
+              <button type="button" className="rt-btn" onClick={() => patch({
+                floor: paintCells(m.floor, squaresUnder(m.backdrop, m.cols, m.rows), true)
+              })} title="Every square the picture covers becomes deck, so the fog and the rooms run over it">
+                Make every square under it deck
+              </button>
+              <button type="button" className="rt-btn ghost" onClick={() => patch({ backdrop: null })}
+                title="The deck goes back to its tiled ground. Undo puts the picture back.">Take the picture off</button>
+            </div>
+            <p className="rt-bm-hint">
+              Line the picture{'\u2019'}s own grid up with the map{'\u2019'}s, then draw its walls with the Thin wall tool:
+              click a grid line to put a wall on it, drag along to draw a run, and click it again to take it down. The fog,
+              the rooms, sight and blasts all stop at them. Doors go on the square beside the doorway.
+            </p>
+          </>)}
+          {picNote ? <p className="rt-bm-hint" role="status">{picNote}</p> : null}
+        </div>
+      )}
 
       {libOpen && (
         <div className="rt-bm-gen">
@@ -4317,6 +4801,11 @@ export default function BattleMap({
               onChange={(e) => setShowZones(e.target.checked)} /><span>Deployment</span></label>
             <label className="rt-bm-num"><input type="checkbox" checked={showCalibration}
               onChange={(e) => setShowCalibration(e.target.checked)} /><span>Calibrate</span></label>
+            <label className="rt-bm-num" title={reducedMotion
+              ? 'This computer asks for reduced motion, so nothing moves here whatever this says'
+              : 'Rain falling, smoke drifting, fire and lumens flickering'}>
+              <input type="checkbox" checked={m.motion}
+                onChange={(e) => patch({ motion: e.target.checked })} /><span>Moving effects</span></label>
           </div>
           <p className="rt-bm-hint">
             Up to {MAX_GRID}×{MAX_GRID} squares. Squares keep the size the projector was
@@ -4826,6 +5315,14 @@ export default function BattleMap({
           </span>
         </>)}
 
+        {mode === 'wall' && (
+          <span className="rt-bm-hint">
+            A wall on a grid line, between two squares that are both deck: the walls of a room drawn over a picture, or a
+            partition across a hall. Click a line to put one up, again to take it down; drag to draw a run. The fog,
+            sight, blasts and the air all stop at it.
+          </span>
+        )}
+
         {mode === 'cover' && (<>
           <select value={coverType} onChange={(e) => setCoverType(e.target.value)}>
             {COVER_TYPES.map((c) => (
@@ -5099,13 +5596,15 @@ export default function BattleMap({
           onMouseMove={(e) => {
             const pos = posFromEvent(e);
             setHover(pos);
+            if (mode === 'wall') setHoverEdge(edgeFromEvent(e));
             if (spaceRef.current || panOnRef.current || rHeldRef.current) return;   // panning, or turning the map
+            if (e.buttons === 1 && mode === 'wall') { strokeWall(e, false); return; }
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure'
               || (mode === 'light' && lightScope === 'brush'))) {
               applyAt(pos, true);
             }
           }}
-          onMouseLeave={() => setHover(null)}
+          onMouseLeave={() => { setHover(null); setHoverEdge(null); }}
           onMouseDown={(e) => {
             // R held: this click turns the map, a quarter turn clockwise, or
             // anticlockwise with Shift, and does nothing else.
@@ -5114,6 +5613,7 @@ export default function BattleMap({
               rotateMapBy(e.shiftKey ? -1 : 1);
               return;
             }
+            if (e.button === 0 && mode === 'wall') { strokeWall(e, true); return; }
             if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
           }}
           style={{ cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
@@ -5192,6 +5692,7 @@ export default function BattleMap({
             </>
           )}
           {menuItem({ key: 'fog', label: 'Fog of war', checked: m.fog, run: () => patch({ fog: !m.fog }) })}
+          {menuItem({ key: 'motion', label: 'Moving effects', checked: m.motion, run: () => patch({ motion: !m.motion }) })}
           <div className="rt-bm-menu-sep" />
           <div className="rt-bm-menu-icons">
             <IconButton icon="undo" label="Undo" onClick={doMenu(undo)} disabled={historyRef.current.past.length === 0} />

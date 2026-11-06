@@ -28,6 +28,7 @@
 
 import { rangeBand, RANGE_MODIFIERS, parseWeaponStats } from './groundcombat.js';
 import { spriteRole } from './spritesheet.js';
+import { readBackdrop } from './backdrop.js';
 
 /* ------------------------------ themes ------------------------------ */
 
@@ -288,6 +289,23 @@ export const EMPTY_MAP = {
   mmPerSquare: 25,
   pxPerSquare: 40,      // screen pixels per square, adjusted until it matches
   floor: {},            // { 'x,y': true } — the single source of truth for deck
+  /* THIN WALLS, between two squares that are both deck. The walls derived
+     from the floor can only stand where deck meets void, which is how a deck
+     built from tiles is drawn; a map made in another program (or a picture
+     laid under the grid) has its walls ON the grid lines, between two rooms
+     that are both floor. Stored once per edge, on the square west or north of
+     it: bit 1 is the square's east side, bit 2 its south side. They stop
+     what a wall stops — the fog's rooms, sight, a blast, the air. */
+  walls: {},            // { 'x,y': 1 | 2 | 3 }
+  /* A PICTURE FLOOR: one image or video laid over a rectangle of the grid in
+     place of the tiled ground, the way a battle map from another program or a
+     moving TV map is played. The file itself stays on the computer that runs
+     the table (see localfiles.js); the deck records which file and where it
+     lies, in squares. See backdrop.js. */
+  backdrop: null,
+  // Rain falling, smoke drifting, fire and lumens flickering. A deck's own
+  // choice, on unless switched off; never for anyone who asks for less motion.
+  motion: true,
   /* PER-CELL GROUND. One deck is rarely one terrain: a boarding action runs
      from the ice outside to the deck plate inside, and an agri-world fight
      crosses ploughed soil, an irrigation ditch and the rockcrete apron.
@@ -743,7 +761,7 @@ export function packLayer(layerObj) {
 
 // Layers that run into the thousands on a big deck. Doors, markers and
 // contacts are a handful of records each and stay as they are.
-const PACKED_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'explored', 'mapped', 'light'];
+const PACKED_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'explored', 'mapped', 'light', 'walls'];
 const PACK_FROM = 64;     // below this a plain layer is smaller and easier to read
 
 /* The map as it should be stored or sent. Round-trips exactly through readMap.
@@ -854,6 +872,14 @@ export function readMap(m) {
     for (const k of Object.keys(raw)) if (raw[k] && parseKey(k)) out[k] = true;
     return out;
   });
+  const walls = layer(src.walls, (raw) => {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) {
+      const bits = Math.round(Number(v)) & (WALL_EAST | WALL_SOUTH);
+      if (bits && parseKey(k)) out[k] = bits;
+    }
+    return out;
+  });
   const contacts = layer(src.contacts, (raw) => {
     const out = {};
     for (const [k, v] of Object.entries(raw)) {
@@ -932,7 +958,9 @@ export function readMap(m) {
       if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
       return floor[cellKey(x, y)] ? { x, y } : null;
     })(),
-    floor, doors, cover, hazards, obscuring, markers, explored, mapped, light, contacts, ground
+    floor, doors, cover, hazards, obscuring, markers, explored, mapped, light, contacts, ground, walls,
+    backdrop: readBackdrop(src.backdrop),
+    motion: src.motion !== false
   };
 }
 
@@ -1128,7 +1156,7 @@ export function regionAt(map, pos) {
     for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
       const x = cur.x + dx, y = cur.y + dy;
       const k = cellKey(x, y);
-      if (seen.has(k) || !m.floor[k]) continue;
+      if (seen.has(k) || !m.floor[k] || wallBetween(m, cur.x, cur.y, dx, dy)) continue;
       seen.add(k);
       out.push({ x, y });
       // A doorway is shown but not walked through: the room stops there.
@@ -1149,7 +1177,7 @@ export function regionsAroundDoor(map, pos) {
   for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
     const x = pos.x + dx, y = pos.y + dy;
     const k = cellKey(x, y);
-    if (!m.floor[k] || isDoorAt(m, x, y)) continue;
+    if (!m.floor[k] || isDoorAt(m, x, y) || wallBetween(m, pos.x, pos.y, dx, dy)) continue;
     for (const c of regionAt(m, { x, y })) {
       const ck = cellKey(c.x, c.y);
       if (seen.has(ck)) continue;
@@ -1199,7 +1227,7 @@ export function openReach(map, from) {
     for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
       const x = cur.x + dx, y = cur.y + dy;
       const k = cellKey(x, y);
-      if (out.has(k) || !m.floor[k]) continue;
+      if (out.has(k) || !m.floor[k] || wallBetween(m, cur.x, cur.y, dx, dy)) continue;
       out.add(k);
       const d = m.doors[k];
       // A shut door is seen from the side you are on and goes no further.
@@ -1236,6 +1264,7 @@ export function visibleExplored(map) {
    neither is cut off from the other. */
 function wayBack(shut, pos, start) {
   const sides = ORTHO
+    .filter(([dx, dy]) => !wallBetween(shut, pos.x, pos.y, dx, dy))
     .map(([dx, dy]) => ({ x: pos.x + dx, y: pos.y + dy }))
     .filter((c) => shut.floor[cellKey(c.x, c.y)] && !shut.doors[cellKey(c.x, c.y)]);
   if (sides.length < 2) return null;
@@ -1490,7 +1519,8 @@ export function spreadWarp(map, rng = Math.random) {
       for (const [dx, dy] of ORTHO) {
         const x = c.x + dx, y = c.y + dy;
         const k = cellKey(x, y);
-        if (listed.has(k) || !m.floor[k] || m.doors[k] || hazards[k] === 'warp' || holy.has(k)) continue;
+        if (listed.has(k) || !m.floor[k] || m.doors[k] || hazards[k] === 'warp' || holy.has(k)
+          || wallBetween(m, c.x, c.y, dx, dy)) continue;
         listed.add(k);
         edge.push(k);
       }
@@ -1648,7 +1678,7 @@ export function ventField(map) {
     for (const [dx, dy] of ORTHO) {
       const x = cur.x + dx, y = cur.y + dy;
       const k = cellKey(x, y);
-      if (seen.has(k) || !m.floor[k]) continue;
+      if (seen.has(k) || !m.floor[k] || wallBetween(m, cur.x, cur.y, dx, dy)) continue;
       // A shut door holds the air behind it.
       const door = m.doors[k];
       if (door && doorBlocks(door.state)) continue;
@@ -1756,6 +1786,7 @@ export function playDoor(map, pos, to = null) {
   if (m.viewpoint) {
     const reach = openReach(m, m.viewpoint);
     const sides = [[0, -1], [1, 0], [0, 1], [-1, 0]]
+      .filter(([dx, dy]) => !wallBetween(m, pos.x, pos.y, dx, dy))
       .map(([dx, dy]) => ({ x: pos.x + dx, y: pos.y + dy }))
       .filter((c) => m.floor[cellKey(c.x, c.y)] && !m.doors[cellKey(c.x, c.y)]);
     /* THE PARTY COMES TO THE DOOR, and stops at it.
@@ -1808,6 +1839,7 @@ export function doorsOf(map, listed = null) {
     if (!p || !m.floor[k]) continue;
     const joins = [];
     for (const [dx, dy] of ORTHO) {
+      if (wallBetween(m, p.x, p.y, dx, dy)) continue;
       const i = roomAt.get(cellKey(p.x + dx, p.y + dy));
       if (i !== undefined && !joins.includes(i)) joins.push(i);
     }
@@ -1840,7 +1872,7 @@ export function roomsOf(map) {
       sx += p.x; sy += p.y;
       for (const [dx, dy] of ORTHO) {
         const nk = cellKey(p.x + dx, p.y + dy);
-        if (seen.has(nk) || !m.floor[nk] || m.doors[nk]) continue;
+        if (seen.has(nk) || !m.floor[nk] || m.doors[nk] || wallBetween(m, p.x, p.y, dx, dy)) continue;
         seen.add(nk);
         queue.push(nk);
       }
@@ -2009,13 +2041,23 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   const sw = src.cols, sh = src.rows;
 
   const floor = {}, cover = {}, hazards = {}, doors = {}, markers = {}, ground = {}, obscuring = {}, light = {};
+  const walls = {};
+  const eastOf = (x, y) => x >= 0 && x < sw && Boolean(src.walls[cellKey(x, y)] & WALL_EAST);
+  const southOf = (x, y) => y >= 0 && y < sh && Boolean(src.walls[cellKey(x, y)] & WALL_SOUTH);
   for (let x = 0; x < w; x++) {
     // Which copy this column falls in, and whether that copy is flipped.
-    const lx = (mirror && Math.floor(x / sw) % 2) ? sw - 1 - (x % sw) : x % sw;
+    const flipX = Boolean(mirror && Math.floor(x / sw) % 2);
+    const lx = flipX ? sw - 1 - (x % sw) : x % sw;
     for (let y = 0; y < h; y++) {
-      const ly = (mirror && Math.floor(y / sh) % 2) ? sh - 1 - (y % sh) : y % sh;
+      const flipY = Boolean(mirror && Math.floor(y / sh) % 2);
+      const ly = flipY ? sh - 1 - (y % sh) : y % sh;
       const from = cellKey(lx, ly);
       const to = cellKey(x, y);
+      // A square's east side in a flipped copy is its source's WEST side,
+      // which is kept as the east side of the square before it.
+      const bits = ((flipX ? eastOf(lx - 1, ly) : eastOf(lx, ly)) ? WALL_EAST : 0)
+        | ((flipY ? southOf(lx, ly - 1) : southOf(lx, ly)) ? WALL_SOUTH : 0);
+      if (bits) walls[to] = bits;
       // Each layer is copied on its own rather than gated on the floor: a
       // marker may legitimately sit off the deck, and gating would drop it.
       if (src.floor[from]) floor[to] = true;
@@ -2050,14 +2092,14 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
   return {
     ...src,
     cols: w, rows: h,
-    floor, cover, hazards, doors, markers, ground, obscuring, light,
+    floor, cover, hazards, doors, markers, ground, obscuring, light, walls,
     explored, mapped, contacts, viewpoint, start
   };
 }
 
 /* The layers a GM paints (deck, terrain, cover, hazards, foliage, doors,
    markers, contacts) — the "created map", as opposed to the grid it sits in. */
-const PAINT_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'doors', 'markers', 'contacts', 'light'];
+const PAINT_LAYERS = ['floor', 'ground', 'cover', 'hazards', 'obscuring', 'doors', 'markers', 'contacts', 'light', 'walls'];
 
 /* The smallest box holding everything painted, or null for an empty deck. */
 export function paintBounds(map) {
@@ -2087,17 +2129,20 @@ export function paintBounds(map) {
    A turn that would push the painted area past the edge of the grid (a
    corridor 30 wide cannot stand up in 20 rows) is not made: the map comes
    back unchanged, and rotationFits says so beforehand. */
+/* A deck laid over a picture is not turned: the walls and doors were placed
+   on the picture's own, and turning them would leave them standing in the
+   rooms. */
 export function rotateMap(map, turns = 1) {
   const src = readMap(map);
   const t = quarterCount(turns);
-  if (t === 0) return src;
+  if (t === 0 || src.backdrop) return src;
   return turnContent(src, t) || src;
 }
 
 export function rotationFits(map, turns = 1) {
   const src = readMap(map);
   const t = quarterCount(turns);
-  return t === 0 || turnContent(src, t) !== null;
+  return t === 0 || (!src.backdrop && turnContent(src, t) !== null);
 }
 
 const quarterCount = (turns) => (((Math.round(Number(turns)) || 0) % 4) + 4) % 4;
@@ -2158,6 +2203,34 @@ function turnContent(m, t) {
     markers: move(m.markers, (v) => (v.type === 'turret'
       ? { ...v, facing: (((v.facing || 0) + 2 * t) % 8 + 8) % 8 } : { ...v })),
     contacts: move(m.contacts, (c) => ({ ...c })),
+    /* A thin wall is an EDGE, and turning moves which side of its square it
+       is on: a quarter turn clockwise stands an east side on the south, and
+       a south side becomes the west one — the east side of the square
+       before it. Kept on the square west or north of the edge, as ever. */
+    walls: (() => {
+      const out = {};
+      const add = (x, y, bit) => {
+        if (x < 0 || y < 0 || x >= m.cols || y >= m.rows) return;
+        const k = cellKey(x, y);
+        out[k] = (out[k] || 0) | bit;
+      };
+      for (const [k, v] of Object.entries(m.walls || {})) {
+        const p = parseKey(k);
+        if (!p) continue;
+        const q = at(p.x, p.y);
+        if (v & WALL_EAST) {
+          if (t === 1) add(q.x, q.y, WALL_SOUTH);
+          else if (t === 2) add(q.x - 1, q.y, WALL_EAST);
+          else add(q.x, q.y - 1, WALL_SOUTH);
+        }
+        if (v & WALL_SOUTH) {
+          if (t === 1) add(q.x - 1, q.y, WALL_EAST);
+          else if (t === 2) add(q.x, q.y - 1, WALL_SOUTH);
+          else add(q.x, q.y, WALL_EAST);
+        }
+      }
+      return out;
+    })(),
     viewpoint: vp && inGrid(vp) ? vp : null,
     start: st && inGrid(st) ? st : null
   };
@@ -2206,6 +2279,82 @@ export function cornerPillar(floor, x, y, dx, dy) {
   return !isFloor(floor, x + dx, y)
     || !isFloor(floor, x, y + dy)
     || !isFloor(floor, x + dx, y + dy);
+}
+
+/* ------------------------------ thin walls ------------------------------
+   A wall ON a grid line, between two squares that are both deck (see
+   EMPTY_MAP.walls). Each edge is kept once, by the square west or north of
+   it, so there is one record to agree with rather than two. */
+export const WALL_EAST = 1, WALL_SOUTH = 2;
+
+// Is there a thin wall between a square and the next one along (one step,
+// dx or dy, never both)?
+export function wallBetween(m, x, y, dx, dy) {
+  const w = m && m.walls;
+  if (!w) return false;
+  if (dx === 1) return Boolean(w[x + ',' + y] & WALL_EAST);
+  if (dx === -1) return Boolean(w[(x - 1) + ',' + y] & WALL_EAST);
+  if (dy === 1) return Boolean(w[x + ',' + y] & WALL_SOUTH);
+  if (dy === -1) return Boolean(w[x + ',' + (y - 1)] & WALL_SOUTH);
+  return false;
+}
+
+/* A step from one square to the next on a line, diagonals included. A
+   diagonal step gets past only if one of the two ways round the corner is
+   open: a wall on each of two sides of a corner seals it, as it would a
+   doorway. */
+export function stepBlocked(m, from, to) {
+  const dx = Math.sign(to.x - from.x), dy = Math.sign(to.y - from.y);
+  if (!dx && !dy) return false;
+  if (!dy) return wallBetween(m, from.x, from.y, dx, 0);
+  if (!dx) return wallBetween(m, from.x, from.y, 0, dy);
+  const viaX = wallBetween(m, from.x, from.y, dx, 0) || wallBetween(m, from.x + dx, from.y, 0, dy);
+  const viaY = wallBetween(m, from.x, from.y, 0, dy) || wallBetween(m, from.x, from.y + dy, dx, 0);
+  return viaX && viaY;
+}
+
+/* The edge nearest a point given in squares, fractions and all: the one a
+   click lands on. Returned the way it is stored, as a square and its east or
+   south side, or null for the outer edge of the grid's top or left. */
+export function edgeNear(fx, fy) {
+  const x = Math.floor(fx), y = Math.floor(fy);
+  const ox = fx - x, oy = fy - y;
+  const side = [[ox, 'W'], [1 - ox, 'E'], [oy, 'N'], [1 - oy, 'S']].sort((a, b) => a[0] - b[0])[0][1];
+  const e = side === 'E' ? { x, y, bit: WALL_EAST }
+    : side === 'W' ? { x: x - 1, y, bit: WALL_EAST }
+      : side === 'S' ? { x, y, bit: WALL_SOUTH }
+        : { x, y: y - 1, bit: WALL_SOUTH };
+  return e.x < 0 || e.y < 0 ? null : e;
+}
+
+export const hasWall = (walls, e) => Boolean(e && walls && (walls[cellKey(e.x, e.y)] & e.bit));
+
+// The walls with one edge put up or taken down.
+export function setWall(walls, e, on = true) {
+  const next = { ...(walls || {}) };
+  if (!e) return next;
+  const k = cellKey(e.x, e.y);
+  const bits = on ? (next[k] || 0) | e.bit : (next[k] || 0) & ~e.bit;
+  if (bits) next[k] = bits; else delete next[k];
+  return next;
+}
+
+// Every thin wall round these squares, gone: erasing a square takes the walls
+// on all four of its sides with it, or the deck keeps a wall edging nothing.
+export function clearWallsAround(walls, cells) {
+  const next = { ...(walls || {}) };
+  const drop = (x, y, bit) => {
+    const k = cellKey(x, y);
+    if (!next[k]) return;
+    const b = next[k] & ~bit;
+    if (b) next[k] = b; else delete next[k];
+  };
+  for (const c of cells || []) {
+    drop(c.x, c.y, WALL_EAST | WALL_SOUTH);
+    drop(c.x - 1, c.y, WALL_EAST);
+    drop(c.x, c.y - 1, WALL_SOUTH);
+  }
+  return next;
 }
 
 /* The painted extent of the deck, for centring and for export. Null when
@@ -2279,12 +2428,20 @@ function walkLine(m, from, to, { sight = true } = {}) {
   const metresPerStep = (distanceSquares(from, to) / steps) * (m.metresPerSquare || 1);
   let through = 0;
   let limit = Infinity;
+  // A thin wall stands between two squares, not on one, so it is found by
+  // looking at each step from one square to the next.
+  const thin = !isEmpty(m.walls);
+  let prev = { x: from.x, y: from.y };
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     const x = Math.round(from.x + (to.x - from.x) * t);
     const y = Math.round(from.y + (to.y - from.y) * t);
     const isTarget = x === to.x && y === to.y;
     const k = cellKey(x, y);
+    if (thin && (x !== prev.x || y !== prev.y)) {
+      if (stepBlocked(m, prev, { x, y })) return { x, y, reason: 'wall' };
+      prev = { x, y };
+    }
     if (hasObscuring && !(x === from.x && y === from.y)) {
       // The target's own square counts: something crouched in the reeds is
       // hidden by them. The firer's own square does not.

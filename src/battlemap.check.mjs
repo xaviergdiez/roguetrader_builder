@@ -2609,3 +2609,74 @@ console.log('battlemap.check.mjs: starting room and play doors passed');
   assert.ok(bigRooms.length >= 10);
 }
 console.log('battlemap.check.mjs: play lists passed');
+
+/* ---- thin walls: a wall on a grid line, between two squares of deck ---- */
+{
+  const { WALL_EAST, WALL_SOUTH, wallBetween, stepBlocked, edgeNear, hasWall, setWall, clearWallsAround } = await import('./battlemap.js');
+  // Two rooms side by side, 4x3 each, all deck, with a thin wall between them
+  // down the line x=4 and a door at (3,1) on the west side of the doorway.
+  const floor = {};
+  for (let x = 0; x < 8; x++) for (let y = 0; y < 3; y++) floor[cellKey(x, y)] = true;
+  let walls = {};
+  for (const y of [0, 2]) walls = setWall(walls, { x: 3, y, bit: WALL_EAST }, true);
+  const m = readMap({ cols: 8, rows: 3, floor, walls, doors: { '3,1': { kind: 'bulkhead', state: 'closed' } } });
+  assert.deepEqual(m.walls, { '3,0': WALL_EAST, '3,2': WALL_EAST });
+  assert.equal(wallBetween(m, 3, 0, 1, 0), true);
+  assert.equal(wallBetween(m, 4, 0, -1, 0), true, 'seen from either side');
+  assert.equal(wallBetween(m, 3, 1, 1, 0), false, 'the doorway is open');
+  assert.equal(wallBetween(m, 3, 0, 0, 1), false);
+  // The fog's rooms stop at a thin wall as they do at void.
+  const west = regionAt(m, { x: 0, y: 0 });
+  assert.ok(west.some((c) => c.x === 3 && c.y === 1), 'the door is the room’s edge');
+  assert.ok(!west.some((c) => c.x >= 4), 'nothing beyond the wall');
+  const east = regionAt(m, { x: 6, y: 1 });
+  assert.ok(east.some((c) => c.x === 3 && c.y === 1), 'the door belongs to both rooms');
+  assert.ok(!east.some((c) => c.x < 3));
+  assert.equal(roomsOf(m).length, 2);
+  // Sight and blasts stop at it.
+  assert.equal(lineBlocked(m, { x: 2, y: 0 }, { x: 5, y: 0 }).reason, 'wall');
+  assert.equal(lineBlocked(m, { x: 2, y: 2 }, { x: 3, y: 2 }), null);
+  assert.equal(unobstructed(m, { x: 2, y: 0 }, [{ x: 5, y: 0 }]).length, 0);
+  // Opening the door lets the eye through, and the party sees the far room.
+  const opened = readMap({ ...m, doors: { '3,1': { kind: 'bulkhead', state: 'open' } } });
+  assert.equal(lineBlocked(opened, { x: 1, y: 1 }, { x: 6, y: 1 }), null);
+  assert.ok(openReach(opened, { x: 0, y: 0 }).has('6,1'));
+  assert.ok(!openReach(m, { x: 0, y: 0 }).has('6,1'), 'shut, it does not');
+  // A diagonal step through a corner sealed on both sides is blocked; one way round open is not.
+  const corner = readMap({ cols: 4, rows: 4, floor, walls: { '1,1': WALL_EAST | WALL_SOUTH, '2,1': WALL_SOUTH } });
+  assert.equal(stepBlocked(corner, { x: 1, y: 1 }, { x: 2, y: 2 }), true);
+  assert.equal(stepBlocked(corner, { x: 1, y: 1 }, { x: 0, y: 2 }), false);
+  // Edges by pointer: nearest side, kept on the west or north square.
+  assert.deepEqual(edgeNear(3.95, 0.5), { x: 3, y: 0, bit: WALL_EAST });
+  assert.deepEqual(edgeNear(4.05, 0.5), { x: 3, y: 0, bit: WALL_EAST });
+  assert.deepEqual(edgeNear(2.5, 1.97), { x: 2, y: 1, bit: WALL_SOUTH });
+  assert.deepEqual(edgeNear(2.5, 2.04), { x: 2, y: 1, bit: WALL_SOUTH });
+  assert.equal(edgeNear(0.02, 0.5), null, 'the grid’s own west edge');
+  assert.equal(hasWall(m.walls, { x: 3, y: 0, bit: WALL_EAST }), true);
+  assert.deepEqual(setWall(m.walls, { x: 3, y: 0, bit: WALL_EAST }, false), { '3,2': WALL_EAST });
+  // Erasing a square takes the walls on all four of its sides.
+  assert.deepEqual(clearWallsAround({ '3,0': 3, '2,1': 1, '3,1': 2, '9,9': 1 }, [{ x: 3, y: 1 }]),
+    { '3,0': WALL_EAST, '9,9': WALL_EAST });
+  // Kept through storage, even a deck's worth of them.
+  const many = {};
+  for (let x = 0; x < 100; x++) many[cellKey(x, 5)] = WALL_SOUTH;
+  assert.deepEqual(readMap(packMap(readMap({ cols: 120, rows: 20, walls: many }))).walls, many);
+  assert.deepEqual(readMap({ walls: { '1,1': 7, '2,2': 0, 'x': 1 } }).walls, { '1,1': 3 }, 'only the two sides, only real squares');
+  // Turned with the deck: four quarter turns are no turn at all, and one
+  // stands an east side on the south.
+  const room = readMap({ cols: 10, rows: 10, floor: { '2,2': true, '3,2': true, '2,3': true, '3,3': true }, walls: { '2,2': WALL_EAST } });
+  let turned = room;
+  for (let i = 0; i < 4; i++) turned = rotateMap(turned, 1);
+  assert.deepEqual(turned.walls, room.walls);
+  const once = rotateMap(room, 1);
+  const [k, bits] = Object.entries(once.walls)[0];
+  assert.equal(bits, WALL_SOUTH, 'a wall between two squares side by side now stands between two squares one above the other');
+  const p = parseKey(k);
+  assert.ok(once.floor[k] && once.floor[cellKey(p.x, p.y + 1)]);
+  assert.deepEqual(rotateMap(rotateMap(room, 1), -1).walls, room.walls);
+  // Expanded with the deck, mirrored at the seam.
+  const grown = expandMap(readMap({ cols: 5, rows: 5, floor: { '0,0': true, '1,0': true }, walls: { '0,0': WALL_EAST } }), 10, 5);
+  assert.equal(grown.walls['0,0'], WALL_EAST);
+  assert.equal(grown.walls['8,0'], WALL_EAST, 'the flipped copy has it between its own two squares');
+}
+console.log('battlemap.check.mjs: thin walls passed');

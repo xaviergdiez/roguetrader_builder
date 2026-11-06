@@ -57,6 +57,7 @@
 import { makeRng } from './mapgen.js';
 import { rangeBand } from './voidcombat.js';
 import { packCombat } from './battlemap.js';
+import { readBackdrop } from './backdrop.js';
 
 /* ------------------------------ sizes ------------------------------ */
 
@@ -266,6 +267,70 @@ function readArcs(raw) {
   return out;
 }
 
+/* ------------------------------ things that move by themselves ------------------------------
+   A field or a body may have a COURSE: how far it moves each turn, [across,
+   down] in VU, carried out when the turn ends (voidturn.js). An asteroid
+   swarm tumbling through the fight, a debris field spreading, a hulk adrift.
+   The table sees where it will be next turn and the turn after, and plans
+   around it.
+
+   And a STRIKE: what it does to a ship it passes over, as dice. HOUSE: Rogue
+   Trader prices no collision with a drifting rock, so the GM writes it on the
+   thing: 2d10, armour applying, is a hard knock from a tumbling asteroid. */
+export const MAX_COURSE = 20;
+export const STRIKE_DICE = [5, 10];
+
+export function readCourse(v) {
+  if (!Array.isArray(v) || v.length !== 2) return null;
+  const c = [round1(clamp(num(v[0]), -MAX_COURSE, MAX_COURSE)), round1(clamp(num(v[1]), -MAX_COURSE, MAX_COURSE))];
+  return c[0] || c[1] ? c : null;
+}
+
+export function readStrike(v) {
+  if (!v || typeof v !== 'object') return null;
+  const n = clamp(Math.round(num(v.n, 1)), 1, 6);
+  const d = STRIKE_DICE.includes(Math.round(num(v.d))) ? Math.round(num(v.d)) : 10;
+  return { n, d, bonus: clamp(Math.round(num(v.bonus)), 0, 30), armour: v.armour !== false };
+}
+
+/* ------------------------------ void triggers ------------------------------
+   A zone on the chart that does something: a minefield, a sensor buoy, the
+   spot where the pirates wait behind a moon. Unlike the boarding map's, these
+   can see the ships, because the ships are tokens here: one fires when a ship
+   of the sides it watches is moved into it, or when the chart reaches a turn,
+   or by the GM's hand. What it does is in voidturn.js. GM-only: the table's
+   copy of the chart never carries one. */
+export const VOID_TRIGGER_WHEN = [
+  { id: 'enter', name: 'When a ship moves into it' },
+  { id: 'turn', name: 'When a turn ends' }
+];
+export const MAX_VOID_TRIGGERS = 30;
+
+export function readVoidTrigger(t) {
+  if (!t || typeof t !== 'object') return null;
+  const id = str(t.id, 24);
+  if (!id) return null;
+  const sides = (Array.isArray(t.sides) ? t.sides : ['player']).filter((x) => SIDES.includes(x));
+  return {
+    id,
+    name: str(t.name, 40),
+    x: round2(clamp(num(t.x), -MAX_VOID, MAX_VOID * 2)),
+    y: round2(clamp(num(t.y), -MAX_VOID, MAX_VOID * 2)),
+    r: round2(clamp(num(t.r, 4), 0.5, 60)),
+    when: VOID_TRIGGER_WHEN.some((w) => w.id === t.when) ? t.when : 'enter',
+    sides: sides.length ? [...new Set(sides)] : ['player'],
+    // For a turn trigger: the turn it goes off at the end of, or 0 for every turn.
+    turn: clamp(Math.round(num(t.turn)), 0, 999),
+    armed: t.armed !== false,
+    once: t.once !== false,
+    note: str(t.note, 600),
+    reveal: Boolean(t.reveal),
+    strike: readStrike(t.strike),
+    cue: typeof t.cue === 'string' && /^[a-z0-9][a-z0-9-]{0,47}$/i.test(t.cue) ? t.cue : '',
+    handout: typeof t.handout === 'string' && /^h[a-z0-9]{4,40}$/.test(t.handout) ? t.handout : ''
+  };
+}
+
 /* ------------------------------ reading a map ------------------------------ */
 
 function readStar(s) {
@@ -299,7 +364,9 @@ function readBody(b) {
     // long axis, a station's spokes, the tilt of a giant's bands.
     rot: Math.round(norm360(num(b.rot))),
     note: str(b.note, 300),
-    state: STATES.includes(b.state) ? b.state : 'seen'
+    state: STATES.includes(b.state) ? b.state : 'seen',
+    course: readCourse(b.course),
+    strike: readStrike(b.strike)
   };
 }
 
@@ -323,7 +390,9 @@ function readField(f) {
     // A band's direction is its two ends; a round field's `rot` only turns the
     // rocks or the wisps drawn inside it.
     rot: shape === 'band' ? 0 : Math.round(norm360(num(f.rot))),
-    state: STATES.includes(f.state) ? f.state : 'seen'
+    state: STATES.includes(f.state) ? f.state : 'seen',
+    course: readCourse(f.course),
+    strike: readStrike(f.strike)
   };
   if (shape === 'band') {
     out.x2 = round2(clamp(num(f.x2, out.x + 10), -MAX_VOID, MAX_VOID * 2));
@@ -393,7 +462,14 @@ export const EMPTY_VOID = Object.freeze({
   v: 1, name: 'Void scene', cols: 64, rows: 40, seed: '',
   mmPerSquare: 25, pxPerSquare: 18, grid: true, minis: true,
   source: null, glow: 0.6,
-  stars: [], bodies: [], fields: [], hazards: [], ships: [], overlays: []
+  stars: [], bodies: [], fields: [], hazards: [], ships: [], overlays: [],
+  // The chart's own count of turns, kept by voidturn.js as each turn ends.
+  turn: 0,
+  triggers: [],
+  // A picture or a looping video under the chart, in VU (backdrop.js).
+  backdrop: null,
+  // Rocks turning, clouds drifting, the riptide running, the star breathing.
+  motion: true
 });
 
 /* Anything absent is defaulted rather than trusted, the same way readMap
@@ -431,7 +507,11 @@ export function readVoidMap(m) {
     fields: list(src.fields, readField, MAX_FIELDS),
     hazards: list(src.hazards, readHazard, 8),
     ships: list(src.ships, readShip, MAX_SHIPS),
-    overlays: list(src.overlays, readOverlay, MAX_OVERLAYS)
+    overlays: list(src.overlays, readOverlay, MAX_OVERLAYS),
+    turn: clamp(Math.round(num(src.turn)), 0, 9999),
+    triggers: list(src.triggers, readVoidTrigger, MAX_VOID_TRIGGERS),
+    backdrop: readBackdrop(src.backdrop),
+    motion: src.motion !== false
   };
 }
 
@@ -1116,7 +1196,8 @@ export function rotateScene(map, turns = 1) {
       ...m,
       cols: m.rows, rows: m.cols,
       stars: m.stars.map((s) => ({ ...s, ...at(s) })),
-      bodies: m.bodies.map((b) => ({ ...b, ...at(b), rot: norm360(b.rot + 90) })),
+      bodies: m.bodies.map((b) => ({ ...b, ...at(b), rot: norm360(b.rot + 90),
+        course: b.course ? [-b.course[1], b.course[0]] : null })),
       fields: m.fields.map((f) => {
         const out = { ...f, ...at(f) };
         if (f.shape === 'band') {
@@ -1126,9 +1207,11 @@ export function rotateScene(map, turns = 1) {
           out.rot = norm360(f.rot + 90);
         }
         if (f.drift) out.drift = [-f.drift[1], f.drift[0]];
+        if (f.course) out.course = [-f.course[1], f.course[0]];
         return out;
       }),
-      ships: m.ships.map((s) => ({ ...s, ...at(s), heading: norm360(s.heading + 90) }))
+      ships: m.ships.map((s) => ({ ...s, ...at(s), heading: norm360(s.heading + 90) })),
+      triggers: m.triggers.map((t) => ({ ...t, ...at(t) }))
     });
   }
   return m;
@@ -1281,7 +1364,11 @@ export function redactVoidForTable(map) {
     overlays: m.overlays.filter((o) => {
       const ship = m.ships.find((s) => s.id === o.shipId);
       return ship && ship.state === 'seen';
-    })
+    }),
+    // The GM's traps are the GM's, and the picture under the chart is a file
+    // on the GM's computer that no player's browser could open.
+    triggers: [],
+    backdrop: null
   };
 }
 

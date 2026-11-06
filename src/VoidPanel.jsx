@@ -17,7 +17,9 @@ import {
 
 export default function VoidPanel({
   voidState, onVoidState, roster, system, setSystem, onWindow, windowOpen, windowErr, onUseShot,
-  library = null, gunnery = null, sharedTools = null, controls = false, setControls = () => {}
+  library = null, gunnery = null, sharedTools = null, controls = false, setControls = () => {},
+  // The fight on the chart and its traps: see VoidMap's own props.
+  chartProps = {}
 }) {
   const state = voidState || {};
   const map = state.map ? readVoidMap(state.map) : null;
@@ -214,13 +216,13 @@ export default function VoidPanel({
         {controls && (
           <VoidMap controlsOnly shared={sharedTools} map={map} onChange={(next) => write({ map: next })}
             fleet={roster} historyKey={`${state.chartId || '-'}|${map.seed}`} onUseShot={onUseShot}
-            gunnery={gunnery} library={library} />
+            gunnery={gunnery} library={library} {...chartProps} />
         )}
       </>) : (
         <VoidMap map={map} onChange={(next) => write({ map: next })} fleet={roster}
           shared={sharedTools}
           historyKey={`${state.chartId || '-'}|${map.seed}`} onUseShot={onUseShot}
-          gunnery={gunnery} library={library} />
+          gunnery={gunnery} library={library} {...chartProps} />
       )}
     </>
   );

@@ -5,8 +5,16 @@ import {
   readVoidMap, BODY_KINDS, FIELD_KINDS, SIDES, STATES, newVoidId,
   reach, moveCheck, moveShip, turnShip, snapToSquare, distanceVU, bearing,
   inField, applyDrift, arcWedges, weaponsBearing, ARC_SLOTS, ARC_DEFAULTS, MIN_ARC,
-  rotateThing, rotateScene, clearChart, removeThing, togglePins, togglePin, isPinned, overlayWedges
+  rotateThing, rotateScene, clearChart, removeThing, togglePins, togglePin, isPinned, overlayWedges,
+  VOID_TRIGGER_WHEN, STRIKE_DICE, readStrike
 } from './voidmap.js';
+import { springVoidEnter, springVoidNow, courseAhead, strikesAhead, strikeText, moversOf } from './voidturn.js';
+import { readBackdrop, newBackdropId, backdropKindOf } from './backdrop.js';
+import { putLocalFile } from './localfiles.js';
+import useBackdropMedia from './useBackdropMedia.js';
+import { runFrames } from './gsapcdn.js';
+import { MOTION_FRAME_MS, VIDEO_FRAME_MS } from './motion.js';
+import { measureMedia } from './measureMedia.js';
 
 /* The void chart: a star system's fight laid out in Void Units.
 
@@ -44,7 +52,10 @@ const ICONS = {
   allArcs: <><path d="M12 14L7 6a9 9 0 0110 0z" /><path d="M12 14l-7 4M12 14l7 4" /><circle cx="12" cy="14" r="1.5" fill="currentColor" /></>,
   base: <><circle cx="12" cy="14" r="6" /><path d="M12 14V3M9 6l3-3 3 3" /></>,
   turnLeft: <><path d="M3 4v6h6" /><path d="M5.5 15a8 8 0 105-9.5L3 10" /></>,
-  turnRight: <><path d="M21 4v6h-6" /><path d="M18.5 15a8 8 0 11-5-9.5L21 10" /></>
+  turnRight: <><path d="M21 4v6h-6" /><path d="M18.5 15a8 8 0 11-5-9.5L21 10" /></>,
+  trigger: <><circle cx="12" cy="12" r="8" strokeDasharray="3 2.5" /><path d="M12 8v5M12 16v.5" /></>,
+  picture: <><rect x="3" y="5" width="18" height="14" /><path d="M3 16l5-5 4 4 3-3 6 6" /><circle cx="16" cy="9" r="1.5" /></>,
+  motion: <><path d="M3 12c3-6 6 6 9 0s6 6 9 0" /></>
 };
 
 function Ico({ name, size = 18 }) {
@@ -287,14 +298,17 @@ function fieldPoint(f, s) {
   return { x: f.x + Math.cos(t) * f.r * s.d, y: f.y + Math.sin(t) * f.r * s.d };
 }
 
-function drawField(ctx, f, bits, scale, sel, map) {
+/* `t` is the time in seconds when the chart moves (map.motion), else 0: a
+   cloud turns slowly, rocks tumble round a cluster or run along a belt, and a
+   riptide's chevrons flow the way it carries a hull. */
+function drawField(ctx, f, bits, scale, sel, map, t = 0) {
   const lw = 1 / scale;
   ctx.save();
   const faint = f.state === 'hidden' ? 0.55 : 1;
   ctx.globalAlpha = faint;
   if (f.kind === 'dust_cloud' || f.kind === 'nebula') {
     const tint = f.kind === 'nebula' ? '#a58fd6' : '#b09a78';
-    const turn = ((f.rot || 0) * Math.PI) / 180;
+    const turn = ((f.rot || 0) * Math.PI) / 180 + t * 0.025;
     for (const s of bits || []) {
       const cx = f.x + Math.cos(s.a + turn) * f.r * s.d * 0.7;
       const cy = f.y + Math.sin(s.a + turn) * f.r * s.d * 0.7;
@@ -315,9 +329,12 @@ function drawField(ctx, f, bits, scale, sel, map) {
     const dir = f.drift ? Math.atan2(f.drift[1], f.drift[0]) : Math.atan2(dy, dx);
     ctx.strokeStyle = 'rgba(140,190,255,0.5)'; ctx.lineWidth = lw * 1.5;
     const step = 5;
-    for (let t = 2; t < len; t += step) {
-      const cx = f.x + (dx / len) * t;
-      const cy = f.y + (dy / len) * t;
+    // Flowing along the band when the chart moves.
+    const flow = t ? ((t * 1.6) % step) * (Math.cos(dir) * dx + Math.sin(dir) * dy >= 0 ? 1 : -1) : 0;
+    for (let k = 2; k < len + step; k += step) {
+      const along = ((k + flow) % len + len) % len;
+      const cx = f.x + (dx / len) * along;
+      const cy = f.y + (dy / len) * along;
       if (cx < -2 || cy < -2 || cx > map.cols + 2 || cy > map.rows + 2) continue;
       const s = Math.min(1.1, f.w * 0.12);
       ctx.beginPath();
@@ -329,7 +346,10 @@ function drawField(ctx, f, bits, scale, sel, map) {
   } else {
     fieldPath(ctx, f);
     ctx.fillStyle = 'rgba(130,118,100,0.07)'; ctx.fill();
-    for (const s of bits || []) {
+    // Rocks tumbling: round a cluster, along a belt.
+    const spin = t * 0.02;
+    for (const s0 of bits || []) {
+      const s = !t ? s0 : f.shape === 'band' ? { ...s0, u: (s0.u + t * 0.004) % 1 } : { ...s0, a: s0.a + spin * (0.6 + s0.d) };
       const p = fieldPoint(f, s);
       if (p.x < -1 || p.y < -1 || p.x > map.cols + 1 || p.y > map.rows + 1) continue;
       polygon(ctx, p.x, p.y, s.s, s.sides, `${f.id}|${s.a}`, 0.35);
@@ -464,6 +484,11 @@ function drawWedges(ctx, pos, wedges, scale, mode, labels) {
 
 function draw(ctx, env) {
   const { map, scale, off, w, h, sel, scenery, target, live, measure, fleetInfo, grid, wells, readOnly, dpr } = env;
+  // The time, when the chart moves; the picture under it, decoded; what the
+  // table is warned of; and whether the GM's zones show here.
+  const t = env.t || 0;
+  const media = env.media || null;
+  const ahead = env.ahead || [];
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#03050a';
   ctx.fillRect(0, 0, w, h);
@@ -478,10 +503,17 @@ function draw(ctx, env) {
   bg.addColorStop(0, '#050811'); bg.addColorStop(1, '#070b16');
   ctx.fillStyle = bg; ctx.fillRect(0, 0, map.cols, map.rows);
 
+  // A picture or a looping video under everything, where the GM laid it.
+  if (media && map.backdrop) {
+    const b = map.backdrop;
+    try { ctx.drawImage(media.el, b.x, b.y, b.w, b.h); } catch { /* not decoded yet */ }
+  }
+
   // The star's light first, so everything else sits in it: a corona that falls
   // away with distance, and under it a limb-darkened disc.
   for (const star of map.stars) {
-    const R = star.r * 6;
+    // The corona breathes when the chart moves.
+    const R = star.r * 6 * (t ? 1 + 0.05 * Math.sin(t * 0.7) : 1);
     const a = Math.max(0.15, map.glow);
     const g = ctx.createRadialGradient(star.x, star.y, star.r * 0.9, star.x, star.y, R);
     g.addColorStop(0, rgba(star.colour, 0.55 * a));
@@ -509,11 +541,50 @@ function draw(ctx, env) {
   const weather = map.hazards.reduce((n, hz) => n + hz.intensity, 0);
   if (weather) {
     const rad = map.hazards.some((x) => x.id === 'radiation_bursts');
-    ctx.fillStyle = rad ? `rgba(110,255,130,${Math.min(0.09, 0.025 * weather)})` : `rgba(255,170,90,${Math.min(0.09, 0.025 * weather)})`;
+    // A flare's light comes and goes when the chart moves.
+    const pulse = t ? 0.6 + 0.4 * Math.abs(Math.sin(t * 0.9)) : 1;
+    const alpha = Math.min(0.09, 0.025 * weather) * pulse;
+    ctx.fillStyle = rad ? `rgba(110,255,130,${alpha})` : `rgba(255,170,90,${alpha})`;
     ctx.fillRect(0, 0, map.cols, map.rows);
   }
 
-  for (const f of map.fields) drawField(ctx, f, scenery.fields[f.id], scale, sel && sel.type === 'field' && sel.id === f.id, map);
+  for (const f of map.fields) drawField(ctx, f, scenery.fields[f.id], scale, sel && sel.type === 'field' && sel.id === f.id, map, t);
+
+  /* WHERE THE MOVERS ARE GOING: each one's next three turns, fainter the
+     further off, and a line along its course, so the table can plan around a
+     swarm before it arrives. A hidden one shows only on the GM's chart. */
+  for (const mv of moversOf(map)) {
+    const th = mv.thing;
+    if (th.state === 'hidden' && readOnly) continue;
+    const ghosts = courseAhead(th, 3);
+    const pulse = t ? 0.75 + 0.25 * Math.sin(t * 2.2) : 1;
+    ctx.save();
+    ctx.setLineDash([4 * lw, 4 * lw]);
+    ghosts.forEach((g, i) => {
+      const a = (0.55 - i * 0.14) * pulse;
+      ctx.strokeStyle = th.strike ? `rgba(255,120,90,${a})` : `rgba(170,200,255,${a})`;
+      ctx.lineWidth = lw * 1.3;
+      if (mv.type === 'field') fieldPath(ctx, g);
+      else { ctx.beginPath(); ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2); }
+      ctx.stroke();
+    });
+    ctx.setLineDash([]);
+    const last = ghosts[ghosts.length - 1];
+    const from = mv.type === 'field' && th.shape === 'band' ? { x: (th.x + th.x2) / 2, y: (th.y + th.y2) / 2 } : th;
+    const to = mv.type === 'field' && last.shape === 'band' ? { x: (last.x + last.x2) / 2, y: (last.y + last.y2) / 2 } : last;
+    ctx.strokeStyle = th.strike ? 'rgba(255,140,100,0.8)' : 'rgba(170,200,255,0.75)';
+    ctx.lineWidth = lw * 1.6;
+    ctx.beginPath(); ctx.moveTo(from.x, from.y); ctx.lineTo(to.x, to.y); ctx.stroke();
+    const ang = Math.atan2(to.y - from.y, to.x - from.x);
+    const hd = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(to.x, to.y);
+    ctx.lineTo(to.x - Math.cos(ang - 0.45) * hd, to.y - Math.sin(ang - 0.45) * hd);
+    ctx.moveTo(to.x, to.y);
+    ctx.lineTo(to.x - Math.cos(ang + 0.45) * hd, to.y - Math.sin(ang + 0.45) * hd);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // Gravity wells, dashed, under the bodies.
   if (wells) {
@@ -611,6 +682,54 @@ function draw(ctx, env) {
     }
   }
 
+  // A ship in a mover's path, ringed: struck if it holds still.
+  for (const a of ahead) {
+    const s = map.ships.find((x) => x.id === a.shipId);
+    if (!s) continue;
+    const r = Math.max(hullLength(s.cls) * 0.75, 14 / scale);
+    ctx.save();
+    ctx.setLineDash([3 * lw, 3 * lw]);
+    ctx.strokeStyle = a.inTurns === 1 ? 'rgba(255,80,60,0.95)' : 'rgba(255,150,90,0.8)';
+    ctx.lineWidth = lw * (a.inTurns === 1 ? 2.2 : 1.6);
+    ctx.beginPath(); ctx.arc(s.x, s.y, r * (t ? 1 + 0.06 * Math.sin(t * 4) : 1), 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  // The GM's zones, where they may be seen.
+  if (env.zones) {
+    for (const z of map.triggers) {
+      const on = sel && sel.type === 'trigger' && sel.id === z.id;
+      ctx.save();
+      ctx.fillStyle = z.armed ? `rgba(168,85,247,${on ? 0.18 : 0.08})` : 'rgba(140,140,150,0.06)';
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.fill();
+      ctx.setLineDash([5 * lw, 3 * lw]);
+      ctx.strokeStyle = z.armed ? 'rgba(200,140,255,0.9)' : 'rgba(170,170,180,0.55)';
+      ctx.lineWidth = lw * (on ? 2 : 1.3);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (on && !readOnly) {
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(z.x + z.r, z.y, 4 / scale, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+  // The picture being placed: its edge, and the corner that sizes it.
+  if (env.placing && map.backdrop) {
+    const b = map.backdrop;
+    ctx.save();
+    ctx.setLineDash([6 * lw, 4 * lw]);
+    ctx.strokeStyle = 'rgba(243,201,110,0.95)';
+    ctx.lineWidth = lw * 2;
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.setLineDash([]);
+    const hs = 10 / scale;
+    ctx.fillStyle = 'rgba(243,201,110,0.95)';
+    ctx.fillRect(b.x + b.w - hs / 2, b.y + b.h - hs / 2, hs, hs);
+    ctx.restore();
+  }
+
   // Ships, over everything.
   for (const s of map.ships) {
     const isSel = selShip && s.id === selShip.id;
@@ -698,6 +817,19 @@ function draw(ctx, env) {
     ctx.fillText(s.state === 'ping' ? '?' : s.name, px, py);
   }
   for (const [x, y, text, colour] of labels) ringLabel(ctx, scale, off, x, y, text, colour);
+  for (const a of ahead) {
+    const s = map.ships.find((x) => x.id === a.shipId);
+    if (!s) continue;
+    ringLabel(ctx, scale, off, s.x, s.y - Math.max(hullLength(s.cls) * 0.75, 14 / scale) - 10 / scale,
+      a.inTurns === 1 ? `${a.by}: struck next turn` : `${a.by}: struck in ${a.inTurns} turns`,
+      a.inTurns === 1 ? 'rgba(255,110,90,0.98)' : 'rgba(255,170,120,0.95)');
+  }
+  if (env.zones) {
+    for (const z of map.triggers) {
+      ringLabel(ctx, scale, off, z.x, z.y - z.r, `${z.name || 'Trigger'}${z.armed ? '' : ' \u2713'}`,
+        z.armed ? 'rgba(220,190,255,0.98)' : 'rgba(190,190,200,0.85)');
+    }
+  }
 
   if (measure) {
     const d = distanceVU(measure.a, measure.b);
@@ -726,7 +858,11 @@ export default function VoidMap({
   /* { tool, setTool } when the owner holds the selection, so the panel and
      the chart it drives agree on what is in hand. Two copies with a tool each
      would make the panel a dead thing. */
-  shared = null
+  shared = null,
+  /* The fight on the chart: the phase it is in, moving it on (which ends the
+     chart's turn when it wraps: voidturn.js), and what to do when a trap here
+     goes off, with the sounds and handouts one may set off. */
+  phase = null, onAdvance = null, onTriggers = null, cues = [], handouts = []
 }) {
   const map = useMemo(() => readVoidMap(rawMap), [rawMap]);
   const w = win || window;
@@ -760,6 +896,16 @@ export default function VoidMap({
   const drag = useRef(null);
   const hist = useRef({ past: [], future: [], key: null, at: 0, owner: historyKey });
   const [, bump] = useState(0);
+  // The picture under the chart (backdrop.js), and placing it by hand.
+  const [picOpen, setPicOpen] = useState(false);
+  const [picNote, setPicNote] = useState('');
+  const picFileRef = useRef(null);
+  const relinkRef = useRef(null);
+  const reducedMotion = useMemo(
+    () => Boolean(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches), [w]);
+  const media = useBackdropMedia(map.backdrop, { win, probeOnly: controlsOnly, reducedMotion });
+  // What the table is warned of: ships in a mover's path.
+  const ahead = useMemo(() => strikesAhead(map, 3), [map]);
 
   const fleetInfo = useMemo(() => {
     const out = {};
@@ -786,7 +932,22 @@ export default function VoidMap({
       h.future = [];
     }
     h.key = key; h.at = now;
-    onChange(readVoidMap(next));
+    // A ship moved into a zone watching for it sets the zone off, in the same
+    // write: one undo takes back the move and the trap together.
+    let out = readVoidMap(next);
+    const sprung = springVoidEnter(map, out);
+    if (sprung.fired.length) out = sprung.map;
+    onChange(out);
+    if (sprung.fired.length) announce(sprung.fired);
+  };
+  /* A trap went off: its dice on the hulls it caught, through the gunnery so
+     the hull and the log are the fight's own; and the rest (a sound, a
+     handout, the GM's note) to the owner. */
+  const announce = (fired) => {
+    const hits = fired.filter((f) => f.strike).flatMap((f) => f.shipIds.map((id, i) => ({
+      shipId: id, name: f.shipNames[i], why: `caught by ${f.name || 'a trap'}`, strike: f.strike })));
+    if (hits.length && gunnery && gunnery.strikeShips) gunnery.strikeShips(hits);
+    if (onTriggers) onTriggers(fired);
   };
   const undo = () => {
     const h = hist.current;
@@ -885,8 +1046,19 @@ export default function VoidMap({
     if (first) setWeaponIx(first.index);
   };
 
-  /* ---- drawing ---- */
-  useLayoutEffect(() => {
+  /* ---- drawing ----
+     After every render, and on a frame loop while anything moves: the chart's
+     own motion (map.motion), or a video under it. The loop calls the drawing
+     straight, not through React. */
+  const videoUp = media.state === 'ready' && Boolean(map.backdrop) && map.backdrop.kind === 'video';
+  const moves = map.motion && !reducedMotion;
+  const animating = !controlsOnly && !reducedMotion && (videoUp
+    || (map.motion && (map.fields.length > 0 || map.stars.length > 0 || map.hazards.length > 0 || ahead.length > 0)));
+  // The GM's zones: always on the GM's own chart, and on the table's screen
+  // only while the GM is working with them.
+  const showZones = !readOnly && (!win || tool === 'trigger' || (sel && sel.type === 'trigger'));
+  const redrawRef = useRef(() => {});
+  redrawRef.current = () => {
     const canvas = canvasRef.current;
     if (!canvas || !size.w || !size.h) return;
     const dpr = w.devicePixelRatio || 1;
@@ -898,9 +1070,17 @@ export default function VoidMap({
     draw(ctx, {
       map, scale: view.scale, off: { x: view.x, y: view.y }, w: size.w, h: size.h, dpr,
       sel, scenery, fleetInfo, grid, wells, readOnly, live, liveCheck, measure, arcs, allArcs,
-      target: targeted ? { id: targeted.ship.id, reach: targeted.reach } : null
+      target: targeted ? { id: targeted.ship.id, reach: targeted.reach } : null,
+      t: moves ? performance.now() / 1000 : 0,
+      media: media.state === 'ready' ? media.mediaRef.current : null,
+      ahead, zones: showZones, placing: picOpen && !readOnly
     });
-  });
+  };
+  useLayoutEffect(() => { redrawRef.current(); });
+  useEffect(() => {
+    if (!animating) return undefined;
+    return runFrames(w, videoUp ? VIDEO_FRAME_MS : MOTION_FRAME_MS, () => redrawRef.current());
+  }, [animating, videoUp, w]);
 
   /* ---- coordinates ---- */
   const toWorld = (clientX, clientY) => {
@@ -949,6 +1129,19 @@ export default function VoidMap({
       const hy = selShip.y - Math.cos(a) * reachH;
       if (Math.hypot(p.x - hx, p.y - hy) < 9 / scale) return { type: 'heading', id: selShip.id };
     }
+    // A zone's size handle, and with the trigger tool in hand the zones
+    // themselves, before anything under them.
+    if (!readOnly && sel && sel.type === 'trigger') {
+      const z = map.triggers.find((x) => x.id === sel.id);
+      if (z && Math.hypot(p.x - (z.x + z.r), p.y - z.y) < 9 / scale) return { type: 'resize', of: 'trigger', id: z.id };
+    }
+    if (!readOnly && tool === 'trigger') {
+      for (let i = map.triggers.length - 1; i >= 0; i--) {
+        const z = map.triggers[i];
+        if (Math.hypot(p.x - z.x, p.y - z.y) <= z.r) return { type: 'trigger', id: z.id };
+      }
+      return null;
+    }
     if (!readOnly && sel && (sel.type === 'body' || sel.type === 'field')) {
       const t = sel.type === 'body' ? map.bodies.find((b) => b.id === sel.id) : map.fields.find((f) => f.id === sel.id);
       if (t && t.r && (sel.type === 'body' || t.shape === 'circle') && Math.hypot(p.x - (t.x + t.r), p.y - t.y) < 9 / scale) {
@@ -993,6 +1186,36 @@ export default function VoidMap({
       const a = snapPoint(map, p, e.altKey);
       setMeasure({ a, b: a });
       drag.current = { kind: 'measure' };
+      return;
+    }
+    // Placing the picture, while its card is open: a press on its corner sizes
+    // it, a press on it anywhere nothing else is moves it.
+    if (!readOnly && picOpen && map.backdrop) {
+      const b = map.backdrop;
+      const hs = 10 / view.scale;
+      if (Math.abs(p.x - (b.x + b.w)) <= hs && Math.abs(p.y - (b.y + b.h)) <= hs) {
+        drag.current = { kind: 'picsize', from: p, start: { ...b } };
+        return;
+      }
+      if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h && !pick(p)) {
+        drag.current = { kind: 'picmove', from: p, start: { ...b } };
+        return;
+      }
+    }
+    // The trigger tool: a zone picked and moved, or a new one laid down.
+    if (!readOnly && tool === 'trigger') {
+      const zh = pick(p);
+      if (zh && zh.type === 'resize') { drag.current = { kind: 'resize', of: 'trigger', id: zh.id }; return; }
+      if (zh && zh.type === 'trigger') {
+        setSel(zh); setTarget(null);
+        const z = map.triggers.find((x) => x.id === zh.id);
+        drag.current = { kind: 'trigger', id: zh.id, from: p, moved: false, start: { ...z } };
+        return;
+      }
+      const c = snapPoint(map, p, e.altKey);
+      const id = newVoidId();
+      commit({ ...map, triggers: [...map.triggers, { id, name: `Trigger ${map.triggers.length + 1}`, x: c.x, y: c.y, r: 4 }] });
+      setSel({ type: 'trigger', id }); setTarget(null);
       return;
     }
     const hit = pick(p);
@@ -1052,11 +1275,24 @@ export default function VoidMap({
       return;
     }
     if (d.kind === 'resize') {
-      const list = d.of === 'body' ? map.bodies : map.fields;
+      const key = d.of === 'body' ? 'bodies' : d.of === 'trigger' ? 'triggers' : 'fields';
+      const list = map[key];
       const t = list.find((x) => x.id === d.id);
       if (!t) return;
-      const r = Math.max(0.3, Math.round(Math.hypot(p.x - t.x, p.y - t.y) * 4) / 4);
-      commit({ ...map, [d.of === 'body' ? 'bodies' : 'fields']: list.map((x) => (x.id === d.id ? { ...x, r } : x)) }, `size-${d.id}`);
+      const r = Math.max(0.5, Math.round(Math.hypot(p.x - t.x, p.y - t.y) * 4) / 4);
+      commit({ ...map, [key]: list.map((x) => (x.id === d.id ? { ...x, r } : x)) }, `size-${d.id}`);
+      return;
+    }
+    if (d.kind === 'picmove' || d.kind === 'picsize') {
+      const dx = p.x - d.from.x, dy = p.y - d.from.y;
+      const r2 = (v) => Math.round(v * 100) / 100;
+      if (d.kind === 'picmove') {
+        commit({ ...map, backdrop: readBackdrop({ ...map.backdrop, x: r2(d.start.x + dx), y: r2(d.start.y + dy) }) }, 'pic-move');
+      } else {
+        const ratio = d.start.h / d.start.w;
+        const wide = Math.max(1, Math.abs(dx) >= Math.abs(dy / ratio) ? d.start.w + dx : d.start.w + dy / ratio);
+        commit({ ...map, backdrop: readBackdrop({ ...map.backdrop, w: r2(wide), h: r2(wide * ratio) }) }, 'pic-size');
+      }
       return;
     }
     if (Math.hypot(p.x - d.from.x, p.y - d.from.y) * viewRef.current.scale > 4) d.moved = true;
@@ -1072,6 +1308,8 @@ export default function VoidMap({
       const dy = p.y - d.from.y;
       if (d.kind === 'body') {
         commit({ ...map, bodies: map.bodies.map((b) => (b.id === d.id ? { ...b, x: d.start.x + dx, y: d.start.y + dy } : b)) }, `drag-${d.id}`);
+      } else if (d.kind === 'trigger') {
+        commit({ ...map, triggers: map.triggers.map((z) => (z.id === d.id ? { ...z, x: d.start.x + dx, y: d.start.y + dy } : z)) }, `drag-${d.id}`);
       } else if (d.kind === 'field') {
         commit({
           ...map,
@@ -1131,6 +1369,7 @@ export default function VoidMap({
     if (readOnly) return;
     if (k === 'e' || k === 'E') { setTool((t) => (t === 'erase' ? 'select' : 'erase')); return; }
     if (k === 'o' || k === 'O') { setTool((t) => (t === 'overlay' ? 'select' : 'overlay')); return; }
+    if (k === 't' || k === 'T') { setTool((t) => (t === 'trigger' ? 'select' : 'trigger')); return; }
     if (!sel) return;
     if ((k === 'r' || k === 'R')) { rotateSel(e.shiftKey ? -15 : 15); return; }
     if (k === 'Delete' || k === 'Backspace') { e.preventDefault(); removeSel(); return; }
@@ -1153,6 +1392,11 @@ export default function VoidMap({
   // Off the chart, and any range pinned to it.
   const removeSel = () => {
     if (!sel) return;
+    if (sel.type === 'trigger') {
+      commit({ ...map, triggers: map.triggers.filter((z) => z.id !== sel.id) });
+      setSel(null);
+      return;
+    }
     commit(removeThing(map, sel.type, sel.id));
     setSel(null); setTarget(null);
   };
@@ -1325,10 +1569,97 @@ export default function VoidMap({
   const selField = sel && sel.type === 'field' ? map.fields.find((f) => f.id === sel.id) : null;
   const onChart = new Set(map.ships.map((s) => s.id));
   const unplaced = fleet.filter((f) => !onChart.has(f.id));
+  // Clicked into, the number is selected, so what is typed replaces it; a 0
+  // left in front of a digit is dropped as it is typed.
   const numInput = (value, on, props = {}) => (
     <input className="rt-field rt-vm-num" type="number" value={value}
-      onChange={(e) => { const v = Number(e.target.value); if (Number.isFinite(v)) on(v); }} {...props} />
+      onFocus={(e) => { const el = e.currentTarget; setTimeout(() => { try { el.select(); } catch { /* gone */ } }, 0); }}
+      onChange={(e) => {
+        const raw = String(e.target.value);
+        if (/^-?0\d/.test(raw)) e.target.value = raw.replace(/^(-?)0+(?=\d)/, '$1');
+        const v = Number(e.target.value);
+        if (Number.isFinite(v)) on(v);
+      }} {...props} />
   );
+
+  /* ---- the picture under the chart ----
+     Laid to cover the chart, keeping its shape, then moved and sized by hand
+     while its card is open. The file stays in this browser (localfiles.js). */
+  const choosePicture = async (file) => {
+    if (!file) return;
+    const kind = backdropKindOf(file.type);
+    if (!kind) { setPicNote('That is not a picture or a video the chart can show: PNG, JPEG, WebP or GIF, MP4 or WebM.'); return; }
+    const size = await measureMedia(file, kind, win);
+    if (!size) { setPicNote(`${file.name} would not open.`); return; }
+    const id = newBackdropId();
+    try { await putLocalFile(id, file, { name: file.name }); } catch {
+      setPicNote('This browser would not keep the file. A private window keeps nothing; try an ordinary one.');
+      return;
+    }
+    const k = Math.max(map.cols / size.width, map.rows / size.height);
+    const bw = size.width * k, bh = size.height * k;
+    commit({ ...map, backdrop: readBackdrop({ id, kind, name: file.name, x: (map.cols - bw) / 2, y: (map.rows - bh) / 2, w: bw, h: bh }) });
+    setPicNote(`${file.name} covers the chart. Drag it to move it and its corner to size it.`);
+  };
+  const relinkPicture = async (file) => {
+    if (!file || !map.backdrop) return;
+    const kind = backdropKindOf(file.type);
+    if (!kind) { setPicNote('That is not a picture or a video the chart can show.'); return; }
+    try { await putLocalFile(map.backdrop.id, file, { name: file.name }); } catch { setPicNote('This browser would not keep the file.'); return; }
+    if (kind !== map.backdrop.kind || file.name !== map.backdrop.name) commit({ ...map, backdrop: { ...map.backdrop, kind, name: file.name } });
+    media.reload();
+    setPicNote(`${file.name} is on this computer now.`);
+  };
+  const movePic = (patch) => commit({ ...map, backdrop: readBackdrop({ ...map.backdrop, ...patch }) }, 'pic-field');
+  const sizePic = (across) => {
+    const b = map.backdrop;
+    const m0 = media.mediaRef.current;
+    const ratio = m0 && m0.width ? m0.height / m0.width : b.h / b.w;
+    movePic({ w: across, h: across * ratio });
+  };
+  const PIC_TYPES = 'image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm';
+
+  /* ---- what moves by itself, and what it does (voidturn.js) ---- */
+  const strikeInputs = (strike, set) => (
+    <div className="rt-vm-gunrow">
+      <label>Dice {numInput(strike.n, (v) => set({ ...strike, n: Math.max(1, Math.min(6, Math.round(v))) }), { min: 1, max: 6 })}</label>
+      <label>d
+        <select className="rt-sel" value={strike.d} aria-label="Sides" onChange={(e) => set({ ...strike, d: Number(e.target.value) })}>
+          {STRIKE_DICE.map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+      </label>
+      <label>+ {numInput(strike.bonus, (v) => set({ ...strike, bonus: Math.max(0, Math.min(30, Math.round(v))) }), { min: 0, max: 30 })}</label>
+      <label><input type="checkbox" checked={strike.armour} onChange={(e) => set({ ...strike, armour: e.target.checked })} /> armour applies</label>
+    </div>
+  );
+  const moverControls = (thing, patchFn) => (
+    <div className="rt-vm-wide rt-vm-mover">
+      <label><input type="checkbox" checked={Boolean(thing.course)}
+        onChange={(e) => patchFn({ course: e.target.checked ? [1, 0] : null })} /> Moves by itself each turn</label>
+      {thing.course && (
+        <div className="rt-vm-gunrow">
+          <label>VU across {numInput(thing.course[0], (v) => patchFn({ course: [v, thing.course[1]] }), { step: 0.5 })}</label>
+          <label>VU down {numInput(thing.course[1], (v) => patchFn({ course: [thing.course[0], v] }), { step: 0.5 })}</label>
+        </div>
+      )}
+      <label><input type="checkbox" checked={Boolean(thing.strike)}
+        onChange={(e) => patchFn({ strike: e.target.checked ? { n: 3, d: 10, bonus: 0, armour: true } : null })} /> Strikes ships it passes over</label>
+      {thing.strike && strikeInputs(thing.strike, (v) => patchFn({ strike: readStrike(v) }))}
+      {thing.course && (
+        <div className="rt-vm-sub">
+          {thing.strike ? `${strikeText(thing.strike)} to a ship in its path when the turn ends. ` : ''}
+          Its next three turns are drawn ahead of it, for the table to plan round.
+        </div>
+      )}
+    </div>
+  );
+  const selZone = sel && sel.type === 'trigger' ? map.triggers.find((z) => z.id === sel.id) || null : null;
+  const patchZone = (id, patch, key) => commit({ ...map, triggers: map.triggers.map((z) => (z.id === id ? { ...z, ...patch } : z)) }, key);
+  const springZone = (z) => {
+    const r = springVoidNow(map, z);
+    commit(r.map);
+    announce(r.fired);
+  };
 
   // The chart and its side panel share one height, set by the chart's own shape.
   // The panel scrolls inside it: if its height followed what is selected, the
@@ -1344,11 +1675,12 @@ export default function VoidMap({
         <IconButton icon="measure" label="Measure (M): drag between two points" on={tool === 'measure'} onClick={() => setTool(tool === 'measure' ? 'select' : 'measure')} />
         {!readOnly && <IconButton icon="erase" label="Erase (E): click a ship, body or field to take it off the chart" on={tool === 'erase'} onClick={() => setTool(tool === 'erase' ? 'select' : 'erase')} />}
         {!readOnly && <IconButton icon="pin" label="Pin ranges (O): click a ship to pin its weapon ranges to the chart, or take them down" on={tool === 'overlay'} onClick={() => setTool(tool === 'overlay' ? 'select' : 'overlay')} />}
+        {!readOnly && <IconButton icon="trigger" label="Trigger zones (T): click empty space to lay one, drag one to move it. Only you see them." on={tool === 'trigger'} onClick={() => setTool(tool === 'trigger' ? 'select' : 'trigger')} />}
         <span className="rt-vm-sep" />
         {!readOnly && <IconButton icon="undo" label="Undo (Ctrl/Cmd+Z)" onClick={undo} disabled={!hist.current.past.length} />}
         {!readOnly && <IconButton icon="redo" label="Redo (Shift+Ctrl/Cmd+Z)" onClick={redo} disabled={!hist.current.future.length} />}
-        {!readOnly && <IconButton icon="spinLeft" label="Turn the whole chart a quarter anticlockwise" onClick={() => turnChart(-1)} />}
-        {!readOnly && <IconButton icon="spinRight" label="Turn the whole chart a quarter clockwise" onClick={() => turnChart(1)} />}
+        {!readOnly && <IconButton icon="spinLeft" label={map.backdrop ? 'A chart laid over a picture lies the way the picture does' : 'Turn the whole chart a quarter anticlockwise'} disabled={Boolean(map.backdrop)} onClick={() => turnChart(-1)} />}
+        {!readOnly && <IconButton icon="spinRight" label={map.backdrop ? 'A chart laid over a picture lies the way the picture does' : 'Turn the whole chart a quarter clockwise'} disabled={Boolean(map.backdrop)} onClick={() => turnChart(1)} />}
         <span className="rt-vm-sep" />
         <IconButton icon="zoomIn" label="Zoom in (+)" onClick={() => zoomCentre(1.25)} />
         <IconButton icon="zoomOut" label="Zoom out (-)" onClick={() => zoomCentre(0.8)} />
@@ -1363,12 +1695,24 @@ export default function VoidMap({
             on={map.minis} onClick={() => commit({ ...map, minis: !map.minis })} />
         )}
         <IconButton icon="exportPng" label="Save the chart as a picture" onClick={exportPng} />
+        {!readOnly && <IconButton icon="picture" label="A picture or looping video under the chart" on={picOpen} onClick={() => setPicOpen((v) => !v)} />}
+        {!readOnly && (
+          <IconButton icon="motion" label={map.motion ? 'Moving: rocks tumble, clouds turn, riptides run. Click to still the chart' : 'Still. Click to set the chart moving'}
+            on={map.motion} onClick={() => commit({ ...map, motion: !map.motion })} />
+        )}
         <IconButton icon="clean" label="Hide the toolbar and panel, for a projector (H)" on={clean} onClick={() => setClean(true)} />
         {onToggleFull && <IconButton icon="full" label="Full window" on={full} onClick={onToggleFull} />}
         {!readOnly && map.fields.some((f) => f.drift) && (
           <button type="button" className="rt-btn" title="Carry every ship in a riptide one turn along it"
             onClick={() => { const r = applyDrift(map); commit(r.map); }}>
             <Ico name="drift" size={14} /> Apply drift
+          </button>
+        )}
+        <span className="rt-vm-turn">Turn {map.turn}{phase ? ` \u00b7 ${phase}` : ''}</span>
+        {onAdvance && !readOnly && (
+          <button type="button" className="rt-btn" onClick={onAdvance}
+            title="Move the fight on a phase. When the turn ends, riptides carry ships, whatever has a course moves along it and strikes what it passes over, and turn triggers go off.">
+            Next phase
           </button>
         )}
         <span className="rt-vm-scale">{map.cols}{'×'}{map.rows} VU</span>
@@ -1452,6 +1796,51 @@ export default function VoidMap({
         </div>
 
         <div className="rt-vm-side" style={stageStyle}>
+          {picOpen && !readOnly && (
+            <div className="rt-vm-card">
+              <div className="rt-vm-h">Picture under the chart</div>
+              {!map.backdrop ? (<>
+                <p className="rt-vm-sub">
+                  One picture or looping video laid under the chart: a nebula, a world{'\u2019'}s limb, a moving
+                  starfield. It is laid to cover the chart; while this card is open, drag it to move it and its
+                  corner to size it. The file stays in this browser, on this computer.
+                </p>
+                <button type="button" className="rt-btn" onClick={() => picFileRef.current && picFileRef.current.click()}>
+                  Choose a picture or video{'\u2026'}
+                </button>
+              </>) : (<>
+                <div className="rt-vm-sub">
+                  {map.backdrop.name || 'Picture'} {'\u00b7'} {map.backdrop.kind === 'video' ? 'looping video' : 'picture'} {'\u00b7'}{' '}
+                  {media.state === 'missing' ? 'not on this computer' : media.state === 'loading' ? 'opening\u2026' : `${map.backdrop.w} \u00d7 ${map.backdrop.h} VU`}
+                </div>
+                {media.state === 'missing' && (
+                  <button type="button" className="rt-btn" onClick={() => relinkRef.current && relinkRef.current.click()}>
+                    Find the file on this computer{'\u2026'}
+                  </button>
+                )}
+                <div className="rt-vm-grid">
+                  <label>VU across {numInput(map.backdrop.w, (v) => sizePic(Math.max(1, v)), { step: 1, min: 1 })}</label>
+                  <label>From the left {numInput(map.backdrop.x, (v) => movePic({ x: v }), { step: 0.5 })}</label>
+                  <label>From the top {numInput(map.backdrop.y, (v) => movePic({ y: v }), { step: 0.5 })}</label>
+                </div>
+                <div className="rt-vm-add">
+                  <button type="button" className="rt-btn ghost" onClick={() => {
+                    const m0 = media.mediaRef.current;
+                    const ratio = m0 && m0.width ? m0.height / m0.width : map.backdrop.h / map.backdrop.w;
+                    const k = Math.max(map.cols, map.rows / ratio);
+                    commit({ ...map, backdrop: readBackdrop({ ...map.backdrop, w: k, h: k * ratio, x: (map.cols - k) / 2, y: (map.rows - k * ratio) / 2 }) });
+                  }}>Cover the chart</button>
+                  <button type="button" className="rt-btn ghost" onClick={() => commit({ ...map, backdrop: null })}>Take it off</button>
+                </div>
+                <p className="rt-vm-sub">Drag it to move it and its corner to size it while this card is open.</p>
+              </>)}
+              <input ref={picFileRef} type="file" hidden accept={PIC_TYPES} aria-label="Picture or video under the chart"
+                onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; choosePicture(f); }} />
+              <input ref={relinkRef} type="file" hidden accept={PIC_TYPES} aria-label="The same picture again"
+                onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; relinkPicture(f); }} />
+              {picNote ? <p className="rt-vm-sub" role="status">{picNote}</p> : null}
+            </div>
+          )}
           {selShip ? (
             <div className="rt-vm-card">
               <div className="rt-vm-h" style={{ color: SIDE_COLOUR[selShip.side] }}>{selShip.name}</div>
@@ -1624,6 +2013,7 @@ export default function VoidMap({
                     </select>
                   </label>
                   <label className="rt-vm-wide">Note <textarea className="rt-field" rows={2} value={selBody.note} onChange={(e) => patchBody(selBody.id, { note: e.target.value }, `note-${selBody.id}`)} /></label>
+                  {moverControls(selBody, (patch) => patchBody(selBody.id, patch, `mv-${selBody.id}`))}
                   <div className="rt-vm-row">
                     <button type="button" className="rt-ico-btn" title="Turn 15° left (Shift+R)" aria-label="Turn left" onClick={() => rotateSel(-15)}><Ico name="turnLeft" /></button>
                     <button type="button" className="rt-ico-btn" title="Turn 15° right (R)" aria-label="Turn right" onClick={() => rotateSel(15)}><Ico name="turnRight" /></button>
@@ -1658,6 +2048,7 @@ export default function VoidMap({
                     </select>
                   </label>
                   <label className="rt-vm-wide">Note <textarea className="rt-field" rows={2} value={selField.note} onChange={(e) => patchField(selField.id, { note: e.target.value }, `note-${selField.id}`)} /></label>
+                  {moverControls(selField, (patch) => patchField(selField.id, patch, `mv-${selField.id}`))}
                   <div className="rt-vm-row">
                     <button type="button" className="rt-ico-btn" aria-label="Turn left"
                       title={selField.shape === 'band' ? 'Turn 15° left about its middle (Shift+R)' : 'Turn what is inside it 15° left (Shift+R)'}
@@ -1670,9 +2061,70 @@ export default function VoidMap({
                 </div>
               )}
             </div>
+          ) : selZone && !readOnly ? (
+            <div className="rt-vm-card">
+              <div className="rt-vm-h">{selZone.name || 'Trigger'}</div>
+              <div className="rt-vm-sub">{selZone.armed ? 'Armed' : 'Spent'} {'\u00b7'} {selZone.r} VU across its middle to its edge {'\u00b7'} only you see it</div>
+              <div className="rt-vm-grid">
+                <label className="rt-vm-wide">Name <input className="rt-field" value={selZone.name} maxLength={40} onChange={(e) => patchZone(selZone.id, { name: e.target.value }, `zn-${selZone.id}`)} /></label>
+                <label className="rt-vm-wide">Goes off
+                  <select className="rt-sel" value={selZone.when} aria-label="When it goes off" onChange={(e) => patchZone(selZone.id, { when: e.target.value })}>
+                    {VOID_TRIGGER_WHEN.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                </label>
+                {selZone.when === 'turn' ? (
+                  <label className="rt-vm-wide">At the end of turn {numInput(selZone.turn, (v) => patchZone(selZone.id, { turn: Math.max(0, Math.round(v)) }, `zt-${selZone.id}`), { min: 0 })}
+                    <span className="rt-vm-sub">0 is every turn</span></label>
+                ) : (
+                  <div className="rt-vm-wide rt-vm-sides">Watches for
+                    {SIDES.map((sd) => (
+                      <label key={sd}><input type="checkbox" checked={selZone.sides.includes(sd)}
+                        onChange={(e) => patchZone(selZone.id, { sides: e.target.checked ? [...selZone.sides, sd] : selZone.sides.filter((x) => x !== sd) })} /> {SIDE_NAME[sd]}</label>
+                    ))}
+                  </div>
+                )}
+                <label><input type="checkbox" checked={!selZone.once} onChange={(e) => patchZone(selZone.id, { once: !e.target.checked })} /> Every time</label>
+                <label><input type="checkbox" checked={selZone.reveal} onChange={(e) => patchZone(selZone.id, { reveal: e.target.checked })} /> Reveals what is hidden in it</label>
+                <div className="rt-vm-wide">
+                  <label><input type="checkbox" checked={Boolean(selZone.strike)}
+                    onChange={(e) => patchZone(selZone.id, { strike: e.target.checked ? { n: 2, d: 10, bonus: 5, armour: true } : null })} /> Damages the ships in it</label>
+                  {selZone.strike && strikeInputs(selZone.strike, (v) => patchZone(selZone.id, { strike: readStrike(v) }, `zs-${selZone.id}`))}
+                </div>
+                <label className="rt-vm-wide">Sound
+                  <select className="rt-sel" value={selZone.cue} aria-label="A sound from the ambience board" onChange={(e) => patchZone(selZone.id, { cue: e.target.value })}>
+                    <option value="">No sound</option>
+                    {cues.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </label>
+                <label className="rt-vm-wide">Handout
+                  <select className="rt-sel" value={selZone.handout} aria-label="A handout on the table's screen" onChange={(e) => patchZone(selZone.id, { handout: e.target.value })}>
+                    <option value="">No handout</option>
+                    {handouts.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+                  </select>
+                </label>
+                <label className="rt-vm-wide">For you alone
+                  <textarea className="rt-field" rows={2} value={selZone.note} maxLength={600} aria-label="Note for the GM"
+                    placeholder="What happened, and what they roll."
+                    onChange={(e) => patchZone(selZone.id, { note: e.target.value }, `zno-${selZone.id}`)} />
+                </label>
+              </div>
+              <div className="rt-vm-add">
+                <button type="button" className="rt-btn" onClick={() => springZone(selZone)}>Spring it now</button>
+                <button type="button" className="rt-btn ghost" onClick={() => patchZone(selZone.id, { armed: !selZone.armed })}>{selZone.armed ? 'Disarm it' : 'Arm it'}</button>
+                <button type="button" className="rt-btn ghost" onClick={removeSel}>Take it off</button>
+              </div>
+            </div>
           ) : (
             <div className="rt-vm-card">
               <div className="rt-vm-h">{map.name}</div>
+              <div className="rt-vm-sub">Turn {map.turn}{phase ? ` \u00b7 ${phase}` : ''}</div>
+              {ahead.length > 0 && (
+                <ul className="rt-vm-warns">
+                  {ahead.map((a) => (
+                    <li key={a.shipId}>{a.name}: {a.by} strikes it {a.inTurns === 1 ? 'next turn' : `in ${a.inTurns} turns`} if it holds still.</li>
+                  ))}
+                </ul>
+              )}
               {map.source && <div className="rt-vm-sub">{map.source.zoneName}{map.source.star ? ` · ${map.source.star}` : ''}</div>}
               {map.source && map.source.features.length > 0 && <div className="rt-vm-sub">System: {map.source.features.join(', ')}</div>}
               {map.hazards.map((h) => <p key={h.id} className="rt-vm-p"><b>{h.name}{h.intensity > 1 ? ` ×${h.intensity}` : ''}.</b> {h.note}</p>)}

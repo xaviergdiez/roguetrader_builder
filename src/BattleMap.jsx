@@ -28,7 +28,9 @@ import {
 import {
   deckMoves, MOTION_FRAME_MS, VIDEO_FRAME_MS, MOTION_MAX_SQUARES, rainStreaks, drift, flicker, sparkArc, rush
 } from './motion.js';
-import { putLocalFile, getLocalFile } from './localfiles.js';
+import { putLocalFile } from './localfiles.js';
+import useBackdropMedia from './useBackdropMedia.js';
+import { measureMedia } from './measureMedia.js';
 import { readUvtt, uvttToMap, UVTT_METRES_PER_SQUARE } from './uvtt.js';
 import { runFrames, reveal } from './gsapcdn.js';
 import {
@@ -1190,10 +1192,7 @@ export default function BattleMap({
      here: an image, or a video playing muted on a loop. Each window drawing
      the map decodes its own, which is what lets the projector's copy go on
      playing while the dashboard is behind it. A controls-only copy draws
-     nothing and only asks whether the file is here. */
-  const mediaRef = useRef(null);         // { id, kind, el, url, width, height }
-  const [mediaState, setMediaState] = useState('none');   // none | loading | ready | missing
-  const [mediaTick, setMediaTick] = useState(0);
+     nothing and only asks whether the file is here. See useBackdropMedia. */
   const [picOpen, setPicOpen] = useState(false);
   const [picNote, setPicNote] = useState('');
   const [picHow, setPicHow] = useState('grid');
@@ -1219,64 +1218,10 @@ export default function BattleMap({
     return Boolean(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches);
   }, [win]);
 
-  const dropMedia = () => {
-    const old = mediaRef.current;
-    mediaRef.current = null;
-    if (!old) return;
-    if (old.kind === 'video' && old.el) { try { old.el.pause(); } catch { /* gone */ } old.el.remove(); }
-    if (old.url) URL.revokeObjectURL(old.url);
-  };
-  const backdropId = m.backdrop ? m.backdrop.id : null;
-  const [mediaAsk, setMediaAsk] = useState(0);
-  useEffect(() => {
-    if (mediaRef.current && mediaRef.current.id !== backdropId) dropMedia();
-    if (!backdropId) { setMediaState('none'); return undefined; }
-    if (mediaRef.current && mediaRef.current.id === backdropId) return undefined;
-    let cancelled = false;
-    setMediaState('loading');
-    const kind = m.backdrop.kind;
-    getLocalFile(backdropId).then((rec) => {
-      if (cancelled) return;
-      if (!rec || !rec.blob) { setMediaState('missing'); return; }
-      if (controlsOnly) { setMediaState('ready'); return; }
-      const w = win || window;
-      const url = URL.createObjectURL(rec.blob);
-      const done = (el, width, height) => {
-        if (cancelled) { URL.revokeObjectURL(url); if (kind === 'video') el.remove(); return; }
-        mediaRef.current = { id: backdropId, kind, el, url, width, height };
-        setMediaState('ready');
-        setMediaTick((t) => t + 1);
-      };
-      const fail = () => { URL.revokeObjectURL(url); if (!cancelled) setMediaState('missing'); };
-      if (kind === 'image') {
-        const img = new w.Image();
-        img.onload = () => done(img, img.naturalWidth, img.naturalHeight);
-        img.onerror = fail;
-        img.src = url;
-        return;
-      }
-      /* In the document of the window that draws it, and IN the document:
-         a browser may stop decoding a video it cannot find on any page. It is
-         a pixel, out of the way and out of reach of the pointer. */
-      const v = w.document.createElement('video');
-      v.muted = true; v.loop = true; v.playsInline = true; v.autoplay = !reducedMotion;
-      v.setAttribute('aria-hidden', 'true');
-      Object.assign(v.style, { position: 'fixed', left: '0', top: '0', width: '2px', height: '2px', opacity: '0.01', pointerEvents: 'none' });
-      v.onloadeddata = () => {
-        done(v, v.videoWidth, v.videoHeight);
-        if (!reducedMotion) v.play().catch(() => {});
-      };
-      v.onerror = fail;
-      // A file with no length in it (a browser recording, some exports) can
-      // stop at its end with `loop` set: start it again by hand.
-      v.onended = () => { v.currentTime = 0; if (!reducedMotion) v.play().catch(() => {}); };
-      w.document.body.appendChild(v);
-      v.src = url;
-    }).catch(() => { if (!cancelled) setMediaState('missing'); });
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backdropId, mediaAsk, win, controlsOnly]);
-  useEffect(() => () => dropMedia(), []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const media = useBackdropMedia(m.backdrop, { win, probeOnly: controlsOnly, reducedMotion });
+  const mediaRef = media.mediaRef;
+  const mediaState = media.state;
+  const mediaTick = media.tick;
 
   // The two-click tools read their first click back on the second one. State
   // is not readable that soon — two clicks inside one React batch both see
@@ -3868,27 +3813,7 @@ export default function BattleMap({
   /* ---- laying a picture floor ----
      Measured before it is laid: its size in pixels is what its size in
      squares comes from. */
-  const measureFile = (file, kind) => new Promise((resolve) => {
-    const w = win || window;
-    const url = URL.createObjectURL(file);
-    const finish = (width, height) => {
-      URL.revokeObjectURL(url);
-      resolve(width > 0 && height > 0 ? { width, height } : null);
-    };
-    if (kind === 'image') {
-      const img = new w.Image();
-      img.onload = () => finish(img.naturalWidth, img.naturalHeight);
-      img.onerror = () => finish(0, 0);
-      img.src = url;
-      return;
-    }
-    const v = w.document.createElement('video');
-    v.preload = 'metadata';
-    v.muted = true;
-    v.onloadedmetadata = () => finish(v.videoWidth, v.videoHeight);
-    v.onerror = () => finish(0, 0);
-    v.src = url;
-  });
+  const measureFile = (file, kind) => measureMedia(file, kind, win);
   const picSquares = (size) => squaresFor(size, picHow === 'grid' ? { pxPerSquare: Number(picPps) }
     : picHow === 'tv' ? { across: tvSquaresAcross(Number(picTv)) } : { across: Number(picAcross) });
   // The grid that holds a picture, and deck on every square under it.
@@ -3931,9 +3856,8 @@ export default function BattleMap({
       setPicNote('This browser would not keep the file.');
       return;
     }
-    dropMedia();
     if (kind !== m.backdrop.kind || file.name !== m.backdrop.name) patch({ backdrop: { ...m.backdrop, kind, name: file.name } });
-    setMediaAsk((n) => n + 1);
+    media.reload();
     setPicNote(`${file.name} is on this computer now.`);
   };
   /* A MAP FROM ANOTHER PROGRAM (uvtt.js): Dungeondraft, Dungeon Alchemist,

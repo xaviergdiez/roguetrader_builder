@@ -115,6 +115,7 @@ import {
   newVoidMap, readVoidLibrary, saveChart as saveVoidChart, deleteChart as deleteVoidChart,
   chartSummary as voidChartSummary, readVoidMap as readVoidChart
 } from './voidmap.js';
+import { endVoidTurn, rollStrike } from './voidturn.js';
 import {
   TYPES as BESTIARY_TYPES, searchBestiary, citation, indexToNpc
 } from './bestiaryindex.js';
@@ -2251,7 +2252,11 @@ const CSS = `
 .rt-vm.full{position:fixed;inset:0;z-index:50;background:var(--void);padding:8px;}
 .rt-vm-bar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
 .rt-vm-sep{width:1px;height:22px;background:var(--brass-dim);margin:0 4px;}
-.rt-vm-scale{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dim);}
+.rt-vm-scale{font-family:var(--mono);font-size:11px;color:var(--dim);}
+.rt-vm-turn{margin-left:auto;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold-lit);}
+.rt-vm-mover{display:flex;flex-direction:column;gap:5px;padding-top:6px;border-top:1px solid rgba(160,190,230,.18);}
+.rt-vm-sides{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.rt-vm-warns{margin:6px 0;padding-left:16px;color:#ffb38a;font-size:13px;}
 .rt-vm-body{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;}
 .rt-vm-stage{position:relative;flex:1 1 560px;min-width:300px;height:min(66vh,680px);
   min-height:360px;background:#03050a;border:1px solid var(--brass-dim);overflow:hidden;}
@@ -3381,6 +3386,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const [sprung, setSprung] = useState(null);
   const onTriggers = (fired) => {
     setSprung(fired);
+    // And on the record, in the GM's log.
+    for (const f of fired) gun.say({ kind: 'event', text: `${f.name || 'A trigger'} went off.${f.note ? ' ' + f.note : ''}` });
     const mine = readHandouts(homebrew && homebrew.handouts);
     for (const f of fired) {
       if (f.cue) playCue(f.cue);
@@ -5065,6 +5072,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
               gunnery={gunSurface(gun)}
               library={voidLib}
               onUseShot={(shot) => gun.loadShot(shot)}
+              phase={PHASE_LABELS[combat.phase]}
+              onAdvance={() => gun.advancePhase({ onFired: onTriggers })}
+              onTriggers={onTriggers} cues={triggerCues} handouts={triggerHandouts}
             />
           </>)}
         </MapWindow>
@@ -10000,13 +10010,104 @@ function useGunnery({ fleet, setFleet, combat, setCombat, blueprint, homebrew, b
     say({ kind: 'critical', text: crit.text });
   };
 
+  /* ---- what the chart does to a hull ----
+     A rock a ship sat in the path of, a mine it flew into (voidturn.js): dice
+     the chart names, rolled here, armour taken off when it applies. Shields
+     are no help against a hull being run through. Every hit lands in one write,
+     so two ships struck at the end of the same turn do not overwrite each
+     other. `hits` are { shipId, name, why, strike }. */
+  const strikesOn = (fleetIn, playerIn, hits) => {
+    let nf = fleetIn;
+    let pv = playerIn;
+    const lines = [];
+    for (const h of hits) {
+      const roll = rollStrike(h.strike);
+      if (!roll) continue;
+      const rolled = `${roll.text} rolled ${roll.rolls.join(' + ')}${roll.total !== roll.rolls.reduce((a, b) => a + b, 0) ? ` + ${roll.total - roll.rolls.reduce((a, b) => a + b, 0)}` : ''} = ${roll.total}`;
+      const isPlayer = h.shipId === 'player';
+      const ship = isPlayer ? { ...playerShip, vitals: pv || playerShip.vitals } : nf.find((x) => x.id === h.shipId);
+      if (!ship) {
+        lines.push({ kind: 'event', text: `${h.name} ${h.why}: ${rolled}. Not one of the fleet: take it off by hand.` });
+        continue;
+      }
+      const p = profileOf(ship);
+      const armour = roll.armour && p ? Math.max(0, p.armour - (ship.vitals.armourDamage || 0)) : 0;
+      const net = Math.max(0, roll.total - armour);
+      const hull = Math.max(0, (ship.vitals.hullIntegrity || 0) - net);
+      const vit = { ...ship.vitals, hullIntegrity: hull };
+      if (isPlayer) pv = vit;
+      else nf = nf.map((x) => (x.id === h.shipId ? { ...x, vitals: vit } : x));
+      lines.push({ kind: net > 0 ? 'hit' : 'soak',
+        text: `${p ? p.name : h.name} ${h.why}: ${rolled}${armour ? `, less ${armour} armour` : ''}, ${net} to the hull.`
+          + (hull <= 0 ? ' The ship is crippled.' : '') });
+    }
+    return { fleet: nf, playerVitals: pv, lines };
+  };
+  // Hits from the chart outside the turn's end: a mine flown into.
+  const strikeShips = (hits) => {
+    const r = strikesOn(fleet, combat.playerVitals, hits);
+    if (r.fleet !== fleet) setFleet(r.fleet);
+    if (r.playerVitals !== combat.playerVitals) setCombat((c) => ({ ...c, playerVitals: r.playerVitals }));
+    r.lines.forEach(say);
+  };
+
+  /* ---- the phase moves on ----
+     Here rather than in the dashboard, so the void chart's own window can run
+     a fight with the dashboard shut. When the turn wraps, void shields come
+     back, and the chart's turn ends with it (voidturn.js): riptides carry
+     ships, whatever has a course moves along it and strikes what it passes
+     over, and turn triggers go off. What a trigger does beyond the chart (a
+     sound, a handout, the GM's note) is handed to `onFired`. */
+  const advancePhase = ({ onFired = null } = {}) => {
+    const next = nextPhase(combat.phase);
+    // Void shields absorb one hit PER ROUND, so they come back when the turn
+    // wraps. Without this a shield was spent once and gone for the battle,
+    // which quietly made every escort far easier to kill than the rules allow.
+    const newTurn = next === PHASES[0];
+    if (!newTurn) {
+      setCombat({ ...combat, phase: next });
+      say({ kind: 'phase', text: `Phase: ${PHASE_LABELS[next]}` });
+      return;
+    }
+    let nf = fleet.map((x) => {
+      const p = profileOf(x);
+      return p ? { ...x, vitals: { ...x.vitals, voidShields: p.voidShields } } : x;
+    });
+    const pp = profileOf(playerShip);
+    let pv = pp ? { ...playerShip.vitals, voidShields: pp.voidShields } : combat.playerVitals;
+    let voidNext = combat.void;
+    const lines = [];
+    let fired = [];
+    if (combat.void && combat.void.map) {
+      const t = endVoidTurn(combat.void.map);
+      voidNext = { ...combat.void, map: t.map };
+      for (const d of t.drifted) lines.push({ kind: 'event', text: `${d.name} carried ${Math.round(Math.hypot(d.dx, d.dy))} VU by the riptide.` });
+      const hits = [
+        ...t.struck.map((x) => ({ shipId: x.shipId, name: x.name, why: `struck by ${x.by}`, strike: x.strike })),
+        ...t.fired.filter((f) => f.strike).flatMap((f) => f.shipIds.map((id, i) => ({
+          shipId: id, name: f.shipNames[i], why: `caught by ${f.name || 'a trap'}`, strike: f.strike })))
+      ];
+      const r = strikesOn(nf, pv, hits);
+      nf = r.fleet; pv = r.playerVitals;
+      lines.push(...r.lines);
+      fired = t.fired;
+      for (const f of fired) lines.push({ kind: 'event', text: `${f.name || 'A trigger'} went off at the end of turn ${t.map.turn}.${f.note ? ' ' + f.note : ''}` });
+    }
+    setFleet(nf);
+    setCombat({ ...combat, phase: next, playerVitals: pv, ...(voidNext ? { void: voidNext } : {}) });
+    say({ kind: 'phase', text: `Phase: ${PHASE_LABELS[next]} \u2014 new turn, void shields restored` });
+    lines.forEach(say);
+    if (fired.length && onFired) onFired(fired);
+  };
+
   return {
     attackerId, setAttackerId, targetId, setTargetId, weaponId, setWeaponId,
     distance, setDistance, lockDoS, setLockDoS, spiritDoS, setSpiritDoS, bs, setBs,
     log, setLog, fromChart, setFromChart, pushed,
     playerShip, ships, usable, bpWithCustom, onEndeavour, profileOf, byId, say, setVitals,
     attacker, attackerP, targetShip, targetP, weapon, chartShot, hit, canShoot, chartBlocks,
-    hitFor, targetNumber, strike, fire, volley, critOn, rollCritical, loadShot
+    hitFor, targetNumber, strike, fire, volley, critOn, rollCritical, loadShot,
+    advancePhase, strikeShips
   };
 }
 
@@ -10019,6 +10120,7 @@ const gunSurface = (g) => ({
   attackerId: g.attackerId, targetId: g.targetId,
   targetNumber: g.targetNumber,
   aim: g.loadShot, fire: g.fire, volley: g.volley, rollCritical: g.rollCritical,
+  strikeShips: g.strikeShips,
   log: g.log.slice(0, 6)
 });
 
@@ -10307,31 +10409,9 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
     if (stations) playCue(stations);
   };
 
-  const advance = () => {
-    const next = nextPhase(combat.phase);
-    // Void shields absorb one hit PER ROUND, so they come back when the turn
-    // wraps. Without this a shield was spent once and gone for the battle,
-    // which quietly made every escort far easier to kill than the rules allow.
-    const newTurn = next === PHASES[0];
-    if (newTurn) {
-      setFleet(fleet.map((s) => {
-        const p = profileOf(s);
-        return p ? { ...s, vitals: { ...s.vitals, voidShields: p.voidShields } } : s;
-      }));
-      const pp = profileOf(playerShip);
-      setCombat({
-        ...combat,
-        phase: next,
-        playerVitals: pp
-          ? { ...playerShip.vitals, voidShields: pp.voidShields }
-          : combat.playerVitals
-      });
-    } else {
-      setCombat({ ...combat, phase: next });
-    }
-    say({ kind: 'phase',
-      text: `Phase: ${PHASE_LABELS[next]}${newTurn ? ' — new turn, void shields restored' : ''}` });
-  };
+  // The phase, moved on by the gunnery hook so the void chart's own window can
+  // do it too; what a turn trigger sets off is handled with the map's.
+  const advance = () => gun.advancePhase({ onFired: triggerProps.onTriggers });
 
   /* ---- events ---- */
 
@@ -10388,9 +10468,9 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           put — the clock and the running record are wanted whatever you are
           doing — and everything else is behind a tab. Same tab furniture the
           Dossier and the Bridge already use. */}
-      {/* A trigger on the map went off: the GM's note, here while the map is
-          out in its own window, where the table's screen must not show it. */}
-      {mapWindow && triggerProps.sprung && triggerProps.sprung.length > 0 && (
+      {/* A trigger went off: the GM's note, here unless the battle map in this
+          dashboard is showing it already. Never on a table's screen. */}
+      {(mapWindow || gmTab !== 'map') && triggerProps.sprung && triggerProps.sprung.length > 0 && (
         <div className="rt-bm-sprung" role="status">
           {triggerProps.sprung.map((f) => (
             <p key={f.id}><strong>{f.name || 'A trigger'} went off.</strong>{f.note ? ' ' + f.note : ''}</p>
@@ -10581,6 +10661,10 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           onWindow={() => { setVoidWindowErr(''); setVoidWindow(true); }}
           gunnery={gunSurface(gun)} library={voidLib}
           onUseShot={(shot) => { gun.loadShot(shot); setVoidShot({ ...shot, at: Date.now() }); }}
+          chartProps={{
+            phase: PHASE_LABELS[combat.phase], onAdvance: advance,
+            onTriggers: triggerProps.onTriggers, cues: triggerProps.cues || [], handouts: triggerProps.handouts || []
+          }}
         />
       </>)}
       {gmTab === 'events' && (<>

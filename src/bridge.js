@@ -78,6 +78,14 @@ export const joinBridge = ({ code, charId, name, role, card, wounds }) =>
 export const sendMessage = ({ code, to, text }) =>
   post({ action: 'message', code, to, text });
 
+// Something handed over: to 'all' or to [charIds]. `image` is a data URL or null.
+export const sendHandout = ({ code, to, kind, title, text, image = null }) =>
+  post({ action: 'handout', code, to, kind, title, text, image });
+export const withdrawHandout = ({ code, id }) => post({ action: 'handout_withdraw', code, id });
+// A handout's picture, fetched only when it is opened.
+export const readHandoutImage = ({ code, id }) =>
+  call(`?code=${encodeURIComponent(code)}&handout=${encodeURIComponent(id)}`);
+
 export const leaveBridge = (code) => post({ action: 'leave', code });
 
 // The GM's officers: one seat per character, so several from one account.

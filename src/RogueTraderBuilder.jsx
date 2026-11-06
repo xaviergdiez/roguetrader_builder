@@ -94,6 +94,8 @@ import NervePanel, { SpotPanel } from './NervePanel.jsx';
 import CampaignPanel from './CampaignPanel.jsx';
 import DebriefPanel from './DebriefPanel.jsx';
 import AmbiencePanel from './AmbiencePanel.jsx';
+import HandoutsPanel, { TableHandout, PlayerHandouts } from './HandoutsPanel.jsx';
+import { readHandouts } from './handouts.js';
 import { getBoard as getAmbienceBoard, playCue } from './ambienceEngine.js';
 import { superiorityByFoe, SUPERIORITY_RULE, patronById } from './patrons.js';
 import { situationFor } from './awareness.js';
@@ -1947,6 +1949,47 @@ const CSS = `
 .rt-amb-edit > summary{cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:6px 0;}
 .rt-amb-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(212,175,55,.15);color:var(--dim);}
 .rt-amb-row .rt-field{flex:1;min-width:140px;}
+.rt-hos-body{display:grid;grid-template-columns:minmax(180px,240px) 1fr;gap:14px;margin-top:12px;}
+@media (max-width:760px){.rt-hos-body{grid-template-columns:1fr;}}
+.rt-hos-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;max-height:520px;overflow:auto;}
+.rt-hos-item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;padding:7px 10px;text-align:left;
+  border:1px solid rgba(212,175,55,.25);background:rgba(10,12,10,.5);color:var(--text);cursor:pointer;font:inherit;font-size:14px;}
+.rt-hos-item.on{border-color:var(--gold);background:rgba(212,175,55,.14);}
+.rt-hos-item.shown{box-shadow:inset 3px 0 0 var(--gold-lit);}
+.rt-hos-k{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);}
+.rt-hos-edit{display:flex;flex-direction:column;gap:10px;min-width:0;}
+.rt-hos-edit .rt-field{flex:1;min-width:160px;}
+.rt-hos-got{flex-direction:column;align-items:stretch;}
+/* A handout, dressed as what it is. */
+.rt-ho{position:relative;max-width:720px;padding:18px 22px;border:1px solid;line-height:1.5;white-space:normal;}
+.rt-ho-head{font-family:var(--mono);font-size:11px;letter-spacing:.2em;margin-bottom:8px;opacity:.85;}
+.rt-ho-title{margin:0 0 10px;font-family:var(--display);font-size:18px;letter-spacing:.04em;}
+.rt-ho-text{white-space:pre-wrap;font-size:15px;}
+.rt-ho-img{display:block;max-width:100%;max-height:420px;margin:0 auto 12px;border:1px solid rgba(255,255,255,.18);}
+.rt-ho-dataslate{background:repeating-linear-gradient(180deg,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.22) 2px 3px),#07140c;
+  border-color:#2f6b45;color:#8fe0a8;font-family:var(--mono);box-shadow:0 0 24px rgba(80,220,140,.12) inset;}
+.rt-ho-dataslate .rt-ho-title{font-family:var(--mono);color:#b6f5c9;}
+.rt-ho-vox{background:#120d05;border-color:#7a5a1e;color:#f0b44a;font-family:var(--mono);}
+.rt-ho-vox .rt-ho-title{font-family:var(--mono);color:#ffd27a;}
+.rt-ho-astropath{background:radial-gradient(ellipse at 50% 0%,rgba(140,110,255,.22),rgba(0,0,0,0) 60%),#0b0a18;
+  border-color:#5a4aa0;color:#d8d0ff;font-style:italic;}
+.rt-ho-astropath .rt-ho-head{font-style:normal;color:#a99cff;}
+.rt-ho-pict{background:#050505;border-color:#444;color:#cfcfcf;font-family:var(--mono);}
+.rt-ho-pict .rt-ho-img{max-height:560px;filter:contrast(1.05) saturate(.9);}
+.rt-ho-missive{background:linear-gradient(180deg,var(--parch-hi),var(--parch));border-color:#6d5726;color:var(--parch-ink);
+  font-family:var(--serif);padding-bottom:42px;}
+.rt-ho-missive .rt-ho-title{color:#3b2a10;}
+.rt-ho-seal{position:absolute;right:20px;bottom:12px;width:34px;height:34px;border-radius:50%;
+  background:radial-gradient(circle at 40% 35%,#c0392b,#7b1e14 70%);box-shadow:0 1px 3px rgba(0,0,0,.5);}
+.rt-ho.big{max-width:min(92vw,1100px);max-height:88vh;overflow:auto;padding:30px 38px;}
+.rt-ho.big .rt-ho-head{font-size:15px;}
+.rt-ho.big .rt-ho-title{font-size:30px;}
+.rt-ho.big .rt-ho-text{font-size:24px;}
+.rt-ho.big .rt-ho-img{max-height:62vh;}
+.rt-ho-stage{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  background:rgba(2,3,5,.78);padding:4vh 4vw;}
+.rt-ho-close{position:absolute;top:14px;right:18px;width:40px;height:40px;border:1px solid rgba(255,255,255,.25);
+  background:rgba(0,0,0,.5);color:#ddd;font-size:22px;cursor:pointer;}
 .rt-advlist{list-style:none;margin:0;padding:0;}
 .rt-adv{display:flex;flex-wrap:wrap;align-items:center;gap:7px;
   padding:6px 2px;border-bottom:1px solid rgba(109,87,38,.28);}
@@ -3307,6 +3350,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // The boarding map's own window. Owned here rather than in the GM panel so
   // that closing the dashboard mid-encounter does not shut the map with it.
   const [mapWindow, setMapWindow] = useState(false);
+  // A handout on the table's screen (HandoutsPanel.jsx): over the boarding
+  // map's window, or the void chart's, or in a window of its own.
+  const [tableHandout, setTableHandout] = useState(null);
   /* The tab and the tool, held here rather than inside the map, because there
      may be two copies of the map: the one on the projector and the control
      panel the GM may open on the dashboard beside it. One selection between
@@ -4893,6 +4939,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           createDeck={createDeck} renameDeck={renameDeck} deleteDeck={deleteDeck}
           mapView={mapView} setMapView={setMapView}
           activeMap={activeMap} setActiveMap={setActiveMap} activeMapKey={activeMapKey}
+          tableHandout={tableHandout} setTableHandout={setTableHandout}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -4911,7 +4958,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
             }
           }}
         >
-          {(win) => (
+          {(win) => (<>
+            {tableHandout && <TableHandout handout={tableHandout} onClose={() => setTableHandout(null)} />}
             <BattleMap
               map={activeMap}
               onChange={setActiveMap}
@@ -4935,7 +4983,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               onDeleteDeck={deleteSavedDeck}
               shared={sharedMapTools}
             />
-          )}
+          </>)}
         </MapWindow>
       )}
 
@@ -4950,7 +4998,8 @@ export default function RogueTraderBuilder({ me, cloud }) {
             }
           }}
         >
-          {(win) => (
+          {(win) => (<>
+            {tableHandout && !mapWindow && <TableHandout handout={tableHandout} onClose={() => setTableHandout(null)} />}
             <VoidMap
               map={combat.void.map}
               onChange={(next) => setCombat((c) => ({ ...c, void: { ...(c.void || {}), map: next } }))}
@@ -4962,7 +5011,15 @@ export default function RogueTraderBuilder({ me, cloud }) {
               library={voidLib}
               onUseShot={(shot) => gun.loadShot(shot)}
             />
-          )}
+          </>)}
+        </MapWindow>
+      )}
+
+      {/* No table window open: the handout gets one of its own, to be dragged
+          onto the projector like the map's. */}
+      {tableHandout && !mapWindow && !(voidWindow && combat.void && combat.void.map) && (
+        <MapWindow name="rt-table" title="Table screen" onClose={() => setTableHandout(null)}>
+          <TableHandout handout={tableHandout} onClose={() => setTableHandout(null)} />
         </MapWindow>
       )}
     </div>
@@ -9369,6 +9426,13 @@ function BridgePanelBase({ onLore, code, setCode, characterName, charId, shipRol
             </>
           )}
 
+          {/* ---- handouts ----
+              The server sends a player only what is for their character or
+              for the whole table, and a picture only when it is opened. */}
+          {!isGmHere && ship && (ship.handouts || []).length > 0 && (
+            <PlayerHandouts handouts={ship.handouts} code={code} />
+          )}
+
           {/* ---- the player's own station ---- */}
           {!isGmHere && shipRole && ship && (
             <>
@@ -9909,7 +9973,8 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
   sharedVoidTools = null, voidControls = false, setVoidControls = () => {},
   grounds, onSaveGround, onNeedGroundTexture, groundErr, moveNote,
   decks, deckErr, deckId, openDeck, createDeck, renameDeck, deleteDeck,
-  mapView, setMapView, activeMap, setActiveMap, activeMapKey, onClose }) {
+  mapView, setMapView, activeMap, setActiveMap, activeMapKey,
+  tableHandout = null, setTableHandout = () => {}, onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -10015,6 +10080,7 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
     { id: 'endeavours', label: 'Endeavours', count: endeavours.length },
     { id: 'map', label: 'Battle map', count: 0 },
     { id: 'systems', label: 'Systems', count: 0 },
+    { id: 'handouts', label: 'Handouts', count: readHandouts(homebrew && homebrew.handouts).length },
     { id: 'sound', label: 'Sound', count: 0 }
   ];
 
@@ -11063,6 +11129,12 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           />
         )}
       </>)}
+
+      {gmTab === 'handouts' && (
+        <HandoutsPanel homebrew={homebrew} setHomebrew={setHomebrew} bridgeCode={bridgeCode}
+          showing={tableHandout ? tableHandout.id : null}
+          onShow={(h) => setTableHandout(h)} onHide={() => setTableHandout(null)} />
+      )}
 
       {gmTab === 'sound' && <AmbiencePanel />}
 

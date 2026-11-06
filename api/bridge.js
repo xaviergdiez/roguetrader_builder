@@ -9,6 +9,11 @@
 //   POST /api/bridge  {action:"write", code, vitals, doc, log}
 //   POST /api/bridge  {action:"event", code, event}
 //   POST /api/bridge  {action:"message", code, to, text}           (GM only)
+//   POST /api/bridge  {action:"handout", code, to, kind, title, text, image}  (GM only)
+//   POST /api/bridge  {action:"handout_withdraw", code, id}        (GM only)
+//   GET  /api/bridge?code=<code>&handout=<id>          -> {image}
+//     A handout's picture, kept apart from the ship document so the poll
+//     never carries one; answered only to those the handout is for.
 //   POST /api/bridge  {action:"ground_event", code, event}
 //     Ground combat's own event action, separate from "event" (which stays
 //     ship-vitals-only, GM-only, unchanged): a ground event may be fired by
@@ -36,12 +41,14 @@ import {
   dynastyKey, shipKey, newCode, normaliseCode,
   newDynasty, isGm, memberOf, joinDynasty, leaveDynasty,
   assignNpc, unassignNpc, addMessage, charIdsFor,
+  addHandout, withdrawHandout, mayReadHandout, handoutImageKey, HANDOUT_IMAGE_TTL,
   authorizeWrite, authorizeEvent,
   newShip, applyPatch, applyWrite, appendLog, redactShip, redactDynasty,
   mirrorPlayerWounds, authorizeGroundEvent
 } from "../lib/bridge.js";
 import { applyEvent } from "../src/voidcombat.js";
 import { applyGroundEvent } from "../src/groundcombat.js";
+import { HANDOUT_IMAGE, MAX_HANDOUT_IMAGE, HANDOUT_ID } from "../src/handouts.js";
 
 export const POLL_SECONDS = 5;
 
@@ -101,6 +108,16 @@ async function handle(req, res) {
     if (!gm && !memberOf(dynasty, uid)) {
       // Not a member: the table's existence is not a secret, its state is.
       return res.status(403).json({ error: "not_a_member" });
+    }
+
+    // A handout's picture, to those it is for.
+    if (req.query.handout != null) {
+      const id = String(req.query.handout);
+      if (!HANDOUT_ID.test(id)) return res.status(400).json({ error: "bad_handout" });
+      const h = mayReadHandout(ship, id, { isGm: gm, charIds: charIdsFor(dynasty, uid) });
+      const image = h && h.hasImage ? await redis.get(handoutImageKey(code, id)) : null;
+      if (!image) return res.status(404).json({ error: "no_image" });
+      return res.status(200).json({ image });
     }
 
     // Nothing has changed since the client last looked, so send no body.
@@ -286,6 +303,31 @@ async function handle(req, res) {
     if (error) return res.status(400).json({ error });
 
     await redis.set(shipKey(code), next);
+    return res.status(200).json({ ship: next, rev: next.rev });
+  }
+
+  if (action === "handout") {
+    if (!isGm(dynasty, uid)) return res.status(403).json({ error: "gm_only" });
+    const image = typeof body.image === "string" && body.image ? body.image : null;
+    if (image && !HANDOUT_IMAGE.test(image)) return res.status(400).json({ error: "bad_image" });
+    if (image && image.length > MAX_HANDOUT_IMAGE) return res.status(413).json({ error: "image_too_large" });
+    const { ship: next, handout, dropped, error } = addHandout(ship, dynasty, {
+      to: body.to, kind: body.kind, title: body.title, text: body.text, hasImage: Boolean(image)
+    });
+    if (error) return res.status(400).json({ error });
+    // The picture first: a listed handout must never point at nothing.
+    if (image) await redis.set(handoutImageKey(code, handout.id), image, { ex: HANDOUT_IMAGE_TTL });
+    await redis.set(shipKey(code), next);
+    for (const id of dropped) await redis.del(handoutImageKey(code, id));
+    return res.status(200).json({ ship: next, rev: next.rev, handout });
+  }
+
+  if (action === "handout_withdraw") {
+    if (!isGm(dynasty, uid)) return res.status(403).json({ error: "gm_only" });
+    const { ship: next, removed } = withdrawHandout(ship, body.id);
+    if (!removed) return res.status(404).json({ error: "unknown_handout" });
+    await redis.set(shipKey(code), next);
+    if (removed.hasImage) await redis.del(handoutImageKey(code, removed.id));
     return res.status(200).json({ ship: next, rev: next.rev });
   }
 

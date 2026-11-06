@@ -17,5 +17,5 @@ export const call = (method, path, body, sid = 'SIM1') =>
 export const IMAGE = 'data:image/png;base64,' + 'A'.repeat(60);
 export const library = (...hulls) => ({
   hulls: hulls.map((id) => ({ id, name: 'Hull ' + id })), components: [], encounters: [], endeavours: [],
-  battlemaps: [], mapgrounds: [], voidcharts: []
+  battlemaps: [], mapgrounds: [], voidcharts: [], handouts: []
 });

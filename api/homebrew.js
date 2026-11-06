@@ -49,7 +49,9 @@ function clean(homebrew) {
     mapgrounds: entries(h.mapgrounds),
     // Saved void charts, capped by the client well under this library's own
     // ceiling (see MAX_LIBRARY_BYTES in src/voidmap.js).
-    voidcharts: entries(h.voidcharts)
+    voidcharts: entries(h.voidcharts),
+    // The GM's handouts, text only (src/handouts.js).
+    handouts: entries(h.handouts)
   };
 }
 
@@ -73,7 +75,7 @@ export default async function handler(req, res) {
     const count = homebrew.hulls.length + homebrew.components.length
       + homebrew.encounters.length + homebrew.endeavours.length
       + homebrew.battlemaps.length + homebrew.mapgrounds.length
-      + homebrew.voidcharts.length;
+      + homebrew.voidcharts.length + homebrew.handouts.length;
     if (count > MAX_ENTRIES) {
       return res.status(413).json({
         error: `That is ${count} entries, over the ${MAX_ENTRIES} limit.`

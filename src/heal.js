@@ -33,7 +33,7 @@ export const REINDEX_KEY = 'rt:reindexed';
 const KEEP = 600;                       // ids remembered per kind
 
 // The lists the homebrew library is made of.
-export const HOMEBREW_LISTS = ['hulls', 'components', 'encounters', 'endeavours', 'battlemaps', 'mapgrounds', 'voidcharts'];
+export const HOMEBREW_LISTS = ['hulls', 'components', 'encounters', 'endeavours', 'battlemaps', 'mapgrounds', 'voidcharts', 'handouts'];
 
 // An entry's identity: its id, or, for one that never had one, its content.
 export const keyOf = (x) => (x && typeof x.id === 'string' && x.id ? x.id : JSON.stringify(x));

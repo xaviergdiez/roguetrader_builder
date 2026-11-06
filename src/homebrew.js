@@ -30,7 +30,7 @@ export const HOMEBREW_KEY = 'rt:homebrew';
 // that keeps them from crowding out what shares this one 900KB budget.
 export const EMPTY = {
   hulls: [], components: [], encounters: [], endeavours: [],
-  battlemaps: [], mapgrounds: [], voidcharts: []
+  battlemaps: [], mapgrounds: [], voidcharts: [], handouts: []
 };
 
 // Anything absent or the wrong shape reads as "no homebrew" rather than
@@ -45,7 +45,10 @@ export function normalise(h) {
     endeavours: entries(src && src.endeavours),
     battlemaps: entries(src && src.battlemaps),
     mapgrounds: entries(src && src.mapgrounds),
-    voidcharts: entries(src && src.voidcharts)
+    voidcharts: entries(src && src.voidcharts),
+    // The GM's handouts, written ahead (see src/handouts.js). Text only: a
+    // handout's picture stays in the browser that chose it.
+    handouts: entries(src && src.handouts)
   };
 }
 
@@ -63,7 +66,7 @@ export const isEmpty = (h) => {
   return n.hulls.length === 0 && n.components.length === 0
     && n.encounters.length === 0 && n.endeavours.length === 0
     && n.battlemaps.length === 0 && n.mapgrounds.length === 0
-    && n.voidcharts.length === 0;
+    && n.voidcharts.length === 0 && n.handouts.length === 0;
 };
 
 /* --------------------------------- local --------------------------------- */

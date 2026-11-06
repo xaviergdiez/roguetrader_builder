@@ -21,6 +21,7 @@
 // one place the two halves of GM prep meet.
 
 import { readDebrief, readInquisitionJournal } from './patrons.js';
+import { readScenes } from './scenes.js';
 
 /* ------------------------------ objective kinds ------------------------------ */
 
@@ -138,7 +139,9 @@ export function readMission(m) {
     // Only present when the GM has set one up, so a plain Mission is unchanged.
     ...(src && src.scenario ? { scenario: readScenario(src.scenario) } : {}),
     // An Inquisition mission's debriefing: evidence, Superiority, Legitimacy.
-    ...(src && src.debrief ? { debrief: readDebrief(src.debrief) } : {})
+    ...(src && src.debrief ? { debrief: readDebrief(src.debrief) } : {}),
+    // The evening laid out in scenes (scenes.js), GM-only.
+    ...(src && Array.isArray(src.scenes) && src.scenes.length ? { scenes: readScenes(src.scenes) } : {})
   };
 }
 
@@ -267,7 +270,8 @@ export function redactEndeavour(end, { isGm = false } = {}) {
   const { diary, inquisition, ...pub } = end;
   const missions = (end.missions || [])
     .map((m) => {
-      const { scenario, debrief, ...rest } = m;
+      // The scenes are how the GM runs the evening, not the party's to read.
+      const { scenario, debrief, scenes, ...rest } = m;
       // The sub-plots are secret; sides and concept are what the table plays.
       const shown = scenario ? { ...scenario, subplots: [] } : null;
       // Legitimacy is the GM's own count, never the player's to read.

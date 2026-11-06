@@ -96,6 +96,9 @@ import DebriefPanel from './DebriefPanel.jsx';
 import AmbiencePanel from './AmbiencePanel.jsx';
 import HandoutsPanel, { TableHandout, PlayerHandouts } from './HandoutsPanel.jsx';
 import { readHandouts, handoutLabel } from './handouts.js';
+import ScenesPanel from './ScenesPanel.jsx';
+import Curtain from './Curtain.jsx';
+import { readScenes, readTonight, TONIGHT_KEY } from './scenes.js';
 import { getBoard as getAmbienceBoard, playCue } from './ambienceEngine.js';
 import { superiorityByFoe, SUPERIORITY_RULE, patronById } from './patrons.js';
 import { situationFor } from './awareness.js';
@@ -1988,6 +1991,17 @@ const CSS = `
 .rt-ho.big .rt-ho-img{max-height:62vh;}
 .rt-ho-stage{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
   background:rgba(2,3,5,.78);padding:4vh 4vw;}
+.rt-curtain{position:fixed;inset:0;z-index:80;background:#000;opacity:0;visibility:hidden;pointer-events:none;}
+.rt-tonight{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:8px 0 10px;padding:9px 12px;
+  border:1px solid var(--gold);background:linear-gradient(180deg,rgba(212,175,55,.16),rgba(212,175,55,.05));}
+.rt-tonight-at{flex:1 1 320px;font-size:14px;color:var(--text);}
+.rt-tonight-at strong{color:var(--gold-lit);}
+.rt-tonight-at em{color:var(--dim);}
+.rt-scene-list{list-style:decimal;margin:8px 0;padding-left:22px;}
+.rt-scene{padding:8px 0 4px;border-bottom:1px solid rgba(212,175,55,.15);}
+.rt-scene.live{box-shadow:inset 3px 0 0 var(--gold-lit);padding-left:8px;}
+.rt-scene .rt-field{flex:1;min-width:160px;}
+.rt-scene-note{width:100%;margin:4px 0;}
 .rt-bm-sprung{margin:8px 0;padding:10px 14px;border:1px solid rgba(200,140,255,.6);background:rgba(40,16,60,.85);
   color:#eadcff;box-shadow:0 0 0 1px rgba(168,85,247,.25) inset;}
 .rt-bm-sprung p{margin:0 0 6px;font-size:14px;}
@@ -3374,6 +3388,17 @@ export default function RogueTraderBuilder({ me, cloud }) {
   const triggerHandouts = readHandouts(homebrew && homebrew.handouts).map((h) => ({ id: h.id, name: handoutLabel(h) }));
   const triggerProps = {
     cues: triggerCues, handouts: triggerHandouts, onTriggers, sprung, onDismissSprung: () => setSprung(null)
+  };
+  /* THE CURTAIN (Curtain.jsx): black down over the table's screens while a
+     scene is changed under them, then up again. With no table screen open
+     there is nothing to hide, and the change is simply made. */
+  const [curtain, setCurtain] = useState(false);
+  const fadeTable = async (fn) => {
+    const open = mapWindow || (voidWindow && combat.void && combat.void.map) || Boolean(tableHandout);
+    if (!open) { await fn(); return; }
+    setCurtain(true);
+    await new Promise((r) => setTimeout(r, 450));
+    try { await fn(); } finally { setTimeout(() => setCurtain(false), 200); }
   };
   /* The tab and the tool, held here rather than inside the map, because there
      may be two copies of the map: the one on the projector and the control
@@ -4962,6 +4987,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           mapView={mapView} setMapView={setMapView}
           activeMap={activeMap} setActiveMap={setActiveMap} activeMapKey={activeMapKey}
           tableHandout={tableHandout} setTableHandout={setTableHandout} triggerProps={triggerProps}
+          fadeTable={fadeTable}
           onClose={() => setGmOpen(false)}
         />
       )}
@@ -4982,6 +5008,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         >
           {(win) => (<>
             {tableHandout && <TableHandout handout={tableHandout} onClose={() => setTableHandout(null)} />}
+            <Curtain down={curtain} />
             <BattleMap
               map={activeMap}
               onChange={setActiveMap}
@@ -5023,6 +5050,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
         >
           {(win) => (<>
             {tableHandout && !mapWindow && <TableHandout handout={tableHandout} onClose={() => setTableHandout(null)} />}
+            <Curtain down={curtain} />
             <VoidMap
               map={combat.void.map}
               onChange={(next) => setCombat((c) => ({ ...c, void: { ...(c.void || {}), map: next } }))}
@@ -5043,6 +5071,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       {tableHandout && !mapWindow && !(voidWindow && combat.void && combat.void.map) && (
         <MapWindow name="rt-table" title="Table screen" onClose={() => setTableHandout(null)}>
           <TableHandout handout={tableHandout} onClose={() => setTableHandout(null)} />
+          <Curtain down={curtain} />
         </MapWindow>
       )}
     </div>
@@ -9997,7 +10026,8 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
   grounds, onSaveGround, onNeedGroundTexture, groundErr, moveNote,
   decks, deckErr, deckId, openDeck, createDeck, renameDeck, deleteDeck,
   mapView, setMapView, activeMap, setActiveMap, activeMapKey,
-  tableHandout = null, setTableHandout = () => {}, triggerProps = {}, onClose }) {
+  tableHandout = null, setTableHandout = () => {}, triggerProps = {},
+  fadeTable = async (fn) => fn(), onClose }) {
   const dialogRef = useRef(null);
   useEffect(() => {
     const el = dialogRef.current;
@@ -10061,6 +10091,50 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
   // Every edit below rebuilds the Endeavour whole and hands it back, which
   // keeps the nesting honest: there is one writer, and it writes a shape
   // readEndeavour already understands.
+  /* ---- tonight's scenes (scenes.js) ----
+     Where the evening has got to is kept by this browser, so a reload in the
+     middle of a session comes back to the same scene. */
+  const [tonight, setTonightState] = useState(() => {
+    try { return readTonight(JSON.parse(localStorage.getItem(TONIGHT_KEY) || 'null')); } catch { return null; }
+  });
+  const setTonight = (t) => {
+    setTonightState(t);
+    try { if (t) localStorage.setItem(TONIGHT_KEY, JSON.stringify(t)); else localStorage.removeItem(TONIGHT_KEY); } catch { /* full */ }
+  };
+  const [sceneNote, setSceneNote] = useState('');
+  const sceneSources = {
+    decks: ((mapLib && mapLib.decks) || []).map((d) => ({ id: d.id, name: d.name })),
+    charts: (voidLib && voidLib.list) || [],
+    handouts: readHandouts(homebrew && homebrew.handouts).map((h) => ({ id: h.id, name: handoutLabel(h) })),
+    cues: getAmbienceBoard().cues.map((c) => ({ id: c.id, name: c.name }))
+  };
+  const scenesOf = (endId, missionId) => {
+    const end = endeavours.find((e) => e.id === endId);
+    const mission = end && end.missions.find((x) => x.id === missionId);
+    return { end, mission, scenes: readScenes(mission && mission.scenes) };
+  };
+  // A scene onto the table: the deck, the chart, the handout under the
+  // curtain, then the sound. What could not be found is said, not skipped.
+  const runScene = async (endId, missionId, index) => {
+    const { scenes } = scenesOf(endId, missionId);
+    const sc = scenes[index];
+    if (!sc) return;
+    setTonight({ endId, missionId, index });
+    const missing = [];
+    await fadeTable(async () => {
+      if (sc.deck && !(mapLib && await mapLib.play(sc.deck))) missing.push('its deck');
+      if (sc.chart) {
+        if (voidLib && voidLib.list.some((c) => c.id === sc.chart)) voidLib.onOpen(sc.chart);
+        else missing.push('its void chart');
+      }
+      const h = sc.handout ? readHandouts(homebrew && homebrew.handouts).find((x) => x.id === sc.handout) : null;
+      if (sc.handout && !h) missing.push('its handout');
+      setTableHandout(h || null);
+    });
+    if (sc.cue && !(await playCue(sc.cue))) missing.push('its sound');
+    setSceneNote(missing.length ? `${sc.name || 'This scene'}: ${missing.join(', ')} could not be found.` : '');
+  };
+
   const editMission = (mid, fn) => putEndeavour({
     ...journal,
     missions: journal.missions.map((m) => (m.id === mid ? fn(m) : m))
@@ -10310,6 +10384,29 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           put — the clock and the running record are wanted whatever you are
           doing — and everything else is behind a tab. Same tab furniture the
           Dossier and the Bridge already use. */}
+      {tonight && (() => {
+        const { mission, scenes } = scenesOf(tonight.endId, tonight.missionId);
+        if (!mission || !scenes.length) return null;
+        const i = Math.min(tonight.index, scenes.length - 1);
+        const sc = scenes[i], nx = scenes[i + 1];
+        return (
+          <div className="rt-tonight" role="region" aria-label="Tonight's scenes">
+            <span className="rt-tonight-at">
+              Tonight {'\u00b7'} {mission.name || 'Mission'} {'\u00b7'} scene {i + 1} of {scenes.length}: <strong>{sc.name || 'Untitled'}</strong>
+              {sc.note ? <em> {'\u2014'} {sc.note}</em> : null}
+            </span>
+            <button type="button" className="rt-btn ghost" disabled={i === 0}
+              onClick={() => runScene(tonight.endId, tonight.missionId, i - 1)}>Back</button>
+            <button type="button" className="rt-btn" disabled={!nx}
+              onClick={() => runScene(tonight.endId, tonight.missionId, i + 1)}>
+              {nx ? `Next: ${nx.name || 'scene ' + (i + 2)}` : 'The last scene'}
+            </button>
+            <button type="button" className="rt-btn ghost" onClick={() => { setTonight(null); setSceneNote(''); }}>End the evening</button>
+            {sceneNote ? <span className="rt-vox-hint" role="status">{sceneNote}</span> : null}
+          </div>
+        );
+      })()}
+
       <div className="rt-dtabs" role="tablist">
         {GM_TABS.map((t) => (
           <button key={t.id} role="tab" aria-selected={gmTab === t.id}
@@ -10738,6 +10835,12 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
                 each mission's debriefing. See patrons.js. */}
             <DebriefPanel journal={journal} endeavours={endeavours}
               editMission={editMission} putEndeavour={putEndeavour} />
+
+            {/* The evening in scenes: decks, charts, handouts and sounds in
+                order, run from the bar at the top. See scenes.js. */}
+            <ScenesPanel journal={journal} editMission={editMission} sources={sceneSources}
+              running={tonight && tonight.endId === journal.id ? tonight : null}
+              onRun={(mid, i) => runScene(journal.id, mid, i)} />
           </>
         );
       })()}

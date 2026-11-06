@@ -2680,3 +2680,30 @@ console.log('battlemap.check.mjs: play lists passed');
   assert.equal(grown.walls['8,0'], WALL_EAST, 'the flipped copy has it between its own two squares');
 }
 console.log('battlemap.check.mjs: thin walls passed');
+
+/* ---- what a template catches ---- */
+{
+  const { caughtBy, caughtText } = await import('./battlemap.js');
+  const m = readMap({
+    cols: 10, rows: 10,
+    contacts: {
+      '2,2': { name: 'Cultist', state: 'seen' }, '3,2': { name: 'Cultist', state: 'seen' },
+      '2,3': { name: 'Mutant', state: 'ping' }, '3,3': { name: 'Purestrain', state: 'hidden' },
+      '9,9': { name: 'Far away', state: 'seen' }
+    },
+    markers: { '4,2': { type: 'objective', label: 'Target', bonus: 10 } },
+    cover: { '4,3': 'tank', '4,4': 'crates' }
+  });
+  const cells = [];
+  for (let x = 2; x <= 4; x++) for (let y = 2; y <= 4; y++) cells.push({ x, y });
+  const c = caughtBy(m, [...cells, cells[0]]);
+  assert.equal(c.contacts.length, 4, 'everything under it, once');
+  assert.equal(c.targets.length, 1);
+  assert.equal(c.volatile.length, 1, 'the tank, not the crates');
+  const gm = caughtText(c, { gm: true });
+  assert.match(gm, /^catches Cultist ×2, one contact on the scope, unseen: Purestrain, a marked target, .+, which will go up$/);
+  const table = caughtText(c, { gm: false });
+  assert.doesNotMatch(table, /Purestrain|unseen/, 'the table is not told what it has not found');
+  assert.equal(caughtText(caughtBy(m, [{ x: 0, y: 0 }])), '', 'an empty blast says nothing');
+}
+console.log('battlemap.check.mjs: catches passed');

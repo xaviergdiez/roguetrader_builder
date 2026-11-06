@@ -19,7 +19,7 @@ import {
   setStartRoom, startPlay, playDoor, regionAt, coverAt,
   wearCover, detonateTank, turretAt, turretCells, setTurret, setDeckTurrets,
   spreadWarp, sealWarp, sanctified, placeVent, ventPartner, crawlThrough, ventField, VENT_REACH_SQUARES,
-  lightAt, lightingById,
+  lightAt, lightingById, caughtBy, caughtText,
   WALL_EAST, WALL_SOUTH, edgeNear, hasWall, setWall, clearWallsAround
 } from './battlemap.js';
 import {
@@ -2331,6 +2331,14 @@ export default function BattleMap({
     };
   }, [mode, origin, aim, hover, weapon, showRings, coneAngle, m]);
 
+  // Who and what the template's squares hold (caughtBy), for the readout and
+  // a ring on the map. Only the templates that hit: a blast, a cone, a burst,
+  // a wall of fire.
+  const caught = useMemo(() => (overlay
+    ? caughtBy(m, [...overlay.blast, ...overlay.cone, ...overlay.burst, ...overlay.line]) : null),
+  [overlay, m]);
+  const caughtLine = caught ? caughtText(caught, { gm: !projecting }) : '';
+
   /* ---- rendering ----
 
      THE CANVAS IS A WINDOW ONTO THE DECK, NOT THE DECK. It used to be one
@@ -3341,6 +3349,19 @@ export default function BattleMap({
         ));
       }
 
+      // What it catches, ringed: the contacts the party knows of (and, on the
+      // GM's own view, those it does not), the marked targets, the tanks.
+      if (caught) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,90,60,0.95)';
+        ctx.lineWidth = Math.max(2, px * 0.08);
+        const ringAt = (c) => { ctx.beginPath(); ctx.arc(c.x * px + px / 2, c.y * px + px / 2, px * 0.47, 0, Math.PI * 2); ctx.stroke(); };
+        for (const c of caught.contacts) if (c.state !== 'hidden' || !projecting) ringAt(c);
+        for (const c of caught.targets) ringAt(c);
+        for (const c of caught.volatile) ringAt(c);
+        ctx.restore();
+      }
+
       // Range bands as rings, outermost first so the near ones sit on top.
       for (const ring of overlay.rings) {
         const rp = ring.radius * px;
@@ -3498,7 +3519,7 @@ export default function BattleMap({
     draw();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
-      measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick,
+      measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick, caught,
       tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab, mediaTick, hoverEdge, moving, trigId]);
 
   // Scrolling and resizing the stage move the window over the deck.
@@ -5757,6 +5778,7 @@ export default function BattleMap({
                 {overlay && overlay.kind === 'gaze' && weapon.gazeAll && (
                   <span> · the lit squares can see the Navigator; the shaded ones cannot</span>
                 )}
+                {caughtLine ? <strong> · {caughtLine}</strong> : null}
                 {overlay && overlay.shot ? (
                   <span>
                     {' · '}{overlay.shot.metres} m
@@ -5779,6 +5801,7 @@ export default function BattleMap({
                   ? <span> · no ranged profile</span> : null}
                 {weapon && weapon.blastM ? <span> · Blast {weapon.blastM} m</span> : null}
                 {weapon && weapon.isFlame ? <span> · flame cone — click to aim</span> : null}
+                {caughtLine ? <strong> · {caughtLine}</strong> : null}
                 {/* The shot the GM is actually about to roll, so the band and
                     its modifier are on screen without switching to Measure. */}
                 {/* A sword is in reach or it is not. The shooting bands say

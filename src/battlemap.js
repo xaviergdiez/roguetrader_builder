@@ -2655,6 +2655,50 @@ export function coverBetween(map, from, to) {
   return best;
 }
 
+/* WHAT A TEMPLATE CATCHES, of what the map knows to be there: the contacts
+   (by what the party knows of them), the marked targets, and cover that goes
+   up when it is hit. The models on the table are the GM's to read off; these
+   are the things the map holds, listed so nobody counts squares. */
+export function caughtBy(map, cells) {
+  const m = readMap(map);
+  const out = { contacts: [], targets: [], volatile: [] };
+  const seen = new Set();
+  for (const c of cells || []) {
+    const k = cellKey(c.x, c.y);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const ct = m.contacts[k];
+    if (ct) out.contacts.push({ x: c.x, y: c.y, name: ct.name, state: ct.state });
+    const mk = m.markers[k];
+    if (mk && Number.isFinite(mk.bonus)) out.targets.push({ x: c.x, y: c.y, label: mk.label || 'Target' });
+    const cv = coverAt(m.cover[k]);
+    if (cv && cv.volatile) out.volatile.push({ x: c.x, y: c.y, name: cv.name });
+  }
+  return out;
+}
+
+/* The same in words. A contact the party has not found is named only for
+   the GM (`gm`); on the table's screen it is not there at all. One only on
+   the scope is something, not someone. */
+export function caughtText(caught, { gm = true } = {}) {
+  if (!caught) return '';
+  const count = (list) => {
+    const n = new Map();
+    for (const x of list) n.set(x, (n.get(x) || 0) + 1);
+    return [...n].map(([name, k]) => (k > 1 ? `${name} \u00d7${k}` : name));
+  };
+  const bits = [];
+  const seen = caught.contacts.filter((c) => c.state === 'seen').map((c) => c.name);
+  if (seen.length) bits.push(...count(seen));
+  const pings = caught.contacts.filter((c) => c.state === 'ping').length;
+  if (pings) bits.push(pings === 1 ? 'one contact on the scope' : `${pings} contacts on the scope`);
+  const hidden = caught.contacts.filter((c) => c.state === 'hidden').map((c) => c.name);
+  if (gm && hidden.length) bits.push(`unseen: ${count(hidden).join(', ')}`);
+  if (caught.targets.length) bits.push(caught.targets.length === 1 ? 'a marked target' : `${caught.targets.length} marked targets`);
+  for (const v of count(caught.volatile.map((x) => x.name.toLowerCase()))) bits.push(`${v}, which will go up`);
+  return bits.length ? 'catches ' + bits.join(', ') : '';
+}
+
 /* Keeps a template on the deck. A blast or a field spilling into the void
    beside a corridor is drawn over squares that are not part of the map at
    all, which on a projector reads as the template covering a wall. On an

@@ -93,6 +93,8 @@ import {
 import NervePanel, { SpotPanel } from './NervePanel.jsx';
 import CampaignPanel from './CampaignPanel.jsx';
 import DebriefPanel from './DebriefPanel.jsx';
+import AmbiencePanel from './AmbiencePanel.jsx';
+import { getBoard as getAmbienceBoard, playCue } from './ambienceEngine.js';
 import { superiorityByFoe, SUPERIORITY_RULE, patronById } from './patrons.js';
 import { situationFor } from './awareness.js';
 import { insanityTrack, corruptionTrack, INSANITY_STEP, MALIGNANCY_STEP } from './sanity.js';
@@ -1932,6 +1934,19 @@ const CSS = `
 .rt-leg-more > summary{cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#6d5726;}
 .rt-leg-more p{margin:5px 0;}
 .rt-elite-k{margin:10px 0 6px;font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold);}
+.rt-amb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin:12px 0;}
+.rt-amb-cue{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-height:64px;padding:10px 12px;
+  border:1px solid rgba(212,175,55,.35);background:rgba(10,12,10,.6);color:var(--gold-lit);cursor:pointer;text-align:left;font:inherit;}
+.rt-amb-cue:hover{border-color:var(--gold);}
+.rt-amb-cue.on{border-color:var(--gold-lit);background:linear-gradient(180deg,rgba(212,175,55,.28),rgba(212,175,55,.1));
+  box-shadow:0 0 0 1px rgba(243,201,110,.4) inset;}
+.rt-amb-name{font-size:14px;}
+.rt-amb-kind{font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);}
+.rt-amb-vol{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);}
+.rt-amb-bs{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0 12px;font-size:13.5px;color:var(--dim);}
+.rt-amb-edit > summary{cursor:pointer;font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);margin:6px 0;}
+.rt-amb-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(212,175,55,.15);color:var(--dim);}
+.rt-amb-row .rt-field{flex:1;min-width:140px;}
 .rt-advlist{list-style:none;margin:0;padding:0;}
 .rt-adv{display:flex;flex-wrap:wrap;align-items:center;gap:7px;
   padding:6px 2px;border-bottom:1px solid rgba(109,87,38,.28);}
@@ -9999,7 +10014,8 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
     { id: 'encounters', label: 'Encounters', count: encounters.length },
     { id: 'endeavours', label: 'Endeavours', count: endeavours.length },
     { id: 'map', label: 'Battle map', count: 0 },
-    { id: 'systems', label: 'Systems', count: 0 }
+    { id: 'systems', label: 'Systems', count: 0 },
+    { id: 'sound', label: 'Sound', count: 0 }
   ];
 
   /* ---- the boarding map ----
@@ -10119,6 +10135,9 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
     }));
     setCombat({ ...combat, order: order.map((o) => ({ id: o.id, name: o.name, score: o.score })) });
     say({ kind: 'initiative', text: 'Initiative: ' + order.map((o) => `${o.name} ${o.score}`).join(', ') });
+    // Battle stations, if the ambience board has a cue for it.
+    const stations = getAmbienceBoard().battleStations;
+    if (stations) playCue(stations);
   };
 
   const advance = () => {
@@ -11044,6 +11063,8 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           />
         )}
       </>)}
+
+      {gmTab === 'sound' && <AmbiencePanel />}
 
       {gmTab === 'systems' && (<>
       {/* ---- the system generator ----

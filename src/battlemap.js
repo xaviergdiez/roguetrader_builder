@@ -454,8 +454,16 @@ export function readDoor(v) {
     return DOOR_STATES.includes(v) ? { kind: 'bulkhead', state: v } : null;
   }
   if (!v || typeof v !== 'object' || !DOOR_STATES.includes(v.state)) return null;
-  return { kind: doorKindById(v.kind).id, state: v.state };
+  const d = { kind: doorKindById(v.kind).id, state: v.state };
+  // Which side of its square the leaf is drawn on, for a door that stands in
+  // a doorway on a grid line (a map from another program; see uvtt.js). A
+  // door without one fills its square, as every door drawn here does.
+  if (DOOR_EDGES.includes(v.edge)) d.edge = v.edge;
+  return d;
 }
+export const DOOR_EDGES = ['n', 'e', 's', 'w'];
+// A side, turned a quarter at a time clockwise.
+const turnEdge = (e, t) => DOOR_EDGES[(DOOR_EDGES.indexOf(e) + t) % 4];
 
 /* ---------------------------- cover ----------------------------
    Something standing ON a square rather than the deck itself. The one that
@@ -2063,7 +2071,14 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
       if (src.floor[from]) floor[to] = true;
       if (src.cover[from]) cover[to] = src.cover[from];
       if (src.hazards[from]) hazards[to] = src.hazards[from];
-      if (src.doors[from]) doors[to] = { ...src.doors[from] };
+      if (src.doors[from]) {
+        const d = { ...src.doors[from] };
+        // A leaf on the east side of its square is on the west side in a
+        // copy flipped east to west.
+        if (d.edge && flipX && (d.edge === 'e' || d.edge === 'w')) d.edge = d.edge === 'e' ? 'w' : 'e';
+        if (d.edge && flipY && (d.edge === 'n' || d.edge === 's')) d.edge = d.edge === 'n' ? 's' : 'n';
+        doors[to] = d;
+      }
       if (src.markers[from]) markers[to] = { ...src.markers[from] };
       // The terrain repeats with the deck it is painted on, or an expanded
       // ice shelf would come back as deck plate.
@@ -2199,7 +2214,7 @@ function turnContent(m, t) {
     hazards: move(m.hazards),
     obscuring: move(m.obscuring), ground: move(m.ground), explored: move(m.explored),
     mapped: move(m.mapped), light: move(m.light),
-    doors: move(m.doors, (d) => ({ ...d })),
+    doors: move(m.doors, (d) => (d.edge ? { ...d, edge: turnEdge(d.edge, t) } : { ...d })),
     markers: move(m.markers, (v) => (v.type === 'turret'
       ? { ...v, facing: (((v.facing || 0) + 2 * t) % 8 + 8) % 8 } : { ...v })),
     contacts: move(m.contacts, (c) => ({ ...c })),

@@ -29,6 +29,7 @@ import {
   deckMoves, MOTION_FRAME_MS, VIDEO_FRAME_MS, MOTION_MAX_SQUARES, rainStreaks, drift, flicker, sparkArc, rush
 } from './motion.js';
 import { putLocalFile, getLocalFile } from './localfiles.js';
+import { readUvtt, uvttToMap, UVTT_METRES_PER_SQUARE } from './uvtt.js';
 import { runFrames } from './gsapcdn.js';
 import { SITUATION_MODIFIERS } from './groundcombat.js';
 import { NOISE, noiseById, noisePing } from './awareness.js';
@@ -1179,6 +1180,7 @@ export default function BattleMap({
   const [picTv, setPicTv] = useState('40');
   const [picAcross, setPicAcross] = useState('30');
   const picFileRef = useRef(null);
+  const importFileRef = useRef(null);
   const relinkFileRef = useRef(null);
   // A stroke of the thin-wall tool puts walls up or takes them down for its
   // whole length, decided by the first edge it touched.
@@ -1853,7 +1855,7 @@ export default function BattleMap({
       // different kind selected swaps it, which is how a bulkhead becomes a
       // hatch without erasing it first.
       doors[k] = (here && here.kind === doorKind)
-        ? { kind: here.kind, state: nextDoorState(here.state) }
+        ? { ...here, state: nextDoorState(here.state) }
         : { kind: doorKind, state: 'closed' };
       // Opening a door is a noise: anything hidden within earshot comes up
       // on the scope as a ping, without saying what it is.
@@ -2919,6 +2921,34 @@ export default function BattleMap({
           ctx.strokeRect(x0 + o, y0 + o, px - o * 2, px - o * 2);
           ctx.restore();
         };
+        /* A door in a doorway on a grid line: the leaf along that side of
+           its square, in the colour of its state, solid while it is shut and
+           an outline once it is open. The square is ringed faintly, because
+           the square is what is clicked. */
+        if (door.edge) {
+          const t2 = Math.max(4, px * 0.16), in2 = px * 0.06;
+          const leaf = door.edge === 'e' ? [x0 + px - t2, y0 + in2, t2, px - in2 * 2]
+            : door.edge === 'w' ? [x0, y0 + in2, t2, px - in2 * 2]
+              : door.edge === 's' ? [x0 + in2, y0 + px - t2, px - in2 * 2, t2]
+                : [x0 + in2, y0, px - in2 * 2, t2];
+          ctx.save();
+          ctx.globalAlpha = 0.35;
+          ctx.strokeStyle = stateColour;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x0 + 1, y0 + 1, px - 2, px - 2);
+          ctx.globalAlpha = 1;
+          if (state === 'open') {
+            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = stateColour; ctx.lineWidth = 2;
+            ctx.strokeRect(...leaf);
+          } else {
+            ctx.fillStyle = stateColour; ctx.fillRect(...leaf);
+            ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1; ctx.strokeRect(...leaf);
+          }
+          ctx.restore();
+          lockStripes();
+          return;
+        }
         const tok = tokenAt('door', kind, state, cx, cy);
         if (tok) {
           drawToken(ctx, tok, x0, y0, px);
@@ -3683,6 +3713,51 @@ export default function BattleMap({
     setMediaAsk((n) => n + 1);
     setPicNote(`${file.name} is on this computer now.`);
   };
+  /* A MAP FROM ANOTHER PROGRAM (uvtt.js): Dungeondraft, Dungeon Alchemist,
+     DungeonFog and the rest export one JSON file holding the picture, its
+     walls, its doors and its lights. It replaces the deck, after asking, and
+     undo puts the old one back. */
+  const importMapFile = async (file) => {
+    if (!file) return;
+    let u = null;
+    try { u = readUvtt(JSON.parse(await file.text())); } catch { u = null; }
+    if (!u) {
+      setPicNote(`${file.name} is not a map this can read: it wants a Universal VTT export (.dd2vtt, .uvtt or .df2vtt).`);
+      return;
+    }
+    if (Object.keys(m.floor).length && !await confirmInMap({
+      title: 'Replace this deck?',
+      body: `\u201c${file.name}\u201d takes the place of everything on this deck. Undo (Cmd/Ctrl+Z) brings it back.`,
+      yes: 'Import it'
+    })) return;
+    setPicNote(`Reading ${file.name}\u2026`);
+    let backdrop = null;
+    let kept = true;
+    if (u.image) {
+      const id = newBackdropId();
+      try {
+        const blob = await (await fetch(`data:${u.imageType};base64,${u.image}`)).blob();
+        await putLocalFile(id, blob, { name: file.name });
+        backdrop = { id, kind: 'image', name: file.name.replace(/\.[^.]+$/, '') };
+      } catch { kept = false; }
+    }
+    const { map: im, notes } = uvttToMap(u, { backdrop });
+    patch({
+      cols: im.cols, rows: im.rows, metresPerSquare: im.metresPerSquare, lighting: im.lighting,
+      floor: im.floor, walls: im.walls, doors: im.doors, light: im.light, backdrop: im.backdrop,
+      ground: {}, cover: {}, hazards: {}, obscuring: {}, markers: {}, contacts: {},
+      explored: {}, mapped: {}, viewpoint: null, start: null, customTexture: null
+    });
+    const lit = notes.lighting !== 'clear'
+      ? ` Its light is ${notes.lighting === 'dark' ? 'Total Darkness' : 'Fog, Mist or Shadow'} for the dice, with the ${notes.lit} squares its ${notes.lights} light${notes.lights === 1 ? '' : 's'} reach painted lit.`
+      : '';
+    setPicNote(`${file.name}: ${notes.cols}\u00d7${notes.rows} squares, ${notes.walls} wall edges and ${notes.doors} door${notes.doors === 1 ? '' : 's'}.`
+      + lit
+      + ` A square is ${UVTT_METRES_PER_SQUARE} m, because these maps are drawn five feet to the square; change it under Grid if you read them otherwise.`
+      + (!u.image ? ' The file has no picture in it, so it is laid on the tiled ground.' : '')
+      + (!kept ? ' This browser would not keep the picture, so the walls and doors are on the tiled ground.' : '')
+      + ' Choose the room the party starts in with the flag before playing it.');
+  };
   const movePicture = (next) => patch({ backdrop: readBackdrop({ ...m.backdrop, ...next }) });
   // Wider or narrower, keeping the picture's shape.
   const sizePicture = (across) => {
@@ -4262,7 +4337,7 @@ export default function BattleMap({
       Boolean(m.doors[hereKey] && m.doors[hereKey].kind === d.id), () => {
         const doors = { ...m.doors };
         const here = doors[hereKey];
-        doors[hereKey] = { kind: d.id, state: here ? here.state : 'closed' };
+        doors[hereKey] = { ...(here || {}), kind: d.id, state: here ? here.state : 'closed' };
         patch({ doors });
       })));
     add('h-hazard', 'Fire, gas, radiation\u2026', HAZARD_TYPES.map((h) => radio('hz-' + h.id, h.name, m.hazards[hereKey] === h.id, () => {
@@ -4615,6 +4690,16 @@ export default function BattleMap({
             program, or a moving map made for a TV. The file stays in this browser on this computer; the deck only
             remembers which file it is and where it lies.
           </p>
+          <div className="rt-bm-bar">
+            <button type="button" className="rt-btn" onClick={() => importFileRef.current && importFileRef.current.click()}
+              title="A Universal VTT export: the picture, its walls, its doors and its lights, all at once">
+              Import a map from Dungeondraft or Dungeon Alchemist{'\u2026'}
+            </button>
+            <input ref={importFileRef} type="file" hidden aria-label="Map export to import"
+              accept=".dd2vtt,.uvtt,.df2vtt,.json,application/json"
+              onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; importMapFile(f); }} />
+            <span className="rt-bm-hint">.dd2vtt, .uvtt or .df2vtt {'\u2014'} DungeonFog and Arkenforge export the same.</span>
+          </div>
           {!m.backdrop ? (
             <div className="rt-bm-bar">
               <label className="rt-bm-num"><span>Its size</span>

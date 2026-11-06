@@ -1201,7 +1201,7 @@ export default function BattleMap({
   const trigStrokeRef = useRef(null);
   const sprungRef = useRef(null);
   useEffect(() => {
-    if (sprung && sprung.length && sprungRef.current) reveal(sprungRef.current, { w: win || window, from: 0.98 });
+    if (sprung && sprung.length && sprungRef.current) reveal(sprungRef.current, { from: 0.98 });
   }, [sprung, win]);
   const [hoverEdge, setHoverEdge] = useState(null);
   const reducedMotion = useMemo(() => {

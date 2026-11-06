@@ -100,6 +100,7 @@ import ScenesPanel from './ScenesPanel.jsx';
 import Curtain from './Curtain.jsx';
 import { readScenes, readTonight, TONIGHT_KEY } from './scenes.js';
 import { getBoard as getAmbienceBoard, playCue } from './ambienceEngine.js';
+import { loadGsap } from './gsapcdn.js';
 import { superiorityByFoe, SUPERIORITY_RULE, patronById } from './patrons.js';
 import { situationFor } from './awareness.js';
 import { insanityTrack, corruptionTrack, INSANITY_STEP, MALIGNANCY_STEP } from './sanity.js';
@@ -3371,6 +3372,9 @@ export default function RogueTraderBuilder({ me, cloud }) {
   // A handout on the table's screen (HandoutsPanel.jsx): over the boarding
   // map's window, or the void chart's, or in a window of its own.
   const [tableHandout, setTableHandout] = useState(null);
+  // GSAP from the CDN, asked for once at the start so it is here before the
+  // first handout or curtain wants it (gsapcdn.js). Nothing waits on it.
+  useEffect(() => { loadGsap(); }, []);
   /* TRIGGER ZONES going off on the map (triggers.js): the sound played, the
      handout put up, and the note kept here so every copy of the map and the
      dashboard show the GM the same thing. */

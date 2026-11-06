@@ -10384,6 +10384,17 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           put — the clock and the running record are wanted whatever you are
           doing — and everything else is behind a tab. Same tab furniture the
           Dossier and the Bridge already use. */}
+      {/* A trigger on the map went off: the GM's note, here while the map is
+          out in its own window, where the table's screen must not show it. */}
+      {mapWindow && triggerProps.sprung && triggerProps.sprung.length > 0 && (
+        <div className="rt-bm-sprung" role="status">
+          {triggerProps.sprung.map((f) => (
+            <p key={f.id}><strong>{f.name || 'A trigger'} went off.</strong>{f.note ? ' ' + f.note : ''}</p>
+          ))}
+          <button type="button" className="rt-btn ghost" onClick={triggerProps.onDismissSprung}>Dismiss</button>
+        </div>
+      )}
+
       {tonight && (() => {
         const { mission, scenes } = scenesOf(tonight.endId, tonight.missionId);
         if (!mission || !scenes.length) return null;

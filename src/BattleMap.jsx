@@ -5463,7 +5463,10 @@ export default function BattleMap({
       )}
       {genErr ? <p className="rt-warn">{genErr}</p> : null}
 
-      <div className="rt-bm-bar rt-bm-opts">
+      {/* The tool's own options. NOT .rt-bm-opts, which is the whole panel:
+          in the map's window that class lifts the panel over the deck, and
+          on this row it lifted the row over the toolbar above it. */}
+      <div className="rt-bm-bar rt-bm-toolrow">
         <strong className="rt-bm-toolname"><Icon name={tool.icon} size={16} /> {tool.label}</strong>
         {mode === 'stamp' && (<>
           <select value={tileId} onChange={(e) => setTileId(e.target.value)}>

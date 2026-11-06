@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict';
 import {
   moveAlong, sweeps, courseAhead, strikesAhead, endVoidTurn, springVoidEnter, springVoidNow, fireVoidTrigger,
-  shipsInZone, rollStrike, strikeText, SHIP_PAD
+  shipsInZone, rollStrike, strikeText, SHIP_PAD, courseFrom, headingOf
 } from './voidturn.js';
+import { FIELD_KINDS, BODY_KINDS } from './voidmap.js';
 import { readVoidMap, readCourse, readStrike, readVoidTrigger, redactVoidForTable, rotateScene, MAX_COURSE } from './voidmap.js';
 
 /* ---- the records ---- */
@@ -124,4 +125,70 @@ assert.equal(strikeText({ n: 1, d: 5, armour: false }), '1d5, ignoring armour');
   assert.deepEqual(turned.fields.find((f) => f.id === 'sw').course, [0, 3]);
   assert.deepEqual(turned.triggers.find((t) => t.id === 'mine').x, 20 - 6);
 }
+/* ---- what stays put and burns ---- */
+{
+  assert.deepEqual(FIELD_KINDS.warp_rift.strike, { n: 1, d: 10, bonus: 2, armour: false });
+  assert.ok(BODY_KINDS.torpedoes && BODY_KINDS.attack_craft);
+  const rift = readVoidMap({
+    cols: 30, rows: 20,
+    fields: [{ id: 'rf', kind: 'warp_rift', name: 'Rift', shape: 'circle', x: 10, y: 10, r: 3, strike: FIELD_KINDS.warp_rift.strike }],
+    ships: [{ id: 'a', name: 'In it', side: 'enemy', x: 10.5, y: 10.5 }, { id: 'b', name: 'Clear', side: 'enemy', x: 20.5, y: 10.5 }]
+  });
+  const r = endVoidTurn(rift);
+  assert.deepEqual(r.struck.map((x) => [x.shipId, x.by, x.inside]), [['a', 'Rift', true]]);
+  assert.equal(r.map.fields[0].x, 10, 'a rift stays where it is');
+}
+
+/* ---- aimed by heading and speed ---- */
+assert.deepEqual(courseFrom(90, 10), [10, 0], 'east');
+assert.deepEqual(courseFrom(0, 8), [0, -8], 'up the chart');
+assert.deepEqual(courseFrom(180, 5), [0, 5]);
+assert.deepEqual(headingOf([10, 0]), { heading: 90, speed: 10 });
+assert.deepEqual(headingOf([0, -8]), { heading: 0, speed: 8 });
+assert.deepEqual(headingOf(courseFrom(225, 6)), { heading: 225, speed: 6 });
+
 console.log('voidturn.js OK');
+
+/* ---- orbits: worlds round the star, a moon round its world ---- */
+{
+  const { motionAhead, stepAll, orbitAll } = await import('./voidturn.js');
+  const { readOrbit } = await import('./voidmap.js');
+  assert.equal(readOrbit({ rate: 0 }), null, 'no turning, no orbit');
+  assert.deepEqual(readOrbit({ rate: 500, parent: 'p1', cx: 3, cy: 4 }), { rate: 90, parent: 'p1', cx: 3, cy: 4 });
+  const sys = readVoidMap({
+    cols: 60, rows: 40,
+    stars: [{ x: -10, y: 20, r: 5 }],
+    bodies: [
+      { id: 'w', kind: 'planet', name: 'World', x: 20, y: 20, r: 3, orbit: { rate: 90, cx: 10, cy: 20 } },
+      { id: 'm', kind: 'moon', name: 'Moon', x: 26, y: 20, r: 1, orbit: { rate: 90, parent: 'w' } }
+    ],
+    ships: [{ id: 's', name: 'In the way', side: 'enemy', x: 10.5, y: 30.5 }]
+  });
+  const n = stepAll(sys);
+  // A quarter turn clockwise about (10,20): east of it becomes south of it.
+  assert.deepEqual([n.bodies[0].x, n.bodies[0].y], [10, 30]);
+  // The moon turned a quarter about its world, then carried with it: 6 east became 6 south of where the world now is.
+  assert.deepEqual([n.bodies[1].x, n.bodies[1].y], [10, 36]);
+  const ahead = motionAhead(sys, 2);
+  assert.deepEqual(ahead.get('body:w').map((b) => [b.x, b.y]), [[10, 30], [0, 20]]);
+  assert.equal(ahead.get('body:m').length, 2);
+  // A world set to strike hits the ship standing where its orbit takes it.
+  const heavy = readVoidMap({ ...sys, bodies: sys.bodies.map((b) => (b.id === 'w' ? { ...b, strike: { n: 4, d: 10 } } : b)) });
+  assert.deepEqual(endVoidTurn(heavy).struck.map((x) => x.by), ['World']);
+  assert.deepEqual(strikesAhead(heavy, 3).map((x) => x.inTurns), [1]);
+  // A moon circling a world that circles it back: neither runs away.
+  const loop = readVoidMap({ cols: 30, rows: 30, bodies: [
+    { id: 'a', kind: 'moon', x: 5, y: 5, r: 1, orbit: { rate: 10, parent: 'b' } },
+    { id: 'b', kind: 'moon', x: 9, y: 5, r: 1, orbit: { rate: 10, parent: 'a' } }] });
+  assert.equal(stepAll(loop).bodies.length, 2);
+  // Everything set going at once.
+  const set = orbitAll(readVoidMap({ ...sys, bodies: sys.bodies.map(({ orbit, ...b }) => b) }));
+  const w = set.bodies.find((b) => b.id === 'w');
+  assert.deepEqual([w.orbit.cx, w.orbit.cy], [-10, 20], 'round the star');
+  assert.ok(w.orbit.rate >= 1 && w.orbit.rate <= 8);
+  assert.equal(set.bodies.find((b) => b.id === 'm').orbit.parent, 'w', 'the moon round its world');
+  // Turned with the chart, the centre turns too.
+  const turned = rotateScene(sys, 1);
+  assert.deepEqual([turned.bodies[0].orbit.cx, turned.bodies[0].orbit.cy], [40 - 20, 10]);
+}
+console.log('voidturn.js: orbits OK');

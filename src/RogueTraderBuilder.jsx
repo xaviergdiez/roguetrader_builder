@@ -2253,7 +2253,22 @@ const CSS = `
 .rt-vm-bar{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
 .rt-vm-sep{width:1px;height:22px;background:var(--brass-dim);margin:0 4px;}
 .rt-vm-scale{font-family:var(--mono);font-size:11px;color:var(--dim);}
-.rt-vm-turn{margin-left:auto;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold-lit);}
+.rt-vm-fightbar{margin-left:auto;display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.rt-vm-turn{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold-lit);}
+.rt-vm-bar .rt-btn{padding:5px 12px;font-size:11px;min-height:0;line-height:1.3;}
+/* In its own window the chart is the window: the stage and the panel take its
+   whole height, and the panel scrolls inside it. */
+.rt-vm.win{height:calc(100vh - 20px);}
+.rt-vm.win .rt-vm-body{flex:1 1 auto;min-height:0;flex-wrap:nowrap;align-items:stretch;}
+.rt-vm.win .rt-vm-stage{height:auto;min-height:0;}
+.rt-vm.win .rt-vm-side{height:auto;}
+.rt-vm-tabs{display:flex;gap:4px;position:sticky;top:0;z-index:2;background:var(--void);padding-bottom:4px;}
+.rt-vm-tab{flex:1;padding:6px 8px;font-family:var(--display);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  background:var(--panel);border:1px solid var(--brass-dim);color:var(--dim);cursor:pointer;}
+.rt-vm-tab.on{color:var(--bone);border-color:var(--gold);background:var(--panel-lit);}
+.rt-vm-strike{display:flex;flex-direction:column;gap:4px;padding:6px 0;border-top:1px solid rgba(160,190,230,.15);font-size:12.5px;}
+.rt-vm-strikeact{display:flex;gap:6px;align-items:center;}
+.rt-vm-strikeact .rt-sel{flex:1;font-size:12.5px;padding:3px 6px;min-height:0;}
 .rt-vm-mover{display:flex;flex-direction:column;gap:5px;padding-top:6px;border-top:1px solid rgba(160,190,230,.18);}
 .rt-vm-sides{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .rt-vm-warns{margin:6px 0;padding-left:16px;color:#ffb38a;font-size:13px;}
@@ -3885,13 +3900,15 @@ export default function RogueTraderBuilder({ me, cloud }) {
     onOpen: (id) => {
       const c = voidCharts.find((x) => x.id === id);
       if (!c) return;
-      const m = placeVoidShips(pruneVoidShips(c.map, voidRoster.map((r) => r.id)), voidRoster);
+      // Tokens the GM placed and whose ships are still in the fleet stay; none
+      // are added, the ships being models on the table.
+      const m = pruneVoidShips(c.map, voidRoster.map((r) => r.id));
       patchVoid({ map: m, chartId: id });
       setVoidLibMsg({ error: '', note: `Opened \u201c${c.name}\u201d.` });
     },
     onNew: () => {
       const seed = Math.random().toString(36).slice(2, 8).toUpperCase();
-      patchVoid({ map: placeVoidShips({ ...newVoidMap('New chart'), seed }, voidRoster), chartId: null });
+      patchVoid({ map: { ...newVoidMap('New chart'), seed }, chartId: null });
       setVoidLibMsg({ error: '', note: '' });
     },
     // Off the screen, and out of its window. The star system stays.
@@ -10023,7 +10040,8 @@ function useGunnery({ fleet, setFleet, combat, setCombat, blueprint, homebrew, b
     for (const h of hits) {
       const roll = rollStrike(h.strike);
       if (!roll) continue;
-      const rolled = `${roll.text} rolled ${roll.rolls.join(' + ')}${roll.total !== roll.rolls.reduce((a, b) => a + b, 0) ? ` + ${roll.total - roll.rolls.reduce((a, b) => a + b, 0)}` : ''} = ${roll.total}`;
+      const bonus = (h.strike && h.strike.bonus) || 0;
+      const rolled = `${h.strike.n}d${h.strike.d}${bonus ? `+${bonus}` : ''} rolled ${roll.rolls.join(' + ')}${bonus ? ` + ${bonus}` : ''} = ${roll.total}`;
       const isPlayer = h.shipId === 'player';
       const ship = isPlayer ? { ...playerShip, vitals: pv || playerShip.vitals } : nf.find((x) => x.id === h.shipId);
       if (!ship) {
@@ -10038,7 +10056,7 @@ function useGunnery({ fleet, setFleet, combat, setCombat, blueprint, homebrew, b
       if (isPlayer) pv = vit;
       else nf = nf.map((x) => (x.id === h.shipId ? { ...x, vitals: vit } : x));
       lines.push({ kind: net > 0 ? 'hit' : 'soak',
-        text: `${p ? p.name : h.name} ${h.why}: ${rolled}${armour ? `, less ${armour} armour` : ''}, ${net} to the hull.`
+        text: `${p ? p.name : h.name} ${h.why}: ${rolled}${roll.armour ? (armour ? `, less ${armour} armour` : '') : ', which armour does not stop'}, ${net} to the hull.`
           + (hull <= 0 ? ' The ship is crippled.' : '') });
     }
     return { fleet: nf, playerVitals: pv, lines };
@@ -10083,7 +10101,7 @@ function useGunnery({ fleet, setFleet, combat, setCombat, blueprint, homebrew, b
       voidNext = { ...combat.void, map: t.map };
       for (const d of t.drifted) lines.push({ kind: 'event', text: `${d.name} carried ${Math.round(Math.hypot(d.dx, d.dy))} VU by the riptide.` });
       const hits = [
-        ...t.struck.map((x) => ({ shipId: x.shipId, name: x.name, why: `struck by ${x.by}`, strike: x.strike })),
+        ...t.struck.map((x) => ({ shipId: x.shipId, name: x.name, why: x.inside ? `inside the ${x.by}` : `struck by ${x.by}`, strike: x.strike })),
         ...t.fired.filter((f) => f.strike).flatMap((f) => f.shipIds.map((id, i) => ({
           shipId: id, name: f.shipNames[i], why: `caught by ${f.name || 'a trap'}`, strike: f.strike })))
       ];
@@ -10121,7 +10139,7 @@ const gunSurface = (g) => ({
   targetNumber: g.targetNumber,
   aim: g.loadShot, fire: g.fire, volley: g.volley, rollCritical: g.rollCritical,
   strikeShips: g.strikeShips,
-  log: g.log.slice(0, 6)
+  log: g.log.slice(0, 12)
 });
 
 function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
@@ -10366,7 +10384,6 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
   const chartIt = (zoneId, index) => {
     if (!system) return;
     let m = buildVoidScene(system, [{ zoneId, index }], { size: 'standard' });
-    m = placeVoidShips(m, voidRoster);
     setCombat((c) => ({ ...c, void: { ...(c.void || {}), system, map: m } }));
     setGmTab('voidmap');
   };

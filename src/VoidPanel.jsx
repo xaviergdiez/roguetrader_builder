@@ -50,10 +50,11 @@ export default function VoidPanel({
   const build = (seed) => {
     if (!system || !replaceOk()) return;
     const s = seed || seedText.trim() || newSeed();
-    let m = buildScene(system, chosen.map((e) => ({ zoneId: e.zoneId, index: e.index })), {
+    // No ship tokens: the ships are models on the table (the Aim tool points at
+    // them). The fleet can still be put on as tokens with the button below.
+    const m = buildScene(system, chosen.map((e) => ({ zoneId: e.zoneId, index: e.index })), {
       size, seed: s, zoneId: openZone
     });
-    m = placeShips(m, roster);
     onVoidState({ ...state, system, map: m, chartId: null });
     setSeedText(s);
     setNote(`${m.name}. ${describeScene(m)}. Seed ${s}.`);
@@ -62,8 +63,7 @@ export default function VoidPanel({
 
   const blank = () => {
     if (!replaceOk()) return;
-    let m = newVoidMap('Open void', size);
-    m = placeShips({ ...m, seed: newSeed() }, roster);
+    const m = { ...newVoidMap('Open void', size), seed: newSeed() };
     onVoidState({ ...state, map: m, chartId: null });
     setNote('A blank chart. Add worlds and fields from the panel beside it.');
   };
@@ -161,8 +161,9 @@ export default function VoidPanel({
 
       {map && (missing > 0 || stale > 0) && (
         <div className="rt-btnrow">
-          <button type="button" className="rt-btn" onClick={placeFleet}>
-            {missing > 0 ? `Put ${missing} ship${missing === 1 ? '' : 's'} on the chart` : ''}
+          <span className="rt-vox-hint">The ships are models on the table, aimed with the chart{'\u2019'}s Aim tool. Tokens are there if you want the chart to keep track of them.</span>
+          <button type="button" className="rt-btn ghost" onClick={placeFleet}>
+            {missing > 0 ? `Put ${missing} ship token${missing === 1 ? '' : 's'} on the chart` : ''}
             {missing > 0 && stale > 0 ? ' and ' : ''}
             {stale > 0 ? `take off ${stale} that left the fleet` : ''}
           </button>

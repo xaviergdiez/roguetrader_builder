@@ -111,6 +111,18 @@ export const FIELD_KINDS = {
   nebula: {
     name: 'Gas Cloud', shape: 'circle', shotMod: 0, moveMod: null,
     note: 'Scenery the GM can give a rule to.'
+  },
+  /* Two that hurt what stays in them: each burns every ship inside it when a
+     turn ends (voidturn.js). HOUSE, both, numbers the GM changes on the chart. */
+  warp_rift: {
+    name: 'Warp Rift', shape: 'circle', shotMod: -10, moveMod: -20,
+    strike: { n: 1, d: 10, bonus: 2, armour: false },
+    note: 'House: the veil torn open. A shot through it is at -10, flying into it a Pilot test at -20, and a ship inside it when the turn ends takes 1d10+2 that armour does not stop.'
+  },
+  radiation_zone: {
+    name: 'Radiation Zone', shape: 'circle', shotMod: 0, moveMod: null,
+    strike: { n: 1, d: 5, bonus: 0, armour: false },
+    note: 'House: a ship inside it when the turn ends takes 1d5 that armour does not stop, and the GM may ask for a Toughness test of anyone aboard.'
   }
 };
 
@@ -128,6 +140,11 @@ export const BODY_KINDS = {
   asteroid: { name: 'Asteroid', blocks: true, silhouettes: false },
   station: { name: 'Derelict Station', blocks: false, silhouettes: false },
   hulk: { name: 'Hulk', blocks: false, silhouettes: false },
+  /* Things launched in the fight, that move by themselves each turn and hit
+     what they reach (voidturn.js): set their heading and speed on the chart.
+     HOUSE: the strike they carry is the GM's to set. */
+  torpedoes: { name: 'Torpedo salvo', blocks: false, silhouettes: false },
+  attack_craft: { name: 'Attack craft', blocks: false, silhouettes: false },
   // What a table sees of a body it can only ping: that something is there and
   // how big it looms. Never built by the generator, and it blocks nothing,
   // because the table has no way to know whether what it cannot read would.
@@ -286,6 +303,25 @@ export function readCourse(v) {
   return c[0] || c[1] ? c : null;
 }
 
+/* An ORBIT: a body (or a round field) carried round a centre a number of
+   degrees each turn, clockwise on the chart for a positive rate. Round the
+   star, or a point, `cx, cy`; or round another body, `parent`, whose own
+   motion carries it along, which is how a moon goes with its planet. The
+   radius is wherever it stands from its centre: dragging it nearer is a
+   tighter orbit. */
+export const MAX_ORBIT_RATE = 90;
+export function readOrbit(v) {
+  if (!v || typeof v !== 'object') return null;
+  const rate = clamp(round1(num(v.rate)), -MAX_ORBIT_RATE, MAX_ORBIT_RATE);
+  if (!rate) return null;
+  return {
+    rate,
+    parent: str(v.parent, 24),
+    cx: round2(clamp(num(v.cx), -MAX_VOID * 3, MAX_VOID * 4)),
+    cy: round2(clamp(num(v.cy), -MAX_VOID * 3, MAX_VOID * 4))
+  };
+}
+
 export function readStrike(v) {
   if (!v || typeof v !== 'object') return null;
   const n = clamp(Math.round(num(v.n, 1)), 1, 6);
@@ -366,7 +402,8 @@ function readBody(b) {
     note: str(b.note, 300),
     state: STATES.includes(b.state) ? b.state : 'seen',
     course: readCourse(b.course),
-    strike: readStrike(b.strike)
+    strike: readStrike(b.strike),
+    orbit: readOrbit(b.orbit)
   };
 }
 
@@ -392,7 +429,9 @@ function readField(f) {
     rot: shape === 'band' ? 0 : Math.round(norm360(num(f.rot))),
     state: STATES.includes(f.state) ? f.state : 'seen',
     course: readCourse(f.course),
-    strike: readStrike(f.strike)
+    strike: readStrike(f.strike),
+    // Only a round field can circle something; a band's direction is its ends.
+    orbit: shape === 'circle' ? readOrbit(f.orbit) : null
   };
   if (shape === 'band') {
     out.x2 = round2(clamp(num(f.x2, out.x + 10), -MAX_VOID, MAX_VOID * 2));
@@ -1197,7 +1236,8 @@ export function rotateScene(map, turns = 1) {
       cols: m.rows, rows: m.cols,
       stars: m.stars.map((s) => ({ ...s, ...at(s) })),
       bodies: m.bodies.map((b) => ({ ...b, ...at(b), rot: norm360(b.rot + 90),
-        course: b.course ? [-b.course[1], b.course[0]] : null })),
+        course: b.course ? [-b.course[1], b.course[0]] : null,
+        orbit: b.orbit ? (() => { const c = at({ x: b.orbit.cx, y: b.orbit.cy }); return { ...b.orbit, cx: c.x, cy: c.y }; })() : null })),
       fields: m.fields.map((f) => {
         const out = { ...f, ...at(f) };
         if (f.shape === 'band') {
@@ -1208,6 +1248,7 @@ export function rotateScene(map, turns = 1) {
         }
         if (f.drift) out.drift = [-f.drift[1], f.drift[0]];
         if (f.course) out.course = [-f.course[1], f.course[0]];
+        if (f.orbit) out.orbit = { ...f.orbit, ...at({ x: f.orbit.cx, y: f.orbit.cy }) };
         return out;
       }),
       ships: m.ships.map((s) => ({ ...s, ...at(s), heading: norm360(s.heading + 90) })),

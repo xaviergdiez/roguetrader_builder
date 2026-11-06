@@ -242,6 +242,16 @@ const ICONS = {
   grid: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2" /></>
 };
 
+/* A number field the GM types into. Selected whole when clicked, so a 0 is
+   replaced rather than typed after; and a 0 left in front of a digit is taken
+   off as it is typed, since "03" is 3 but reads as a mistake. A browser
+   leaves the field's own text alone when it already equals the number. */
+const selectAll = (e) => { const el = e.currentTarget; setTimeout(() => { try { el.select(); } catch { /* gone */ } }, 0); };
+function noLeadingZero(el) {
+  const v = String(el.value);
+  if (/^-?0\d/.test(v)) el.value = v.replace(/^(-?)0+(?=\d)/, '$1');
+}
+
 function Icon({ name, size = 18 }) {
   return (
     <svg className="rt-ico" viewBox="0 0 24 24" width={size} height={size} fill="none"
@@ -1359,7 +1369,7 @@ export default function BattleMap({
 
   useEffect(() => {
     const w = win || window;
-    const end = () => { gestureRef.current = false; wallStrokeRef.current = null; trigStrokeRef.current = null; };
+    const end = () => { gestureRef.current = false; wallStrokeRef.current = null; trigStrokeRef.current = null; picDragRef.current = null; };
     w.addEventListener('mouseup', end);
     return () => w.removeEventListener('mouseup', end);
   }, [win]);
@@ -1713,19 +1723,90 @@ export default function BattleMap({
 
   /* The thin-wall tool works on the EDGE under the pointer, not the square,
      so it needs the position in fractions of a square. */
-  const edgeFromEvent = (e) => {
+  const fracFromEvent = (e) => {
     const stage = stageRef.current;
     if (!stage) return null;
     const rect = stage.getBoundingClientRect();
-    const fx = (e.clientX - rect.left - stage.clientLeft + stage.scrollLeft) / zoom / px;
-    const fy = (e.clientY - rect.top - stage.clientTop + stage.scrollTop) / zoom / px;
-    const edge = edgeNear(fx, fy);
+    return {
+      x: (e.clientX - rect.left - stage.clientLeft + stage.scrollLeft) / zoom / px,
+      y: (e.clientY - rect.top - stage.clientTop + stage.scrollTop) / zoom / px
+    };
+  };
+  const edgeFromEvent = (e) => {
+    const f = fracFromEvent(e);
+    if (!f) return null;
+    const edge = edgeNear(f.x, f.y);
     if (!edge) return null;
     // Both its sides on the grid: the deck's outer edge is a wall already.
     const inside = edge.bit === WALL_EAST
       ? edge.x + 1 < m.cols && edge.y < m.rows
       : edge.y + 1 < m.rows && edge.x < m.cols;
     return inside ? edge : null;
+  };
+  /* PLACING THE PICTURE by hand, while its panel is open: a drag on it moves
+     it, a drag on its corner sizes it with its shape kept. Worked out from
+     where the drag began, so a fast pointer does not drift; Shift lands the
+     corner on whole squares. */
+  const PIC_HANDLE = 0.45;    // squares from the corner that count as the corner
+  // The corner that sizes it, kept on the grid: a picture hanging off the
+  // deck's edge is sized from the last corner of it that can be reached.
+  const picCorner = (b) => ({ x: Math.min(b.x + b.w, m.cols), y: Math.min(b.y + b.h, m.rows) });
+  const picHit = (f) => {
+    const b = m.backdrop;
+    if (!picOpen || !b || !f) return null;
+    const c = picCorner(b);
+    if (Math.abs(f.x - c.x) <= PIC_HANDLE && Math.abs(f.y - c.y) <= PIC_HANDLE) return 'size';
+    return f.x >= b.x && f.x <= b.x + b.w && f.y >= b.y && f.y <= b.y + b.h ? 'move' : null;
+  };
+  const picDragRef = useRef(null);
+  const [picHover, setPicHover] = useState(null);
+  const hundredth = (v) => Math.round(v * 100) / 100;
+  const dragPicture = (e) => {
+    const d = picDragRef.current;
+    const f = fracFromEvent(e);
+    if (!d || !f) return;
+    const dx = f.x - d.from.x, dy = f.y - d.from.y;
+    const s0 = d.start;
+    if (d.kind === 'move') {
+      let x = s0.x + dx, y = s0.y + dy;
+      if (e.shiftKey) { x = Math.round(x); y = Math.round(y); }
+      patch({ backdrop: readBackdrop({ ...m.backdrop, x: hundredth(x), y: hundredth(y) }) });
+      return;
+    }
+    const ratio = s0.h / s0.w;
+    // Whichever way the corner moved further, kept to the picture's shape.
+    let w = Math.abs(dx) >= Math.abs(dy / ratio) ? s0.w + dx : s0.w + dy / ratio;
+    if (e.shiftKey) w = Math.round(s0.x + w) - s0.x;
+    w = Math.max(0.5, w);
+    patch({ backdrop: readBackdrop({ ...m.backdrop, w: hundredth(w), h: hundredth(w * ratio) }) });
+  };
+  /* Followed on the whole window, not the canvas: a picture sized from the
+     deck's edge is dragged straight off the canvas, and a drag that stopped
+     there would stop the moment it began. Read through a ref so each move
+     works on the deck as it is now. */
+  const dragPictureRef = useRef(null);
+  dragPictureRef.current = dragPicture;
+  const startPictureDrag = (kind, from) => {
+    picDragRef.current = { kind, from, start: { ...m.backdrop } };
+    const w = win || window;
+    const move = (ev) => { if (picDragRef.current) dragPictureRef.current(ev); };
+    const up = () => {
+      picDragRef.current = null;
+      w.removeEventListener('mousemove', move);
+      w.removeEventListener('mouseup', up);
+    };
+    w.addEventListener('mousemove', move);
+    w.addEventListener('mouseup', up);
+  };
+  // The arrow keys, read by the key handler bound once below.
+  const nudgeRef = useRef(null);
+  nudgeRef.current = (key, big) => {
+    if (!picOpen || !m.backdrop) return false;
+    const step = big ? 1 : 0.05;
+    const d = { arrowleft: [-step, 0], arrowright: [step, 0], arrowup: [0, -step], arrowdown: [0, step] }[key];
+    if (!d) return false;
+    patch({ backdrop: readBackdrop({ ...m.backdrop, x: hundredth(m.backdrop.x + d[0]), y: hundredth(m.backdrop.y + d[1]) }) });
+    return true;
   };
   const strokeWall = (e, starting) => {
     const edge = edgeFromEvent(e);
@@ -2075,6 +2156,8 @@ export default function BattleMap({
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;    // leave browser shortcuts alone
+      // The arrows nudge a picture being placed, and do nothing else here.
+      if (k.startsWith('arrow') && nudgeRef.current && nudgeRef.current(k, e.shiftKey)) { e.preventDefault(); return; }
       // R is two things. Held with a click it turns the painted map; tapped on
       // its own it turns the tile about to be stamped. Which one it was is
       // only known when the key comes up.
@@ -3467,6 +3550,24 @@ export default function BattleMap({
       if (n) fill(areaCells(m, hover, n.radiusM), 'rgba(255,200,60,0.16)');
     }
 
+    // 8b. The picture being placed: its edge, and the corner that sizes it.
+    if (picOpen && m.backdrop) {
+      const b = m.backdrop;
+      ctx.save();
+      ctx.setLineDash([px * 0.2, px * 0.12]);
+      ctx.strokeStyle = 'rgba(243,201,110,0.95)';
+      ctx.lineWidth = Math.max(2, px * 0.06);
+      ctx.strokeRect(b.x * px, b.y * px, b.w * px, b.h * px);
+      ctx.setLineDash([]);
+      const hs = px * PIC_HANDLE;
+      const c = picCorner(b);
+      ctx.fillStyle = picHover === 'size' ? 'rgba(255,226,150,1)' : 'rgba(243,201,110,0.9)';
+      ctx.fillRect(c.x * px - hs / 2, c.y * px - hs / 2, hs, hs);
+      ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1.5;
+      ctx.strokeRect(c.x * px - hs / 2, c.y * px - hs / 2, hs, hs);
+      ctx.restore();
+    }
+
     // 9. The measuring tape.
     if (measureFrom && measureTo && measurement) {
       drawShot(ctx, px, measureFrom, measureTo, measurement.blocked);
@@ -3520,7 +3621,8 @@ export default function BattleMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick, caught,
-      tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab, mediaTick, hoverEdge, moving, trigId]);
+      tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab, mediaTick, hoverEdge, moving, trigId,
+      picOpen, picHover]);
 
   // Scrolling and resizing the stage move the window over the deck.
   useEffect(() => {
@@ -3548,7 +3650,10 @@ export default function BattleMap({
            accident would decalibrate the projector mid-session without
            anyone seeing it happen, so the wheel drops focus instead. */
         onWheel={(e) => e.currentTarget.blur()}
+        // Clicked into, the number is selected, so what is typed replaces it.
+        onFocus={selectAll} onDoubleClick={selectAll}
         onChange={(e) => {
+          noLeadingZero(e.target);
           const n = Number(e.target.value);
           if (Number.isFinite(n)) onSet(Math.min(max, Math.max(min, n)));
         }} />
@@ -4830,7 +4935,8 @@ export default function BattleMap({
               {picHow === 'grid' && (
                 <label className="rt-bm-num"><span>Pixels / square</span>
                   <input type="number" min={10} max={2000} value={picPps} aria-label="Pixels to the square"
-                    onWheel={(e) => e.currentTarget.blur()} onChange={(e) => setPicPps(e.target.value)} />
+                    onWheel={(e) => e.currentTarget.blur()} onFocus={selectAll} onDoubleClick={selectAll}
+                    onChange={(e) => { noLeadingZero(e.target); setPicPps(e.target.value); }} />
                 </label>
               )}
               {picHow === 'tv' && (
@@ -4844,8 +4950,9 @@ export default function BattleMap({
               )}
               {picHow === 'across' && (
                 <label className="rt-bm-num"><span>Squares across</span>
-                  <input type="number" min={1} max={MAX_GRID} step={0.01} value={picAcross} aria-label="Squares across"
-                    onWheel={(e) => e.currentTarget.blur()} onChange={(e) => setPicAcross(e.target.value)} />
+                  <input type="number" min={1} max={MAX_GRID} step={0.5} value={picAcross} aria-label="Squares across"
+                    onWheel={(e) => e.currentTarget.blur()} onFocus={selectAll} onDoubleClick={selectAll}
+                    onChange={(e) => { noLeadingZero(e.target); setPicAcross(e.target.value); }} />
                 </label>
               )}
               <button type="button" className="rt-btn" onClick={() => picFileRef.current && picFileRef.current.click()}>
@@ -4874,9 +4981,9 @@ export default function BattleMap({
                 onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; relinkPicture(f); }} />
             </div>
             <div className="rt-bm-bar">
-              {num('Squares across', m.backdrop.w, sizePicture, 0.5, MAX_GRID, 0.01)}
-              {num('From the left', m.backdrop.x, (v) => movePicture({ x: v }), -MAX_GRID, MAX_GRID, 0.05)}
-              {num('From the top', m.backdrop.y, (v) => movePicture({ y: v }), -MAX_GRID, MAX_GRID, 0.05)}
+              {num('Squares across', m.backdrop.w, sizePicture, 0.5, MAX_GRID, 0.5)}
+              {num('From the left', m.backdrop.x, (v) => movePicture({ x: v }), -MAX_GRID, MAX_GRID, 0.25)}
+              {num('From the top', m.backdrop.y, (v) => movePicture({ y: v }), -MAX_GRID, MAX_GRID, 0.25)}
               <label className="rt-bm-num"><input type="checkbox" checked={m.backdrop.grid}
                 onChange={(e) => movePicture({ grid: e.target.checked })} /><span>Grid lines over it</span></label>
             </div>
@@ -4893,6 +5000,10 @@ export default function BattleMap({
               <button type="button" className="rt-btn ghost" onClick={() => patch({ backdrop: null })}
                 title="The deck goes back to its tiled ground. Undo puts the picture back.">Take the picture off</button>
             </div>
+            <p className="rt-bm-hint">
+              While this panel is open, drag the picture on the map to move it and drag its corner to size it (hold Shift
+              to land on whole squares); the arrow keys nudge it a twentieth of a square, or a whole one with Shift.
+            </p>
             <p className="rt-bm-hint">
               Line the picture{'\u2019'}s own grid up with the map{'\u2019'}s, then draw its walls with the Thin wall tool:
               click a grid line to put a wall on it, drag along to draw a run, and click it again to take it down. The fog,
@@ -5884,6 +5995,8 @@ export default function BattleMap({
             const pos = posFromEvent(e);
             setHover(pos);
             if (mode === 'wall') setHoverEdge(edgeFromEvent(e));
+            if (picDragRef.current) return;      // the window is following the drag
+            if (picOpen) { const h = picHit(fracFromEvent(e)); if (h !== picHover) setPicHover(h); }
             if (spaceRef.current || panOnRef.current || rHeldRef.current) return;   // panning, or turning the map
             if (e.buttons === 1 && mode === 'wall') { strokeWall(e, false); return; }
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure'
@@ -5900,10 +6013,18 @@ export default function BattleMap({
               rotateMapBy(e.shiftKey ? -1 : 1);
               return;
             }
+            // With the Picture panel open, a press on the picture places it
+            // rather than working the tool in hand.
+            if (e.button === 0 && picOpen && m.backdrop && !spaceRef.current && !panOnRef.current) {
+              const f = fracFromEvent(e);
+              const hit = picHit(f);
+              if (hit) { startPictureDrag(hit, f); return; }
+            }
             if (e.button === 0 && mode === 'wall') { strokeWall(e, true); return; }
             if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
           }}
-          style={{ cursor: mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
+          style={{ cursor: picHover === 'size' ? 'nwse-resize' : picHover === 'move' ? 'move'
+            : mode === 'measure' || mode === 'overlay' ? 'crosshair' : 'pointer' }}
         />
         </div>
       </div>

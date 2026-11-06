@@ -279,4 +279,23 @@ for (const e of ELITE_ADVANCES) {
   }
 }
 
+/* ---- nothing waits on hardware this table does not have ----
+   The archetype conversions were written for a touch table with an IR frame
+   and a companion app. There is neither here, so no advance may ask a player
+   to pick on a touch screen or read a digital marker off a display. */
+for (const e of ELITE_ADVANCES) {
+  const text = [e.name, e.requires, e.effect, e.note].filter(Boolean).join(' ');
+  assert.doesNotMatch(text, /touch ?(screen|table)|IR frame|digital|tabletop display|display surface|companion app|table monitor/i,
+    e.id + ' still leans on a touch table or a companion app');
+}
+assert.match(eliteById('bounty-hunter-claim-bounty').effect, /name up to 3 hostiles you can see/);
+assert.match(eliteById('grand-strategist-combat-zones').effect, /mark up to three 3-metre-square sectors/);
+// Every one of them kept: the hardware went, not the advances.
+for (const id of ['grand-strategist-combat-zones', 'master-tactician-press-the-advantage', 'vanguard-unyielding-beacon',
+  'bounty-hunter-claim-bounty', 'assassin-killing-edge', 'operative-exploit-analysis', 'officer-bring-it-down',
+  'soldier-run-and-gun', 'exemplar-apex-resolve', 'hymns-of-the-empty-vial', 'curious-servo-skull-network',
+  'privateers-opportunism', 'dynasty-mandate', 'hive-fleet-survivor-prescience']) {
+  assert.ok(eliteById(id), id + ' kept');
+}
+
 console.log('elite.js OK (%d named advances)', ELITE_ADVANCES.length);

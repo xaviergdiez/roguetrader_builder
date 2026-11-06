@@ -38,13 +38,17 @@ export const ELITE_ADVANCES = [
   /* ---- Tier I and II archetype conversions ----
      Written against Action Dice and a touch table rather than this app's
      d100 and Fate Points. Kept as supplied — the effect text is the table's
-     own to word — with two exceptions. Career lists were corrected, because
-     a career this app does not have can never be matched and the entry would
-     read as permanently out of reach. And distances are in METRES: Rogue
-     Trader measures range in metres throughout, one grid square being one
-     metre, which is the scale movement.js already assumes when it turns an
-     Agility Bonus of 3 into a 3-metre Half Move. Both are enforced by the
-     check. */
+     own to word — with three exceptions.
+
+     The touch table is gone from them. There is no touch or IR frame at this
+     table, so a choice made on its screen is said aloud, a digital marker is
+     a token or a tally, and what a display or a companion app was to show is
+     left out. Career lists were corrected, because a career this app does not
+     have can never be matched and the entry would read as permanently out of
+     reach. And distances are in METRES: Rogue Trader measures range in metres
+     throughout, one grid square being one metre, which is the scale
+     movement.js already assumes when it turns an Agility Bonus of 3 into a
+     3-metre Half Move. All three are enforced by the check. */
 
   {
     id: 'grand-strategist-combat-zones',
@@ -54,12 +58,11 @@ export const ELITE_ADVANCES = [
     careers: ['Seneschal', 'Explorator', 'Rogue Trader'],
     minRank: 3,
     requires: 'Seneschal, Explorator, or Rogue Trader, Rank III, Scholastic Lore (Tactica Imperialis)',
-    effect: 'At the start of combat, define up to three 3-metre-square sectors on the digital tabletop '
+    effect: 'At the start of combat, mark up to three 3-metre-square sectors of the battlefield '
       + 'as designated Combat Zones: Frontline (+2 Damage to allies inside), Backline (+10 Dodge and Cover bonus), '
       + 'or Rear (+10 Ballistic Skill and +2 Range to shots originating here). Zones remain active for the encounter.',
     note: 'Converted from the Grand Strategist archetype (Rogue Trader CRPG). '
-      + 'Players can designate and drag their zone grids directly onto the touch table or assign them via '
-      + 'the companion app before the first round initiates.'
+      + 'Mark the zones with tokens, or with markers on the battle map, before the first round.'
   },
   {
     id: 'master-tactician-press-the-advantage',
@@ -73,7 +76,7 @@ export const ELITE_ADVANCES = [
       + 'Tactical Advantage (up to a max equal to your Fellowship Bonus). Spend an Action Die (3+) to consume all stacks, '
       + 'granting your next attack or an ally\u2019s attack +2 bonus damage per stack consumed.',
     note: 'Converted from the Master Tactician archetype (Rogue Trader CRPG). '
-      + 'Tactical Advantage stacks are displayed digitally around your mini\u2019s base aura on the screen.'
+      + 'Keep the stacks as a tally beside your sheet.'
   },
   {
     id: 'vanguard-unyielding-beacon',
@@ -86,8 +89,7 @@ export const ELITE_ADVANCES = [
     effect: 'You project a threat aura to a radius of 3 metres. Hostile AI prioritizing targets must engage you if in range. '
       + 'Whenever an enemy hits you, gain temporary Wounds equal to your Toughness Bonus (these absorb damage first and '
       + 'expire at the end of the combat round).',
-    note: 'Converted from the Vanguard archetype (Rogue Trader CRPG). '
-      + 'The digital table renders a pulsing taunt boundary under your physical miniature.'
+    note: 'Converted from the Vanguard archetype (Rogue Trader CRPG).'
   },
   {
     id: 'bounty-hunter-claim-bounty',
@@ -97,11 +99,11 @@ export const ELITE_ADVANCES = [
     careers: ['Arch-Militant', 'Void-Master'],
     minRank: 3,
     requires: 'Arch-Militant or Void-Master, Rank III, Inquiry or Survival',
-    effect: 'At the start of combat, select up to 3 hostiles as your "Prey" via the touch screen. '
+    effect: 'At the start of combat, name up to 3 hostiles you can see as your "Prey". '
       + 'You gain +10 Ballistic Skill/Weapon Skill and +2 Penetration against marked targets. '
       + 'When a marked Prey target is eliminated, immediately recover 1 spent Action Die (value of 4).',
     note: 'Converted from the Bounty Hunter archetype (Rogue Trader CRPG). '
-      + 'Prey targets are visibly highlighted with digital reticles beneath their bases on the screen.'
+      + 'A target marker on each on the battle map keeps the Prey picked out.'
   },
   {
     id: 'assassin-killing-edge',
@@ -114,8 +116,7 @@ export const ELITE_ADVANCES = [
     effect: 'Whenever you attack a target from its flank or rear relative to its facing vector arrow, '
       + 'your attack gains +20 Critical Hit chance and inflicts bonus damage equal to your (Agility Bonus + Perception Bonus). '
       + 'You may move through a hostile\u2019s own space without provoking free attacks.',
-    note: 'Converted from the Assassin archetype (Rogue Trader CRPG). '
-      + 'Flanking openings appear as illuminated arcs projected onto the digital tabletop behind enemy miniatures.'
+    note: 'Converted from the Assassin archetype (Rogue Trader CRPG).'
   },
   {
     id: 'operative-exploit-analysis',
@@ -127,11 +128,11 @@ export const ELITE_ADVANCES = [
     careers: ['Explorator', 'Seneschal', 'Astropath Transcendent'],
     minRank: 2,
     requires: 'Explorator, Seneschal, or Psyker, Rank II, Logic or Scrutiny',
-    effect: 'At the start of each round, all hostiles within your Line of Sight gain 1 digital "Exploit" marker. '
+    effect: 'At the start of each round, all hostiles within your Line of Sight gain 1 "Exploit" marker. '
       + 'Spend an Action Die (2+) to trigger "Expose Weakness", consuming all Exploits on a target to reduce its '
       + 'Armor Points by 1 and Dodge by -10% per Exploit marker until the end of the round.',
     note: 'Converted from the Operative archetype (Rogue Trader CRPG). '
-      + 'Exploit counters render as small pips directly under the hostile miniatures on the display surface.'
+      + 'Count the Exploits with tokens beside each miniature, or a tally.'
   },
   {
     id: 'officer-bring-it-down',
@@ -144,8 +145,7 @@ export const ELITE_ADVANCES = [
     effect: 'Spend a 3+ Action Die to command an ally within 6 metres to act immediately out of turn order. '
       + 'The ally receives an immediate bonus turn with 2 Action Dice and 0 movement points. '
       + 'This ability can only be used on an ally once per combat round.',
-    note: 'Converted from the Officer archetype (Rogue Trader CRPG). '
-      + 'Pushes a priority alert directly to the target player\u2019s companion app prompting their extra action.'
+    note: 'Converted from the Officer archetype (Rogue Trader CRPG).'
   },
   {
     id: 'soldier-run-and-gun',
@@ -158,8 +158,7 @@ export const ELITE_ADVANCES = [
     effect: 'Spend a 2+ Action Die to enter a sprint state: gain +3 metres of tactical movement and '
       + 'make an extra ranged attack this turn, ignoring standard single-attack limitations. '
       + 'You cannot use basic interactions or terminals in the same turn this ability is activated.',
-    note: 'Converted from the Soldier archetype (Rogue Trader CRPG). '
-      + 'Expands the highlighted movement grid on the digital tabletop to show the extended sprint radius.'
+    note: 'Converted from the Soldier archetype (Rogue Trader CRPG).'
   },
   {
     id: 'exemplar-apex-resolve',
@@ -410,8 +409,7 @@ export const ELITE_ADVANCES = [
     effect: 'Spend a 3+ Action Die as a Free Action to sing the holy hymns of your fallen sisters. '
       + 'For 2 rounds, all allies within hearing range ignore the effects of Fatigue, Pinning, and Fear. '
       + 'Daemons and warp-entities within 4 metres suffer a -10 penalty to all tests and treat the area as difficult terrain.',
-    note: 'Sung by those who carry the ashes of an order that did not survive them. While the hymn '
-      + 'is active, the companion app plays ambient liturgical chants through connected player devices.'
+    note: 'Sung by those who carry the ashes of an order that did not survive them.'
   },
   {
     id: 'curious-servo-skull-network',
@@ -421,7 +419,7 @@ export const ELITE_ADVANCES = [
     careers: ['Explorator'],
     minRank: 2,
     requires: 'Explorator, Rank II, Tech-Use',
-    effect: 'Your unique Servo-Skull gains an independent digital base marker on the tabletop display. '
+    effect: 'Your unique Servo-Skull acts on the table as a model of its own. '
       + 'It can move up to 4 metres per round through air vents and over cover. It can perform Tech-Use, '
       + 'Security, and Search checks using your characteristics without exposing your miniature to line of sight.',
     note: 'An enigmatic construct of unknown provenance. Interfacing with foreign xenos technology '
@@ -438,8 +436,7 @@ export const ELITE_ADVANCES = [
     effect: 'Whenever an enemy is killed or a container is breached within your reach, you can spend a 1+ Action Die '
       + 'to immediately loot the target as a Free Action and gain +2 metres of free tactical movement. '
       + 'You suffer no penalty when dual-wielding pistols or compact boarding weapons.',
-    note: 'Driven by the pursuit of glorious booty. Crates looted through this talent quietly credit '
-      + 'bonus Cold Trade currency to the character\u2019s companion app ledger.'
+    note: 'Driven by the pursuit of glorious booty.'
   },
   {
     id: 'dynasty-mandate',
@@ -452,8 +449,7 @@ export const ELITE_ADVANCES = [
     effect: 'Spend a 4+ Action Die to issue a Dynasty Command to your voidship. You can trigger any one '
       + 'Bridge Officer ability without spending the standard Destiny Die requirement. '
       + 'Usable once per encounter.',
-    note: 'The authority of a warrant held rather than merely inherited. Unlocks priority bridge '
-      + 'communication channels on the mobile companion app.'
+    note: 'The authority of a warrant held rather than merely inherited.'
   },
   {
     id: 'hive-fleet-survivor-prescience',
@@ -468,8 +464,7 @@ export const ELITE_ADVANCES = [
     effect: 'Honed by surviving a Tyranid invasion. You cannot be Surprised by ambushes. '
       + 'Whenever an enemy declares an attack against you, you may spend an Action Die (2+) to make an immediate '
       + 'Evasion roll with a +10 bonus before the attack roll is made; on success, the enemy loses their attack.',
-    note: 'The companion app warns the player of incoming wave reinforcements 1 round before '
-      + 'they appear on the physical table monitor.'
+    note: 'Learnt where the swarm came from every side at once.'
   }
 ];
 

@@ -264,6 +264,14 @@ export function shipPlan({ hull, parts = [], vitals = null } = {}) {
       });
     }
   }
+  /* Two of a kind are told apart by number, "Port battery" and "Port battery
+     2", stern to prow: each is its own compartment, with its own deck. */
+  const seen = {};
+  for (const r of [...rooms].sort((a, b) => a.x - b.x || a.y - b.y)) {
+    if (r.filler) continue;
+    seen[r.label] = (seen[r.label] || 0) + 1;
+    if (seen[r.label] > 1) r.label = `${r.label} ${seen[r.label]}`;
+  }
   // The spine: the corridor everything opens off.
   rooms.push({ key: 'spine', id: null, label: 'Main spine', name: 'Freight line and artillery decks', filler: true, zone: 'spine',
     ...shape.spine, status: null, burning: false, flags: [] });

@@ -18,7 +18,10 @@ const FILL = {
 const TAG = { damaged: '#ffcf6a', offline: '#9aa6b5', destroyed: '#ff6a5a' };
 const FLAG = { adrift: 'Adrift', collapsed: 'Collapsed', blind: 'Blind', smashed: 'Smashed' };
 
-export default function ShipPlan({ plan, title = '', editable = false, onStatus = null, onFire = null }) {
+/* `mapOf(room)`, when given, says whether a compartment has a deck of its
+   own yet ({ deck, hint }), and `onMap(room)` makes it or opens it: the GM's
+   way from the plan to the battle map (compartmentdeck.js). */
+export default function ShipPlan({ plan, title = '', editable = false, onStatus = null, onFire = null, mapOf = null, onMap = null }) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
   const [selKey, setSelKey] = useState(null);
   const sel = plan.rooms.find((r) => r.key === selKey) || null;
@@ -104,6 +107,13 @@ export default function ShipPlan({ plan, title = '', editable = false, onStatus 
                 <text x={r.x + r.w / 2} y={top + lines.length * size * 1.15 - size * 0.1} textAnchor="middle"
                   fontSize={Math.max(7, size * 0.62)} fill={tagColour} className="rt-plan-tag">{tag.toUpperCase()}</text>
               )}
+              {mapOf && mapOf(r).deck && r.w > 24 && r.h > 20 && (
+                // Mapped: a small gold grid in the corner.
+                <g className="rt-plan-mapped" transform={`translate(${r.x + r.w - 14} ${r.y + 4})`}>
+                  <rect width="10" height="10" fill="none" stroke="#f5c542" strokeWidth="1.3" />
+                  <path d="M5 0V10M0 5H10" stroke="#f5c542" strokeWidth="1" />
+                </g>
+              )}
               {sel && sel.key === r.key && <rect x={r.x + 1.5} y={r.y + 1.5} width={r.w - 3} height={r.h - 3} fill="none" stroke="#f5c542" strokeWidth="3" />}
             </g>
           );
@@ -119,6 +129,17 @@ export default function ShipPlan({ plan, title = '', editable = false, onStatus 
       {sel && (
         <div className="rt-plan-card">
           <div className="rt-plan-card-h">{sel.label}</div>
+          {onMap && mapOf && (() => {
+            const m = mapOf(sel);
+            return (
+              <div className="rt-plan-actions">
+                <button type="button" className="rt-btn" onClick={() => onMap(sel)}>
+                  {m.deck ? 'Open its deck' : 'Map this compartment'}
+                </button>
+                <span className="rt-plan-sub">{m.deck ? `\u201c${m.deck.name}\u201d, in the deck library.` : m.hint}</span>
+              </div>
+            );
+          })()}
           {sel.filler ? (
             <p className="rt-plan-sub">{sel.key === 'free' ? `${sel.name} of the hull: holds, stores and room to carry cargo.`
               : sel.key === 'spine' ? 'The spine that runs the length of the ship: freight lines, the artillery decks’ lifts and the long corridors every compartment opens off.'

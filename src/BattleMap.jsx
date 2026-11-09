@@ -29,6 +29,9 @@ import {
   deckMoves, MOTION_FRAME_MS, VIDEO_FRAME_MS, MOTION_MAX_SQUARES, rainStreaks, drift, flicker, sparkArc, rush
 } from './motion.js';
 import { putLocalFile } from './localfiles.js';
+import {
+  AREA_COLOURS, areaColour, newArea, areaById, areaAt, paintArea, updateArea, removeArea, labelCell, areasForTable
+} from './areas.js';
 import GenerateFloor from './GenerateFloor.jsx';
 import { placeOver } from './genai.js';
 import useBackdropMedia from './useBackdropMedia.js';
@@ -89,6 +92,7 @@ const MODES = [
   { id: 'fog', label: 'Fog and doors in play', icon: 'fog' },
   { id: 'marker', label: 'Marker', icon: 'marker' },
   { id: 'trigger', label: 'Trigger zones', icon: 'trigger' },
+  { id: 'area', label: 'Named areas', icon: 'area' },
   { id: 'overlay', label: 'Overlay', icon: 'overlay' },
   { id: 'measure', label: 'Measure', icon: 'measure' }
 ];
@@ -103,8 +107,8 @@ const MODES = [
    deck. It lives on Play only. */
 /* Light is on both: a deck is built with its dark corridors, and the lumens
    go out mid-session. */
-const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'wall', 'cover', 'hazard', 'obscure', 'light', 'marker', 'trigger', 'measure'];
-const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'light', 'trigger', 'overlay', 'measure'];
+const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'wall', 'cover', 'hazard', 'obscure', 'light', 'marker', 'trigger', 'area', 'measure'];
+const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'light', 'trigger', 'area', 'overlay', 'measure'];
 
 /* Markers that are part of the deck rather than laid on it mid-session: a
    click in play WORKS them (or leaves them be), it never lifts them. */
@@ -216,6 +220,7 @@ const ICONS = {
   door: <><path d="M6 21V4h12v17M4 21h16" /><circle cx="15" cy="12.5" r="1" fill="currentColor" /></>,
   wall: <><rect x="3" y="6" width="18" height="12" /><path d="M3 12h18M9 6v6M15 12v6" /></>,
   trigger: <><path d="M4 4h16v16H4z" strokeDasharray="3 2.5" /><path d="M12 8v5M12 16v.5" /></>,
+  area: <><path d="M3 5h9v6h9v8H3z" /><path d="M7 9h2M7 13h6" /></>,
   picture: <><rect x="3" y="5" width="18" height="14" /><path d="M3 16l5-5 4 4 3-3 6 6" /><circle cx="16" cy="9" r="1.5" /></>,
   cover: <><rect x="4" y="5" width="16" height="14" /><path d="M4 5l16 14M20 5L4 19" /></>,
   hazard: <><path d="M12 3l10 18H2z" /><path d="M12 10v5M12 18v.5" /></>,
@@ -1210,6 +1215,10 @@ export default function BattleMap({
   // The trigger zone being painted, and whether this stroke adds or lifts.
   const [trigId, setTrigId] = useState(null);
   const trigStrokeRef = useRef(null);
+  // The named area in hand (areas.js), and which way a stroke is painting.
+  const [areaId, setAreaId] = useState(null);
+  const areaStrokeRef = useRef(null);
+  const [areaNote, setAreaNote] = useState('');
   const sprungRef = useRef(null);
   useEffect(() => {
     if (sprung && sprung.length && sprungRef.current) reveal(sprungRef.current, { from: 0.98 });
@@ -1357,9 +1366,37 @@ export default function BattleMap({
      could not be had. Only a replaced map has an earlier state to undo to —
      and it is remembered AFTER the load, from what was on screen before, so a
      deck that never arrived leaves nothing in the history. */
-  const loadChosenDeck = async () => {
-    const deck = decks.find((d) => d.id === loadId);
-    if (!deck || !onLoadDeck) return;
+  const loadChosenDeck = () => loadThisDeck(decks.find((d) => d.id === loadId));
+  /* An area's own deck (areas.js): in play, the party goes into it, the deck
+     put on the table the way Play from the library does; while building, it
+     is opened to draw on. In the map's own window, which has no library, it
+     is loaded the way Load deck does. */
+  const openAreaDeck = async (a) => {
+    const list = decks.length ? decks : (library && library.decks) || [];
+    const deck = a && list.find((d) => d.id === a.deck);
+    if (!deck) { setAreaNote('That deck is no longer in the library.'); return; }
+    const name = deck.name || 'Untitled deck';
+    if (library) {
+      if (tab === 'play') {
+        if (!await confirmInMap({
+          title: `Go into \u201c${name}\u201d?`,
+          body: 'It takes the place of the map in play, laid out for play as a deck always is: fog on, '
+            + 'what lies in wait hidden. Undo (Cmd/Ctrl+Z) brings this map back.',
+          yes: 'Go into it'
+        })) return;
+        const ok = await playFromLibrary(deck.id);
+        setAreaNote(ok ? `In play: \u201c${name}\u201d.` : `Could not open \u201c${name}\u201d.`);
+      } else {
+        const ok = await library.open(deck.id);
+        setAreaNote(ok ? `Opened \u201c${name}\u201d to draw on.` : `Could not open \u201c${name}\u201d.`);
+      }
+      return;
+    }
+    const ok = await loadThisDeck(deck);
+    if (ok) setAreaNote(`Loaded \u201c${name}\u201d.`);
+  };
+  const loadThisDeck = async (deck) => {
+    if (!deck || !onLoadDeck) return false;
     const name = deck.name || 'Untitled deck';
     const occupied = Object.keys(mapRef.current.floor || {}).length > 0;
     if (occupied && !await confirmInMap({
@@ -1371,13 +1408,14 @@ export default function BattleMap({
     const before = mapRef.current;
     setDeckNote(`Opening \u201c${name}\u201d\u2026`);
     const result = await onLoadDeck(deck);
-    if (!result) { setDeckNote(`Could not open \u201c${name}\u201d.`); return; }
+    if (!result) { setDeckNote(`Could not open \u201c${name}\u201d.`); return false; }
     if (result === 'replaced') remember(before);
     gestureRef.current = false;
     originRef.current = null; measureRef.current = null;
     setOrigin(null); setAim(null); setMeasureFrom(null); setMeasureTo(null);
     setLoadId('');
     setDeckNote(`Loaded \u201c${name}\u201d.`);
+    return true;
   };
   /* Playing a deck from the library panel. The panel has already asked whether
      the table's map may be replaced; this is the part that makes it undoable,
@@ -1892,7 +1930,10 @@ export default function BattleMap({
       patch({ explored: { ...m.explored, [k]: true } });
       return;
     }
-    if (dragging) return;   // the rest place one thing per click
+    // The rest place one thing per click, but for the zones and areas, which
+    // are painted by dragging (they handle a drag themselves, below). This
+    // guard stood above them, so a trigger zone was never painted by a drag.
+    if (dragging && mode !== 'trigger' && mode !== 'area') return;
 
     if (mode === 'stamp') {
       patch({ floor: paintCells(m.floor, stampCells(tileId, pos, rotation, m), true) });
@@ -1979,6 +2020,30 @@ export default function BattleMap({
       const on = trigStrokeRef.current;
       if (on === null || cur.cells.includes(k) === on) return;
       patch({ triggers: paintTrigger(m.triggers, cur.id, [k], on) });
+      return;
+    }
+    /* NAMED AREAS. Built, a click or a drag paints squares into the area in
+       hand (or lifts them, when the stroke began on one of its squares), and
+       with none in hand the first square starts a new one. Played, a click
+       picks the area there, for its note and its way in. */
+    if (mode === 'area') {
+      if (tab === 'play') {
+        if (!dragging) { const a = areaAt(m.areas, k); setAreaId(a ? a.id : null); setAreaNote(''); }
+        return;
+      }
+      const cur = areaId ? areaById(m.areas, areaId) : null;
+      if (!cur) {
+        if (dragging) return;
+        const a = newArea(m.areas);
+        setAreaId(a.id);
+        areaStrokeRef.current = true;
+        patch({ areas: paintArea([...m.areas, a], a.id, [k], true) });
+        return;
+      }
+      if (!dragging) areaStrokeRef.current = !cur.cells.includes(k);
+      const on = areaStrokeRef.current;
+      if (on === null || cur.cells.includes(k) === on) return;
+      patch({ areas: paintArea(m.areas, cur.id, [k], on) });
       return;
     }
     if (mode === 'contact') {
@@ -3251,6 +3316,52 @@ export default function BattleMap({
             ctx.textAlign = 'left';
             ctx.fillStyle = t.armed ? 'rgba(235,215,255,0.95)' : 'rgba(200,200,205,0.8)';
             ctx.fillText((t.name || 'Trigger') + (t.armed ? '' : ' \u2713'), first.x * px + 3, first.y * px + Math.max(10, px * 0.3));
+          }
+        }
+        ctx.restore();
+      }
+    }
+
+    // 6b3. Named areas (areas.js): on the GM's screens all of them, on the
+    //      table's only those the GM has shown it, and there only on squares
+    //      the party has seen, so a label never gives away a room in the dark.
+    {
+      const list = projecting ? areasForTable(m.areas) : m.areas;
+      if (list.length) {
+        ctx.save();
+        const rgbaOf = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
+        for (const a of list) {
+          const cells = projecting && shown ? a.cells.filter((k) => shown[k]) : a.cells;
+          const pts = cells.map(parseKey).filter((c) => c && c.x >= c0 && c.x <= c1 && c.y >= r0 && c.y <= r1);
+          if (!pts.length) continue;
+          const col = areaColour(a.colour);
+          const on = !projecting && mode === 'area' && a.id === areaId;
+          ctx.fillStyle = rgbaOf(col, on ? 0.3 : 0.16);
+          for (const c of pts) ctx.fillRect(c.x * px, c.y * px, px, px);
+          const inSet = new Set(cells);
+          ctx.strokeStyle = rgbaOf(col, 0.95);
+          ctx.lineWidth = Math.max(1.5, px * (on ? 0.09 : 0.05));
+          ctx.beginPath();
+          for (const c of pts) {
+            const x0 = c.x * px, y0 = c.y * px;
+            if (!inSet.has(c.x + ',' + (c.y - 1))) { ctx.moveTo(x0, y0); ctx.lineTo(x0 + px, y0); }
+            if (!inSet.has(c.x + ',' + (c.y + 1))) { ctx.moveTo(x0, y0 + px); ctx.lineTo(x0 + px, y0 + px); }
+            if (!inSet.has((c.x - 1) + ',' + c.y)) { ctx.moveTo(x0, y0); ctx.lineTo(x0, y0 + px); }
+            if (!inSet.has((c.x + 1) + ',' + c.y)) { ctx.moveTo(x0 + px, y0); ctx.lineTo(x0 + px, y0 + px); }
+          }
+          ctx.stroke();
+          const lc = labelCell(cells);
+          if (lc && a.name) {
+            const fs = Math.max(10, Math.floor(px * 0.4));
+            ctx.font = `600 ${fs}px "Cinzel", "EB Garamond", Georgia, serif`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            const tx = lc.x * px + px / 2, ty = lc.y * px + px / 2;
+            const label = a.name + (!projecting && a.deck ? ' \u25b8' : '');
+            const tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(4,6,10,0.74)';
+            ctx.fillRect(tx - tw / 2 - 6, ty - fs * 0.72, tw + 12, fs * 1.44);
+            ctx.fillStyle = col;
+            ctx.fillText(label, tx, ty);
           }
         }
         ctx.restore();
@@ -5031,6 +5142,75 @@ export default function BattleMap({
         );
       })()}
 
+      {mode === 'area' && (() => {
+        const cur = areaId ? areaById(m.areas, areaId) : null;
+        const set = (patchA) => { if (cur) patch({ areas: updateArea(m.areas, cur.id, patchA) }); };
+        const deckList = (decks.length ? decks : (library && library.decks) || [])
+          .filter((d) => !library || d.id !== library.currentDeckId);
+        const linked = cur && cur.deck ? deckList.find((d) => d.id === cur.deck) : null;
+        return (
+          <div className="rt-bm-gen">
+            <div className="rt-sechead"><h4>Named areas</h4></div>
+            <p className="rt-bm-hint">
+              {tab === 'build'
+                ? 'Name the parts of the deck: lay a picture under it (a station\u2019s plan, a photograph of the model, a map from another program) and paint over each part. Click or drag to paint squares into the area in hand; a stroke that starts on one of its squares lifts them. With none in hand, the first square starts a new one. An area can open a deck of its own.'
+                : 'Click an area for its note, and its way in where it has a deck of its own.'}
+            </p>
+            <div className="rt-bm-bar">
+              <select value={cur ? cur.id : ''} aria-label="Area in hand" onChange={(e) => { setAreaId(e.target.value || null); setAreaNote(''); }}>
+                <option value="">{tab === 'build' ? 'A new area: paint its first square' : 'Click an area on the map\u2026'}</option>
+                {m.areas.map((a) => <option key={a.id} value={a.id}>{a.name || 'Area'} ({a.cells.length})</option>)}
+              </select>
+              {tab === 'build' && <button type="button" className="rt-btn" onClick={() => setAreaId(null)}>New area</button>}
+            </div>
+            {/* Always all there, disabled with no area in hand: the panel sits
+                over the map, and a panel that grew on the first square of a
+                new area slid the map down under a drag still painting it. */}
+            {tab === 'build' && (<>
+              <div className="rt-bm-bar">
+                <input className="rt-field" value={cur ? cur.name : ''} maxLength={60} aria-label="Area name" disabled={!cur}
+                  placeholder="Paint a square to start one" onChange={(e) => set({ name: e.target.value })} />
+                <span className="rt-area-swatches" role="group" aria-label="Colour">
+                  {AREA_COLOURS.map((c) => (
+                    <button key={c.id} type="button" className={'rt-area-swatch' + (cur && cur.colour === c.id ? ' on' : '')} disabled={!cur}
+                      style={{ background: c.hex }} title={c.name} aria-label={c.name} aria-pressed={cur && cur.colour === c.id ? 'true' : 'false'}
+                      onClick={() => set({ colour: c.id })} />
+                  ))}
+                </span>
+                <label className="rt-bm-num"><input type="checkbox" checked={Boolean(cur && cur.show)} disabled={!cur}
+                  onChange={(e) => set({ show: e.target.checked })} /><span>The table sees its name</span></label>
+                <span className="rt-bm-hint">{cur ? `${cur.cells.length} square${cur.cells.length === 1 ? '' : 's'}` : ''}</span>
+              </div>
+              <textarea className="rt-ta" rows={2} value={cur ? cur.note : ''} maxLength={600} aria-label="Area note" disabled={!cur}
+                placeholder={'What it is and what is in it. \u201cThe distillation hub: three tanks, one cracked.\u201d'}
+                onChange={(e) => set({ note: e.target.value })} />
+              <div className="rt-bm-bar">
+                <label className="rt-bm-num"><span>Opens</span>
+                  <select value={cur && cur.deck ? cur.deck : ''} aria-label="The deck it opens" disabled={!cur} onChange={(e) => set({ deck: e.target.value || null })}>
+                    <option value="">No deck of its own</option>
+                    {deckList.map((d) => <option key={d.id} value={d.id}>{d.name || 'Untitled deck'}</option>)}
+                  </select>
+                </label>
+                <button type="button" className="rt-btn ghost" disabled={!linked} onClick={() => openAreaDeck(cur)}>Open it</button>
+                <button type="button" className="rt-btn ghost" disabled={!cur} onClick={() => { patch({ areas: removeArea(m.areas, cur.id) }); setAreaId(null); }}>
+                  Take the area off
+                </button>
+              </div>
+            </>)}
+            {cur && tab === 'play' && (
+              <div className="rt-area-card" style={{ borderColor: areaColour(cur.colour) }}>
+                <strong style={{ color: areaColour(cur.colour) }}>{cur.name || 'Area'}</strong>
+                {cur.note && <p className="rt-bm-hint">{cur.note}</p>}
+                {linked
+                  ? <button type="button" className="rt-btn" onClick={() => openAreaDeck(cur)}>Go into it: {linked.name || 'its deck'}</button>
+                  : cur.deck ? <p className="rt-bm-hint">Its deck is no longer in the library.</p> : null}
+              </div>
+            )}
+            {areaNote && <p className="rt-bm-hint" role="status">{areaNote}</p>}
+          </div>
+        );
+      })()}
+
       {libOpen && (
         <div className="rt-bm-gen">
           <div className="rt-sechead">
@@ -5944,7 +6124,8 @@ export default function BattleMap({
             if (spaceRef.current || panOnRef.current || rHeldRef.current) return;   // panning, or turning the map
             if (e.buttons === 1 && mode === 'wall') { strokeWall(e, false); return; }
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure'
-              || (mode === 'light' && lightScope === 'brush') || (mode === 'trigger' && tab === 'build'))) {
+              || (mode === 'light' && lightScope === 'brush') || (mode === 'trigger' && tab === 'build')
+              || (mode === 'area' && tab === 'build'))) {
               applyAt(pos, true);
             }
           }}

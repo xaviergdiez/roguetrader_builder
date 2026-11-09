@@ -30,6 +30,7 @@ import { rangeBand, RANGE_MODIFIERS, parseWeaponStats } from './groundcombat.js'
 import { spriteRole } from './spritesheet.js';
 import { readBackdrop } from './backdrop.js';
 import { readTriggers, rearmAll } from './triggers.js';
+import { readAreas } from './areas.js';
 
 /* ------------------------------ themes ------------------------------ */
 
@@ -349,6 +350,9 @@ export const EMPTY_MAP = {
   motion: true,
   // Squares that do something when the party gets there (see triggers.js).
   triggers: [],
+  // Squares given a name, a colour and a note: the parts of a picture laid
+  // under the deck, a station's modules (see areas.js).
+  areas: [],
   /* PER-CELL GROUND. One deck is rarely one terrain: a boarding action runs
      from the ice outside to the deck plate inside, and an agri-world fight
      crosses ploughed soil, an irrigation ditch and the rockcrete apron.
@@ -1012,7 +1016,8 @@ export function readMap(m) {
     floor, doors, cover, hazards, obscuring, markers, explored, mapped, light, contacts, ground, walls,
     backdrop: readBackdrop(src.backdrop),
     motion: src.motion !== false,
-    triggers: readTriggers(src.triggers)
+    triggers: readTriggers(src.triggers),
+    areas: readAreas(src.areas)
   };
 }
 
@@ -2150,13 +2155,15 @@ export function expandMap(map, cols, rows, { mirror = true } = {}) {
     ? src.viewpoint : null;
   // A trigger is one trap, like a contact is one creature: kept where it is.
   const triggers = src.triggers.map((t) => ({ ...t, cells: t.cells.filter(inside) }));
+  // An area is a named place, kept where it is, less what fell off the grid.
+  const areas = src.areas.map((a) => ({ ...a, cells: a.cells.filter(inside) }));
   const start = src.start && inside(cellKey(src.start.x, src.start.y)) ? src.start : null;
 
   return {
     ...src,
     cols: w, rows: h,
     floor, cover, hazards, doors, markers, ground, obscuring, light, walls,
-    explored, mapped, contacts, viewpoint, start, triggers
+    explored, mapped, contacts, viewpoint, start, triggers, areas
   };
 }
 
@@ -2270,6 +2277,10 @@ function turnContent(m, t) {
     triggers: m.triggers.map((tr) => ({
       ...tr,
       cells: tr.cells.map(parseKey).filter(Boolean).map((p) => at(p.x, p.y)).filter(inGrid).map((q) => cellKey(q.x, q.y))
+    })),
+    areas: m.areas.map((a) => ({
+      ...a,
+      cells: a.cells.map(parseKey).filter(Boolean).map((p) => at(p.x, p.y)).filter(inGrid).map((q) => cellKey(q.x, q.y))
     })),
     /* A thin wall is an EDGE, and turning moves which side of its square it
        is on: a quarter turn clockwise stands an east side on the south, and

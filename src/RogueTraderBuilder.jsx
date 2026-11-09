@@ -27,7 +27,7 @@ import LegaturePanel from './LegaturePanel.jsx';
 import { armourSummary, parseArmour, soakAt } from './armour.js';
 import {
   readMap as readBattleMap, newBattleMap, publishMap,
-  readCustomTheme, readSavedMap, packCombat, combatSansMap
+  readCustomTheme, readSavedMap, packCombat, combatSansMap, MAP_THEMES
 } from './battlemap.js';
 import { readRoster, writeRoster, upsert, remove as removeChar, newId, sameNamed,
   cloudList, cloudGet, cloudPut, cloudDelete } from './roster.js';
@@ -81,6 +81,7 @@ import {
   EXTENDED_ACTIONS, mayTakeAction, actionOutcome
 } from './voidcombat.js';
 import { partsOfBlueprint, partsOfNpc, critTargets, driveOf, shipPlan, labelOf } from './shipplan.js';
+import { compartmentDeck, kindOf, deckSizeFor, deckNameFor } from './compartmentdeck.js';
 import ShipPlan from './ShipPlan.jsx';
 import {
   ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES, GROUND_CONDITIONS,
@@ -2296,6 +2297,11 @@ const CSS = `
 .rt-plan-card-h{font-family:var(--display);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lit);}
 .rt-plan-sub{margin:0;font-size:13px;color:var(--dim);}
 .rt-plan-actions{display:flex;flex-wrap:wrap;gap:6px;}
+/* Named areas on the battle map (BattleMap.jsx, areas.js). */
+.rt-area-swatches{display:inline-flex;gap:4px;align-items:center;}
+.rt-area-swatch{width:20px;height:20px;border:1px solid rgba(255,255,255,.35);cursor:pointer;padding:0;}
+.rt-area-swatch.on{outline:2px solid var(--bone);outline-offset:1px;}
+.rt-area-card{border:1px solid;border-left-width:4px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;background:rgba(4,6,10,.5);}
 .rt-genfloor{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:8px;border-top:1px solid var(--brass-dim);}
 .rt-genfloor-h{font-family:var(--display);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-lit);}
 .rt-genfloor-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
@@ -4038,6 +4044,15 @@ export default function RogueTraderBuilder({ me, cloud }) {
       return true;
     },
     create: () => { const made = createDeck(); setMapView('design'); return made; },
+    // A deck that comes already built (a compartment off the ship plan):
+    // into the library and open to draw on, as a new one would be.
+    createFrom: ({ name, map }) => {
+      const made = readSavedMap({ name, map });
+      setDecks((prev) => [...prev, { ...made, dirty: true }]);
+      setDeckId(made.id);
+      setMapView('design');
+      return made;
+    },
     rename: renameDeck,
     remove: deleteDeck,
     saveHere: saveLiveDeck,
@@ -10764,6 +10779,24 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           say({ kind: 'event', text: on ? `${name}: fire in the ${partName(id)}.` : `${name}: the fire in the ${partName(id)} is out.` });
         };
         const fires = (ship.vitals && ship.vitals.fires) || [];
+        /* A compartment's own deck: found by its name in the library, made by
+           the deck generator in the ground it is (compartmentdeck.js). */
+        const deckOfRoom = (room) => (mapLib && mapLib.decks.find((dk) => dk.name === deckNameFor(name, room))) || null;
+        const mapOf = (room) => {
+          const kind = kindOf(room);
+          const size = deckSizeFor(room);
+          const ground = (MAP_THEMES.find((t) => t.id === kind.theme) || {}).name || kind.theme;
+          return { deck: deckOfRoom(room), hint: `A battle-map deck of it on the ${ground}, about ${size.cols}\u00d7${size.rows} squares, dressed for what it is.` };
+        };
+        const mapRoom = async (room) => {
+          if (!mapLib) return;
+          const have = deckOfRoom(room);
+          if (have) { if (await mapLib.open(have.id)) setGmTab('map'); return; }
+          const made = compartmentDeck(room, { shipName: name });
+          mapLib.createFrom({ name: made.name, map: made.map });
+          setGmTab('map');
+          say({ kind: 'event', text: `${made.name}: mapped, ${made.cols}\u00d7${made.rows} squares.` });
+        };
         return (<>
           <div className="rt-sechead">
             <h4>Ship plan</h4>
@@ -10775,7 +10808,8 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
             </label>
           </div>
           {plan ? (<>
-            <ShipPlan plan={plan} title={`${name}${hull && hull.name !== name ? ` \u00b7 ${hull.name}` : ''}`} editable onStatus={setStatus} onFire={setFire} />
+            <ShipPlan plan={plan} title={`${name}${hull && hull.name !== name ? ` \u00b7 ${hull.name}` : ''}`} editable onStatus={setStatus} onFire={setFire}
+              mapOf={mapLib ? mapOf : null} onMap={mapLib ? mapRoom : null} />
             {fires.length > 0 && (
               <div className="rt-btnrow">
                 <button type="button" className="rt-btn ghost" onClick={() => { setVitals(ship.id, { fires: [] }); say({ kind: 'event', text: `${name}: every fire aboard is out.` }); }}>

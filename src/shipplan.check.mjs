@@ -97,6 +97,8 @@ assert.equal(room((r) => r.category === 'plasmaDrive').zone, 'stern');
 assert.equal(room((r) => r.category === 'voidShield').y, plan.zones.find((z) => z.zone === 'stern').y, 'the shields over the drive');
 assert.equal(room((r) => r.category === 'bridge').zone, 'tower');
 assert.equal(plan.rooms.filter((r) => r.slot === 'port' && r.status === 'damaged').length, 2, 'a damaged battery type shows on each of its mounts');
+assert.deepEqual(plan.rooms.filter((r) => r.slot === 'port').map((r) => r.label).sort(), ['Port battery', 'Port battery 2'], 'two of a kind are numbered');
+assert.equal(new Set(plan.rooms.filter((r) => !r.filler).map((r) => r.label)).size, plan.rooms.filter((r) => !r.filler).length, 'every compartment has a name of its own');
 assert.equal(room((r) => r.category === 'plasmaDrive').status, 'offline');
 assert.deepEqual(room((r) => r.category === 'plasmaDrive').flags, ['adrift']);
 assert.deepEqual(room((r) => r.category === 'voidShield').flags, ['collapsed']);

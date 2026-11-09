@@ -24,7 +24,7 @@ import { readdir, mkdir, writeFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import sharp from 'sharp';
 import {
-  SHEET_CELLS, SPRITE_SLOTS, SHEET_FOR_THEME, VOID_SLOTS, cellRect, keyBlack, keyCells, voidKeyOptions,
+  SHEET_CELLS, SPRITE_SLOTS, SHEET_FOR_THEME, TOKENS_BORROWED, VOID_SLOTS, cellRect, keyBlack, keyCells, voidKeyOptions,
   cellCoverage, MIN_COVERAGE
 } from '../src/spritesheet.js';
 
@@ -141,6 +141,9 @@ async function main() {
     totalBytes += sheetBytes;
     console.log(`${theme.padEnd(20)} ${String(SHEET_CELLS).padStart(2)} tokens  ${kb(src).padStart(7)} -> ${kb(sheetBytes).padStart(6)}`);
     for (const f of flags) console.log('   !', f);
+    if (TOKENS_BORROWED[theme]) {
+      console.log(`   ! ${theme} has its own set now: take it out of TOKENS_BORROWED in src/spritesheet.js`);
+    }
   }
 
   for (const n of unknown) {

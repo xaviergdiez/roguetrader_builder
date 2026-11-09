@@ -6,10 +6,11 @@
    the two shows up as tokens that look right in the app and wrong on the
    shipped sheets, or the reverse. */
 
+import { existsSync } from 'node:fs';
 import {
   SHEET_COLS, SHEET_ROWS, SHEET_CELLS, SPRITE_SLOTS, SPRITE_ROLES, slotOfRole,
   SHEET_FOR_THEME, spriteRole, cellRect, keyBlack, cellCoverage, MIN_COVERAGE,
-  BLACK_LO, BLACK_HI, keyCells, fillSolid, voidKeyOptions, VOID_SLOTS, GLOW_SATURATION
+  BLACK_LO, BLACK_HI, TOKENS_BORROWED, tokenDirFor, keyCells, fillSolid, voidKeyOptions, VOID_SLOTS, GLOW_SATURATION
 } from './spritesheet.js';
 import { MAP_THEMES, COVER_TYPES, HAZARD_TYPES, OBSCURING, DOOR_KINDS, DOOR_STATES } from './battlemap.js';
 
@@ -35,6 +36,22 @@ ok(Object.keys(SHEET_FOR_THEME).length === MAP_THEMES.length,
   'no sheet is named for a theme that does not exist');
 ok(new Set(Object.values(SHEET_FOR_THEME)).size === MAP_THEMES.length,
   'two themes do not share one sheet');
+/* A ground with no sheet of its own yet borrows a shipped set: the lender
+   must have its own, and a ground whose own set has been cut must stop
+   borrowing, or its new tokens would never be seen. */
+{
+  const tokensAt = (t) => existsSync(new URL(`../public/maps/tokens/${t}/door_closed.webp`, import.meta.url));
+  for (const [t, lender] of Object.entries(TOKENS_BORROWED)) {
+    ok(MAP_THEMES.some((m) => m.id === t), `${t} borrows, and is a theme`);
+    ok(!TOKENS_BORROWED[lender] && tokensAt(lender), `${t} borrows from ${lender}, which has a set of its own`);
+    ok(!tokensAt(t), `${t} has its own set cut now: take it out of TOKENS_BORROWED`);
+    ok(tokenDirFor(t) === lender, `${t} is served from ${lender}`);
+  }
+  for (const m of MAP_THEMES) {
+    if (!TOKENS_BORROWED[m.id]) ok(tokensAt(m.id) && tokenDirFor(m.id) === m.id, `${m.id} has its own set`);
+  }
+  ok(tokenDirFor('a-ground-the-gm-generated') === null, 'a generated ground has no folder');
+}
 
 /* ---- what the app asks for, it can get ----
    The point of this block is that the two vocabularies cannot drift apart

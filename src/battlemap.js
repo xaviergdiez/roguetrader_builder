@@ -91,7 +91,47 @@ export const MAP_THEMES = [
   T('hive_city', 'Hive Underlevels', 'Stained plate, hazard stripe, pipework and loose cabling',
     '#7fd4e8', '#b5651d', '#2a241f',
     'The bottom of a hive, where the floor is whatever was welded over the last floor.',
-    0.25, 0.32)
+    0.25, 0.32),
+
+  /* A voidship's own decks, room by room: added in November 2026 from floors
+     generated in Gemini and installed with tools/add-floor.mjs, which checked
+     that each one tiles (three had their edges cross-faded to). The grids are
+     picked AGAINST each floor rather than out of it: on brass a gold line
+     vanishes into the panel seams, so the brass decks get a cool one. The
+     Medicae Ward is the bright one, and the one with a tile grid of its own
+     printed on it, which the map's grid cannot line up with at every zoom. */
+  T('command_deck', 'Command Deck', 'Black marble, brass gear-inlay, Aquila seals',
+    '#a8d8ff', '#d4af37', '#3d3527',
+    'The officers\u2019 decks round the bridge: marble underfoot, the Aquila in the brass, nothing out of place.',
+    0.24, 0.34),
+  T('forge_sanctum', 'Forge Sanctum', 'Brass gearwork, cable bundles, rune-lit data panels',
+    '#9fe0d0', '#e0662f', '#3c352c',
+    'Where the Mechanicus keeps the ship\u2019s spirit: cogwheel seals, cables thick as a man, glyphs glowing in the deck.',
+    0.24, 0.34),
+  T('cogitator_vault', 'Cogitator Vaults', 'Brass conduits, gear-seals, green-lit data slates',
+    '#f0dca8', '#3fd17f', '#3b372d',
+    'The ship\u2019s thinking-engines, laid under the deck plate and humming.',
+    0.24, 0.34),
+  T('enginarium', 'Enginarium', 'Rusted pipework, glowing reactor grilles, junction boxes',
+    '#bfe6ff', '#ff7a2a', '#372f29',
+    'The plasma decks: hot, loud, and lit orange from below.',
+    0.2, 0.36),
+  T('cargo_lanes', 'Cargo Lanes', 'Grey plate, hazard-striped lanes, a grated trench',
+    '#8fd0e0', '#e0b030', '#3f3c36',
+    'The holds and the lanes the loaders run down, striped where nobody should stand.',
+    0.22, 0.34),
+  T('hangar_bay', 'Hangar Bay', 'Scuffed plate, tie-down rings, tyre-scored deck',
+    '#8fd0e0', '#e0b030', '#45403c',
+    'Where the shuttles and lighters set down: rings to lash them to, and the marks of every landing.',
+    0.22, 0.34),
+  T('lower_decks', 'Lower Decks', 'Bare riveted plate, hazard bands, cable runs',
+    '#9fd8e8', '#b5651d', '#403d36',
+    'Crew country: plain plate, worn bare, a long way from the bridge.',
+    0.22, 0.34),
+  T('medicae', 'Medicae Ward', 'Teal tile, white floor, warding sigils',
+    '#173434', '#2b8f8a', '#676c62',
+    'Scrubbed tile under hard white light. The one clean deck aboard, until the wounded come in.',
+    0.1, 0.5)
 ];
 
 export const DEFAULT_THEME = 'space_hulk';

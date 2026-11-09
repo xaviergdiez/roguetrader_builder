@@ -74,6 +74,31 @@ of the built-in themes:
 4. **`node src/battlemap.check.mjs`.** It fails if the file is missing, under
    20KB, or over 900KB.
 
+### A floor that is already made
+
+`node tools/add-floor.mjs <image> <theme-id> [--blend]` does step 2 with two
+things the shell script cannot: it **measures the seam** across both wraps
+(`lib/seam.js`: the jump from the last column back to the first, against the
+jumps between neighbouring columns inside the image; 1.6 and under tiles
+cleanly), and with `--blend` it **cross-fades the edges** of a floor whose seam
+is worse, a twentieth of the tile wide, so the wrap becomes a step the image
+already takes. It also prints the five numbers `themeNumbersFor()` would pick,
+to start the theme's entry from. `--check` measures without installing.
+
+The eight ship's decks added in November 2026 (Command Deck to Medicae Ward)
+came in this way, from `art/sprites/floors`; three of them needed `--blend`.
+
+### Props for a new ground
+
+Every ground has its own sheet of sixteen props (`SHEET_FOR_THEME` in
+`src/spritesheet.js`). Until it is made, a ground wears the props of the
+nearest shipped set (`TOKENS_BORROWED`), and the check holds that a lender has
+a set of its own. `node tools/props-prompt.mjs` lists the grounds still
+borrowing; `node tools/props-prompt.mjs <theme-id>` prints the prompt for its
+sheet, built from the ground's own description. Save the image as
+`art/sprites/<Sheet>_sprite.jpg`, run `node tools/slice-sprites.mjs`, and take
+the ground out of `TOKENS_BORROWED`, which the slicer reminds you to do.
+
 ### Why 1024 and not more
 
 The texture *tiles*. At a normal px/square a 1024 tile already covers the

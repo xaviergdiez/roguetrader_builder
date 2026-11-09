@@ -118,8 +118,34 @@ export const SHEET_FOR_THEME = {
   jungle: 'Jungle',
   desert: 'Desert',
   ice: 'Ice',
-  hive_city: 'Hive'
+  hive_city: 'Hive',
+  command_deck: 'Command',
+  forge_sanctum: 'Forge',
+  cogitator_vault: 'Cogitator',
+  enginarium: 'Enginarium',
+  cargo_lanes: 'Cargo',
+  hangar_bay: 'Hangar',
+  lower_decks: 'LowerDecks',
+  medicae: 'Medicae'
 };
+
+/* Grounds whose own sheet has not been made yet, and whose props they wear
+   until it is: the nearest of the shipped sets. A theme leaves this table the
+   day its sheet is cut (tools/slice-sprites.mjs says so), and the check holds
+   that a lender has a set of its own. `node tools/props-prompt.mjs <theme>`
+   prints the prompt for a ground's sheet. */
+export const TOKENS_BORROWED = {
+  command_deck: 'rogue_trader',
+  forge_sanctum: 'rogue_trader',
+  cogitator_vault: 'rogue_trader',
+  medicae: 'rogue_trader',
+  enginarium: 'hive_city',
+  cargo_lanes: 'space_hulk',
+  hangar_bay: 'space_hulk',
+  lower_decks: 'space_hulk'
+};
+// The folder a ground's prop pictures are served from.
+export const tokenDirFor = (theme) => (SHEET_FOR_THEME[theme] ? TOKENS_BORROWED[theme] || theme : null);
 
 /* ---- which picture an element gets ----
 

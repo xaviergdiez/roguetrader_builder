@@ -46,7 +46,7 @@ import { shrinkToDataUrl, prepareTexture } from './imageshrink.js';
 import { centreCrop, cropRect, dragBy, zoomTo, scaleBounds } from './texturecrop.js';
 import { generateDeck, growDeck as buildAroundDeck, newSeed, DECK_STYLES, styleById } from './mapgen.js';
 import {
-  spriteRole, spriteTurn, SHEET_FOR_THEME, SPRITE_SLOTS, cellRect, keyBlack
+  spriteRole, spriteTurn, SPRITE_SLOTS, cellRect, keyBlack, tokenDirFor
 } from './spritesheet.js';
 import {
   DISCIPLINES, powerRule, powerShape, effectivePsyRating,
@@ -1533,7 +1533,8 @@ export default function BattleMap({
   const tokenSrc = (ground, role) => {
     const custom = resolveTheme(ground, customThemes);
     if (custom && custom.custom) return null;
-    return SHEET_FOR_THEME[ground] ? `/maps/tokens/${ground}/${role}.webp` : null;
+    const dir = tokenDirFor(ground);
+    return dir ? `/maps/tokens/${dir}/${role}.webp` : null;
   };
 
   useEffect(() => {

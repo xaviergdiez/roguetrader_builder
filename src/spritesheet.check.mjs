@@ -9,7 +9,7 @@
 import {
   SHEET_COLS, SHEET_ROWS, SHEET_CELLS, SPRITE_SLOTS, SPRITE_ROLES, slotOfRole,
   SHEET_FOR_THEME, spriteRole, cellRect, keyBlack, cellCoverage, MIN_COVERAGE,
-  BLACK_LO, BLACK_HI
+  BLACK_LO, BLACK_HI, keyCells, fillSolid, voidKeyOptions, VOID_SLOTS, GLOW_SATURATION
 } from './spritesheet.js';
 import { MAP_THEMES, COVER_TYPES, HAZARD_TYPES, OBSCURING, DOOR_KINDS, DOOR_STATES } from './battlemap.js';
 
@@ -233,6 +233,58 @@ ok(keyBlack(px(60, 60, 60), { lo: 70, hi: 100 })[3] === 0, 'LO and HI can be mov
   for (let i = 0; i < 30; i++) sparse[i * 4 + 3] = 255;
   ok(Math.abs(cellCoverage(sparse) - 0.03) < 1e-9, 'and a sparse one reads in between');
   ok(cellCoverage(sparse) > MIN_COVERAGE, 'a railing is mostly air and still counts as art');
+}
+
+/* ---- glow: light on black fades by its light ---- */
+{
+  // A strip: background, a dim orange halo, the bright flame, a dim grey hull edge.
+  const px = (r, g, b) => [r, g, b, 255];
+  const strip = () => new Uint8ClampedArray([
+    ...px(0, 0, 0), ...px(90, 40, 8), ...px(255, 200, 120), ...px(60, 58, 56), ...px(0, 0, 0)]);
+  const off = keyBlack(strip(), { lo: 8, hi: 34 });
+  ok(off[7] === 255, 'without glow the halo is solid (the brown disc)');
+  const on = keyBlack(strip(), { lo: 8, hi: 34, glow: 235 });
+  ok(on[7] > 0 && on[7] < 128, 'with glow the halo is part light: ' + on[7]);
+  ok(on[4] > 200, 'and its colour is the light\u2019s, not the dark it was faded toward: ' + on[4]);
+  ok(on[11] > 200, 'the flame itself stays nearly solid: ' + on[11]);
+  ok(on[15] === 255, 'grey is never glow: a dark hull edge stays solid');
+  ok(on[3] === 0 && on[19] === 0, 'the background is gone');
+  ok(GLOW_SATURATION > 0 && GLOW_SATURATION < 1);
+}
+
+/* ---- a solid thing's outline is closed ---- */
+{
+  // A 20x20 disc of art with a bite out of its edge and a hole in its middle,
+  // and a ring (like a station's) that is NOT solid.
+  const w = 20, h = 20;
+  const make = () => new Uint8ClampedArray(w * h * 4);
+  const disc = make();
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const d = Math.hypot(x - 9.5, y - 9.5);
+    const bite = x >= 14 && x <= 15 && y >= 9 && y <= 10;
+    const hole = x >= 9 && x <= 10 && y >= 9 && y <= 10;
+    if (d < 7 && !bite && !hole) { const i = (y * w + x) * 4; disc[i] = 120; disc[i + 1] = 110; disc[i + 2] = 100; disc[i + 3] = 255; }
+  }
+  const at = (a, x, y) => a[(y * w + x) * 4 + 3];
+  fillSolid(disc, w, h, { radius: 2 });
+  ok(at(disc, 9, 9) === 255, 'the hole in the middle is filled');
+  ok(at(disc, 15, 10) === 255, 'and the bite out of the edge');
+  ok(at(disc, 0, 0) === 0 && at(disc, 19, 19) === 0, 'and the sky outside it is left alone');
+  ok(disc[(9 * w + 9) * 4] < 40, 'with the dark of a shadow, not a colour from nowhere');
+}
+
+/* ---- the void sheet is keyed cell by cell ---- */
+{
+  ok(VOID_SLOTS.every((s) => voidKeyOptions(s.role)), 'every void cell has a band');
+  ok(voidKeyOptions('world_living').solid && voidKeyOptions('asteroid').solid, 'worlds and rocks are solid');
+  ok(!voidKeyOptions('station').solid, 'a station has space between its spokes');
+  ok(voidKeyOptions('torpedoes').glow > 0 && voidKeyOptions('warp_rift').glow > 0, 'what burns glows');
+  // An 8x8 sheet: cell 0 solid with a hole, every other cell empty black.
+  const W = 8, sheet = new Uint8ClampedArray(W * W * 4);
+  for (const [x, y] of [[0, 0], [1, 0], [0, 1]]) { const i = (y * W + x) * 4; sheet[i] = sheet[i + 1] = sheet[i + 2] = 200; sheet[i + 3] = 255; }
+  for (let p = 0; p < W * W; p++) if (!sheet[p * 4 + 3]) sheet[p * 4 + 3] = 255;
+  keyCells(sheet, W, W, () => ({}));
+  ok(sheet[3] === 255 && sheet[(W * W - 1) * 4 + 3] === 0, 'each cell is keyed with the background round it');
 }
 
 console.log(fails === 0 ? 'spritesheet.js: all checks passed' : `spritesheet.js: ${fails} FAILED`);

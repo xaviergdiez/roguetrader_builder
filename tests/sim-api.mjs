@@ -6,7 +6,7 @@
 //   (a cookie  sid=SIM1  is a signed-in GM session for account u1; sid=SIM2 a player, account u2)
 //
 // The peek: ?k=<key> reads one, ? lists keys, ?wipe=1 does what the old sign-in did to the
-// record, ?gemini=fail (or empty) makes the image service fail, ?set=<key>&v=<raw> seeds a key, ?fail=<endpoint> makes its GET fail, ?log=1 (or =clear) the requests seen.
+// record, ?gemini=fail (or empty) makes the image service fail, ?video=fail (or empty) makes a clip fail, ?set=<key>&v=<raw> seeds a key, ?fail=<endpoint> makes its GET fail, ?log=1 (or =clear) the requests seen.
 import http from 'node:http';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
@@ -66,13 +66,40 @@ process.env.UPSTASH_REDIS_REST_URL = 'http://127.0.0.1:5291';
 process.env.UPSTASH_REDIS_REST_TOKEN = 'sim-token';
 process.env.GEMINI_API_KEY = 'sim-key';
 process.env.IMAGE_DAILY_LIMIT = '3';
+process.env.VIDEO_DAILY_LIMIT = '2';
 
 // Google's image endpoint, stood in for: a one-pixel PNG, or a failure when the peek says ?gemini=fail
 let geminiFails = false;
 const realFetch = globalThis.fetch;
 const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+/* And the video service: a clip is started in the background, is still being
+   made the first time it is asked after, and is done the second time. It is
+   a little over one part long, so the browser has to fetch it in two. */
+let videoFails = false;
+const clips = new Map();
+const CLIP = Buffer.alloc(3 * 1024 * 1024 + 4096, 0x61);
+const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
 globalThis.fetch = async (url, opts) => {
   if (!String(url).startsWith('https://generativelanguage.googleapis.com/')) return realFetch(url, opts);
+  const u = String(url);
+  if (u.includes('/v1beta/interactions')) {
+    if (geminiFails) return new Response('boom', { status: 500 });
+    const id = u.split('/interactions/')[1];
+    if (!id) {
+      const body = JSON.parse(opts.body);
+      const ok = body.background === true && body.input.length === 3 && body.response_format.type === 'video';
+      if (!ok) return json({ error: { message: 'sim: not a background video request' } }, 400);
+      const nid = 'v1_sim' + (clips.size + 1);
+      clips.set(nid, 0);
+      return json({ id: nid, status: 'in_progress', object: 'interaction' });
+    }
+    if (!clips.has(id)) return json({ error: { message: 'no such interaction' } }, 404);
+    const asked = clips.get(id) + 1;
+    clips.set(id, asked);
+    if (videoFails) return json({ id, status: 'failed', error: { message: 'sim: blocked' } });
+    if (asked < 2) return json({ id, status: 'in_progress' });
+    return json({ id, status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'video', mime_type: 'video/mp4', data: CLIP.toString('base64') }] }] });
+  }
   if (geminiFails) return new Response('boom', { status: 500 });
   return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: PIXEL } }] } }] }),
     { status: 200, headers: { 'content-type': 'application/json' } });
@@ -139,6 +166,7 @@ const peek = http.createServer((req, res) => {
   }
   if (q.has('set')) { store.set(q.get('set'), q.get('v')); return res.end('"set"'); }       // seed a key, e.g. a record from before a change
   if (q.has('gemini')) { geminiFails = q.get('gemini') === 'fail'; return res.end(JSON.stringify(geminiFails)); }
+  if (q.has('video')) { videoFails = q.get('video') === 'fail'; return res.end(JSON.stringify(videoFails)); }
   if (q.has('fail')) { failing = q.get('fail') || ''; return res.end(JSON.stringify(failing)); }
   if (q.has('log')) { const out = [...log]; if (q.get('log') === 'clear') log.length = 0; return res.end(JSON.stringify(out)); }
   const k = q.get('k');

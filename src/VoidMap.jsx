@@ -14,6 +14,11 @@ import {
 import { readBackdrop, newBackdropId, backdropKindOf } from './backdrop.js';
 import { putLocalFile } from './localfiles.js';
 import useBackdropMedia from './useBackdropMedia.js';
+import useVoidArt, { tintedArt } from './useVoidArt.js';
+import GenerateFloor from './GenerateFloor.jsx';
+import { placeOver, generateVoidSet } from './genai.js';
+import { getLocalFile } from './localfiles.js';
+import { voidBodyArt, voidFieldArt, voidShipArt } from './spritesheet.js';
 import { runFrames } from './gsapcdn.js';
 import { MOTION_FRAME_MS, VIDEO_FRAME_MS } from './motion.js';
 import { measureMedia } from './measureMedia.js';
@@ -166,8 +171,57 @@ function polygon(ctx, x, y, r, sides, seed, rough = 0.28, turn = 0) {
   ctx.closePath();
 }
 
-function drawBody(ctx, b, lightDir, scale, sel) {
+/* ---- the painted tokens (useVoidArt.js) ----
+   A picture is placed by the box its art fills, centred where the thing is and
+   `size` across its longer side, so a world of radius r is drawn 2r wide
+   whatever margin its cell had. */
+function artAt(ctx, sp, src, x, y, size, angle = 0) {
+  const k = size / Math.max(sp.bw, sp.bh);
+  ctx.save();
+  ctx.translate(x, y);
+  if (angle) ctx.rotate(angle);
+  ctx.drawImage(src, sp.bx, sp.by, sp.bw, sp.bh, (-sp.bw * k) / 2, (-sp.bh * k) / 2, sp.bw * k, sp.bh * k);
+  ctx.restore();
+}
+
+/* A body drawn with its picture. A world is painted whole and evenly lit (the
+   prompt asks for that, since a night side would be keyed out), so the chart
+   lays its own shade over it, away from its star, and draws it over a dark disc
+   clipped to its circle: anything the keying nicked from its edge shows shadow,
+   not sky. */
+function drawBodyArt(ctx, b, sp, look, lightDir, scale) {
+  const turn = ((b.rot || 0) * Math.PI) / 180;
+  const src = tintedArt(sp, b.tone, look.tint);
+  if (b.kind === 'planet' || b.kind === 'gas_giant' || b.kind === 'moon') {
+    ctx.save();
+    ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.fillStyle = mixHex(b.tone, '#000000', 0.72); ctx.fill();
+    ctx.clip();
+    artAt(ctx, sp, src, b.x, b.y, b.r * 2.04, turn);
+    const g = ctx.createRadialGradient(
+      b.x + lightDir.x * b.r * 0.6, b.y + lightDir.y * b.r * 0.6, b.r * 0.2, b.x, b.y, b.r * 1.05);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(0.55, 'rgba(0,0,0,0.1)');
+    g.addColorStop(1, 'rgba(0,0,0,0.72)');
+    ctx.fillStyle = g; ctx.fillRect(b.x - b.r, b.y - b.r, b.r * 2, b.r * 2);
+    ctx.restore();
+    return;
+  }
+  if (b.kind === 'torpedoes' || b.kind === 'attack_craft') {
+    // Pointed the way they are going, as the drawn ones are.
+    const ang = b.course ? Math.atan2(b.course[1], b.course[0]) + Math.PI / 2 : turn;
+    artAt(ctx, sp, src, b.x, b.y, Math.max(b.r, 7 / scale) * 2.6, ang);
+    return;
+  }
+  // A hulk's picture runs up the cell; the drawn one lies along its rotation.
+  if (b.kind === 'hulk') { artAt(ctx, sp, src, b.x, b.y, b.r * 2.8, turn + Math.PI / 2); return; }
+  artAt(ctx, sp, src, b.x, b.y, b.r * (b.kind === 'station' ? 2.3 : 2.2), turn);
+}
+
+function drawBody(ctx, b, lightDir, scale, sel, art = null) {
   const lw = 1 / scale;
+  const look = art ? voidBodyArt(b) : null;
+  const sp = look ? art[look.role] : null;
   if (b.air > 0) {
     const g = ctx.createRadialGradient(b.x, b.y, b.r * 0.97, b.x, b.y, b.r * (1.06 + 0.07 * b.air));
     g.addColorStop(0, rgba(b.tone, 0.6));
@@ -175,7 +229,9 @@ function drawBody(ctx, b, lightDir, scale, sel) {
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(b.x, b.y, b.r * (1.06 + 0.07 * b.air), 0, Math.PI * 2); ctx.fill();
   }
-  if (b.kind === 'planet' || b.kind === 'gas_giant' || b.kind === 'moon') {
+  if (sp) {
+    drawBodyArt(ctx, b, sp, look, lightDir, scale);
+  } else if (b.kind === 'planet' || b.kind === 'gas_giant' || b.kind === 'moon') {
     const g = ctx.createRadialGradient(
       b.x + lightDir.x * b.r * 0.5, b.y + lightDir.y * b.r * 0.5, b.r * 0.08,
       b.x, b.y, b.r * 1.08
@@ -329,11 +385,13 @@ function fieldPoint(f, s) {
 /* `t` is the time in seconds when the chart moves (map.motion), else 0: a
    cloud turns slowly, rocks tumble round a cluster or run along a belt, and a
    riptide's chevrons flow the way it carries a hull. */
-function drawField(ctx, f, bits, scale, sel, map, t = 0) {
+function drawField(ctx, f, bits, scale, sel, map, t = 0, art = null) {
   const lw = 1 / scale;
   ctx.save();
   const faint = f.state === 'hidden' ? 0.55 : 1;
   ctx.globalAlpha = faint;
+  const role = art ? voidFieldArt(f.kind) : null;
+  const sp = role ? art[role] : null;
   if (f.kind === 'dust_cloud' || f.kind === 'nebula') {
     const tint = f.kind === 'nebula' ? '#a58fd6' : '#b09a78';
     const turn = ((f.rot || 0) * Math.PI) / 180 + t * 0.025;
@@ -357,7 +415,13 @@ function drawField(ctx, f, bits, scale, sel, map, t = 0) {
     ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = 'rgba(210,150,255,0.6)'; ctx.lineWidth = lw * 1.5;
     const spin = t * 0.35 + ((f.rot || 0) * Math.PI) / 180;
-    for (let i = 0; i < 3; i++) {
+    if (sp) {
+      // The painted rift, turning: its swirl turns the way the drawn one does.
+      ctx.globalAlpha = faint * 0.92;
+      artAt(ctx, sp, sp.c, f.x, f.y, f.r * 2.1, -spin);
+      ctx.globalAlpha = faint;
+    }
+    for (let i = 0; i < (sp ? 0 : 3); i++) {
       ctx.beginPath();
       for (let k = 0; k <= 24; k++) {
         const u = k / 24;
@@ -412,6 +476,13 @@ function drawField(ctx, f, bits, scale, sel, map, t = 0) {
       const s = !t ? s0 : f.shape === 'band' ? { ...s0, u: (s0.u + t * 0.004) % 1 } : { ...s0, a: s0.a + spin * (0.6 + s0.d) };
       const p = fieldPoint(f, s);
       if (p.x < -1 || p.y < -1 || p.x > map.cols + 1 || p.y > map.rows + 1) continue;
+      if (sp) {
+        // The big ones in a belt are boulders, the rest the belt's rocks.
+        const big = role === 'rock' && s.s > 0.36 && art.asteroid;
+        ctx.globalAlpha = faint * (0.6 + 0.4 * s.o);
+        artAt(ctx, big || sp, (big || sp).c, p.x, p.y, s.s * (role === 'debris' ? 3.2 : 2.8), s.a * 3 + (t ? t * 0.25 * (0.5 + s.d) : 0));
+        continue;
+      }
       polygon(ctx, p.x, p.y, s.s, s.sides, `${f.id}|${s.a}`, 0.35);
       ctx.fillStyle = `rgba(150,140,124,${s.o})`; ctx.fill();
     }
@@ -427,7 +498,7 @@ function drawField(ctx, f, bits, scale, sel, map, t = 0) {
   ctx.restore();
 }
 
-function drawShip(ctx, s, scale, { sel, target, live, over, minis }) {
+function drawShip(ctx, s, scale, { sel, target, live, over, minis, art }) {
   const len = Math.max(hullLength(s.cls), 16 / scale);
   const wid = len * 0.55;
   const lw = 1 / scale;
@@ -460,6 +531,30 @@ function drawShip(ctx, s, scale, { sel, target, live, over, minis }) {
     if (over) {
       ctx.strokeStyle = '#ff5a4a'; ctx.lineWidth = lw * 2;
       ctx.beginPath(); ctx.arc(0, 0, rr * 1.35, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+
+  const sp = art ? art[voidShipArt(s.side)] : null;
+  if (sp) {
+    // The painted hull, prow up as the drawn one is, on a wash of its side's
+    // colour so the table can still tell friend from foe at a glance.
+    const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, len * 0.7);
+    halo.addColorStop(0, rgba(colour, 0.38)); halo.addColorStop(1, rgba(colour, 0));
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(0, 0, len * 0.7, 0, Math.PI * 2); ctx.fill();
+    artAt(ctx, sp, sp.c, 0, 0, len * 1.25, 0);
+    if (sel || target || s.state !== 'seen') {
+      ctx.lineWidth = lw * (sel ? 2.4 : 1.6);
+      ctx.strokeStyle = sel ? '#ffffff' : target ? '#ffe28a' : rgba(colour, 0.8);
+      if (s.state !== 'seen') ctx.setLineDash([4 * lw, 3 * lw]);
+      ctx.beginPath(); ctx.arc(0, 0, len * 0.68, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (over) {
+      ctx.strokeStyle = '#ff5a4a'; ctx.lineWidth = lw * 2;
+      ctx.beginPath(); ctx.arc(0, 0, len * 0.8, 0, Math.PI * 2); ctx.stroke();
     }
     ctx.restore();
     return;
@@ -608,7 +703,8 @@ function draw(ctx, env) {
     ctx.fillRect(0, 0, map.cols, map.rows);
   }
 
-  for (const f of map.fields) drawField(ctx, f, scenery.fields[f.id], scale, sel && sel.type === 'field' && sel.id === f.id, map, t);
+  const art = env.art || null;
+  for (const f of map.fields) drawField(ctx, f, scenery.fields[f.id], scale, sel && sel.type === 'field' && sel.id === f.id, map, t, art);
 
   /* WHERE THE MOVERS ARE GOING: each one's next three turns, fainter the
      further off, and a line along its course, so the table can plan around a
@@ -676,7 +772,7 @@ function draw(ctx, env) {
       if (!nearest || d < nearest.d) nearest = { d, x: s.x - b.x, y: s.y - b.y };
     }
     const light = nearest ? { x: nearest.x / nearest.d, y: nearest.y / nearest.d } : { x: -0.7, y: -0.7 };
-    drawBody(ctx, b, light, scale, sel && sel.type === 'body' && sel.id === b.id);
+    drawBody(ctx, b, light, scale, sel && sel.type === 'body' && sel.id === b.id, art);
   }
 
   // Grid over the scenery, under the ships.
@@ -840,7 +936,7 @@ function draw(ctx, env) {
   for (const s of map.ships) {
     const isSel = selShip && s.id === selShip.id;
     drawShip(ctx, s, scale, {
-      minis: map.minis,
+      minis: map.minis, art,
       sel: isSel, target: target && target.id === s.id,
       live: isSel ? live : null, over: isSel && env.liveCheck && env.liveCheck.over
     });
@@ -968,7 +1064,10 @@ export default function VoidMap({
   /* The fight on the chart: the phase it is in, moving it on (which ends the
      chart's turn when it wraps: voidturn.js), and what to do when a trap here
      goes off, with the sounds and handouts one may set off. */
-  phase = null, onAdvance = null, onTriggers = null, cues = [], handouts = []
+  phase = null, onAdvance = null, onTriggers = null, cues = [], handouts = [],
+  /* Adding an enemy from here, as the dashboard's Fleet tab does, for when the
+     fight has no ships to aim or strike: { id, name, cls } hulls to pick. */
+  onAddShip = null, hulls = []
 }) {
   const map = useMemo(() => readVoidMap(rawMap), [rawMap]);
   const w = win || window;
@@ -1010,6 +1109,8 @@ export default function VoidMap({
   const reducedMotion = useMemo(
     () => Boolean(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches), [w]);
   const media = useBackdropMedia(map.backdrop, { win, probeOnly: controlsOnly, reducedMotion });
+  // The painted worlds, rocks and ships; a copy of the controls draws nothing.
+  const voidArt = useVoidArt(controlsOnly ? 'plain' : map.art);
   // What the table is warned of: ships in a mover's path.
   const ahead = useMemo(() => strikesAhead(map, 3), [map]);
   // Where every mover will be over the next three turns, for the chart to draw.
@@ -1277,6 +1378,7 @@ export default function VoidMap({
       target: targeted ? { id: targeted.ship.id, reach: targeted.reach } : null,
       t: moves ? performance.now() / 1000 : 0,
       media: media.state === 'ready' ? media.mediaRef.current : null,
+      art: voidArt.artRef.current,
       ahead, zones: showZones, placing: picOpen && !readOnly, ghosts,
       aim: aim.from ? { from: aim.from, to: aim.to, heading: aim.heading, wedges: aimWedges, reach: aimReach, cls: aimShip ? aimShip.cls : '' } : null
     });
@@ -1842,6 +1944,46 @@ export default function VoidMap({
     commit({ ...map, backdrop: readBackdrop({ id, kind, name: file.name, x: (map.cols - bw) / 2, y: (map.rows - bh) / 2, w: bw, h: bh }) });
     setPicNote(`${file.name} covers the chart. Drag it to move it and its corner to size it.`);
   };
+  /* A generated picture or clip lands a while after it was asked for, so it
+     is laid with the map and the writer as they are THEN (GenerateFloor.jsx). */
+  const latestRef = useRef(null);
+  latestRef.current = { map, commit, choosePicture };
+  const layGeneratedPicture = (file) => latestRef.current.choosePicture(file);
+  const layGeneratedVideo = async (file, crop, from) => {
+    const id = newBackdropId();
+    try { await putLocalFile(id, file, { name: file.name }); } catch { setPicNote('This browser would not keep the clip.'); return; }
+    const { map: cur, commit: write } = latestRef.current;
+    const b = cur.backdrop && from && cur.backdrop.id === from.id ? cur.backdrop : from;
+    write({ ...cur, backdrop: readBackdrop({ id, kind: 'video', name: file.name, ...placeOver(b, crop) }) });
+    setPicNote('The picture is moving: a looping clip in its place, over the part of it the clip was made from. Undo puts the still back.');
+  };
+
+  /* THE TOKENS the chart draws its worlds, rocks and ships with: the painted
+     set that ships, the chart's own drawing, or a set generated here and kept
+     in this browser (useVoidArt.js). */
+  const [artBusy, setArtBusy] = useState(false);
+  const [artErr, setArtErr] = useState('');
+  const [artDescribe, setArtDescribe] = useState('');
+  const generateArt = async () => {
+    setArtErr(''); setArtBusy(true);
+    try {
+      const blob = await generateVoidSet(artDescribe);
+      const id = newBackdropId().replace(/^pic-/, 'art-');
+      await putLocalFile(id, blob, { name: 'Void tokens' + (artDescribe ? `: ${artDescribe.slice(0, 40)}` : '') });
+      const { map: cur, commit: write } = latestRef.current;
+      write({ ...cur, art: id });
+    } catch (e) {
+      setArtErr(e.message || 'Generation failed');
+    } finally { setArtBusy(false); }
+  };
+  const [ownArtName, setOwnArtName] = useState('');
+  useEffect(() => {
+    let gone = false;
+    if (map.art === 'stock' || map.art === 'plain') { setOwnArtName(''); return undefined; }
+    getLocalFile(map.art).then((rec) => { if (!gone) setOwnArtName(rec && rec.name ? rec.name : ''); }).catch(() => {});
+    return () => { gone = true; };
+  }, [map.art]);
+
   const relinkPicture = async (file) => {
     if (!file || !map.backdrop) return;
     const kind = backdropKindOf(file.type);
@@ -1944,6 +2086,22 @@ export default function VoidMap({
     const who = fleetInfo[id];
     gunnery.strikeShips([{ shipId: id, name: who ? who.name : id, why: `struck by ${st.name}`, strike: st.strike }]);
   };
+  /* NO SHIPS TO PICK. The pickers list the fight's ships: the crew's, once it
+     has a hull on the Ship tab, and the GM's NPCs. With neither, every picker
+     here is empty, so say why, and offer an enemy from a hull. */
+  const crewIn = fleet.some((f) => f.side === 'player');
+  const shipsHint = fleet.length === 0
+    ? 'No ships in this fight yet. The crew\u2019s ship joins once it has a hull on the Ship tab; add the enemy below or on the dashboard\u2019s Fleet tab.'
+    : !crewIn ? 'The crew\u2019s ship is not in the fight: it joins once it has a hull on the Ship tab.' : '';
+  const addShipPicker = onAddShip && hulls.length > 0 ? (
+    <label className="rt-vm-wide">Add an enemy ship
+      <select className="rt-sel" value="" aria-label="Add an enemy ship" onChange={(e) => { if (e.target.value) onAddShip(e.target.value); }}>
+        <option value="">{'\u2014'} pick a hull {'\u2014'}</option>
+        {hulls.map((h) => <option key={h.id} value={h.id}>{h.name}{h.cls ? ` (${h.cls})` : ''}</option>)}
+      </select>
+    </label>
+  ) : null;
+
   const strikeRow = (st) => (
     <div key={st.key} className="rt-vm-strike">
       <span><b>{st.name}</b> {'\u00b7'} {strikeText(st.strike)}</span>
@@ -2140,7 +2298,9 @@ export default function VoidMap({
                 The ships are models on the table. With the Aim tool (A) click where the firing ship stands and drag to face
                 it the way it faces, then click the target. Shift-click moves the firer; a click on it clears the aim.
               </p>
+              {shipsHint && <p className="rt-vm-sub rt-vm-noships" role="status">{shipsHint}</p>}
               <div className="rt-vm-grid">
+                {addShipPicker}
                 <label className="rt-vm-wide">Firing ship
                   <select className="rt-sel" value={aim.shipId} aria-label="Firing ship"
                     onChange={(e) => { setAim((a) => ({ ...a, shipId: e.target.value })); setAimWeaponIx(0); }}>
@@ -2236,6 +2396,7 @@ export default function VoidMap({
                   The models are not on the chart, so it cannot tell who sat in the way. When one of these catches a ship,
                   pick the ship and roll: the damage goes on its hull and in the log.
                 </p>
+                {fleet.length === 0 && <p className="rt-vm-sub rt-vm-noships">{shipsHint}</p>}
                 {strikers.map(strikeRow)}
               </div>
             )}
@@ -2464,6 +2625,33 @@ export default function VoidMap({
           </>)}
           </>)}
           {!readOnly && sideTab === 'build' && (<>
+          <div className="rt-vm-card">
+            <div className="rt-vm-h">Tokens</div>
+            <label className="rt-vm-sub">What the worlds, rocks and ships are drawn with
+              <select className="rt-sel" value={map.art === 'stock' || map.art === 'plain' ? map.art : 'own'} aria-label="Tokens"
+                onChange={(e) => { if (e.target.value !== 'own') commit({ ...map, art: e.target.value }); }}>
+                <option value="stock">The painted set</option>
+                {map.art !== 'stock' && map.art !== 'plain' && <option value="own">{ownArtName || 'A generated set'}</option>}
+                <option value="plain">The chart{'’'}s own drawing</option>
+              </select>
+            </label>
+            {voidArt.state === 'none' && map.art === 'stock' && (
+              <p className="rt-vm-sub">No painted set on this deployment: the chart draws its own. Generate one below.</p>
+            )}
+            {voidArt.state === 'missing' && (
+              <p className="rt-vm-sub">That set was generated on another computer, so this one shows the painted set.</p>
+            )}
+            <input className="rt-field" value={artDescribe} maxLength={200} aria-label="What kind of system"
+              placeholder="A set of your own (blank for any frontier system): a dying red giant, xenos ruins on the moons…"
+              onChange={(e) => setArtDescribe(e.target.value)} />
+            <div className="rt-vm-add">
+              <button type="button" className="rt-btn" disabled={artBusy} onClick={generateArt}>
+                {artBusy ? 'Generating… about twenty seconds' : 'Generate a set'}
+              </button>
+            </div>
+            <p className="rt-vm-sub">Sixteen pictures in one go, so they match: four kinds of world, a gas giant, a moon, rocks, wreckage, a station, a hulk, two ships, torpedoes, attack craft and a warp rift. One of the day{'’'}s images; kept in this browser.</p>
+            {artErr && <p className="rt-warn" role="alert">{artErr}</p>}
+          </div>
           {picOpen && !readOnly && (
             <div className="rt-vm-card">
               <div className="rt-vm-h">Picture under the chart</div>
@@ -2502,6 +2690,8 @@ export default function VoidMap({
                 </div>
                 <p className="rt-vm-sub">Drag it to move it and its corner to size it while this card is open.</p>
               </>)}
+              <GenerateFloor target="void" cols={map.cols} rows={map.rows} backdrop={map.backdrop}
+                mediaReady={media.state === 'ready'} onPicture={layGeneratedPicture} onVideo={layGeneratedVideo} />
               <input ref={picFileRef} type="file" hidden accept={PIC_TYPES} aria-label="Picture or video under the chart"
                 onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; choosePicture(f); }} />
               <input ref={relinkRef} type="file" hidden accept={PIC_TYPES} aria-label="The same picture again"

@@ -508,8 +508,21 @@ export const EMPTY_VOID = Object.freeze({
   // A picture or a looping video under the chart, in VU (backdrop.js).
   backdrop: null,
   // Rocks turning, clouds drifting, the riptide running, the star breathing.
-  motion: true
+  motion: true,
+  // What the worlds, rocks and ships are drawn with (readVoidArt).
+  art: 'stock'
 });
+
+/* The chart's tokens: 'stock' is the painted set that ships with the app
+   (public/maps/tokens/void), 'plain' the chart's own drawing, and anything
+   else the id of a set the GM generated, kept in this browser the way a
+   picture floor is (localfiles.js). A set that is not here falls back to the
+   stock one, and a stock one that is not there to the drawing. */
+export function readVoidArt(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  if (s === 'plain' || s === 'stock') return s;
+  return /^[A-Za-z0-9_-]{4,64}$/.test(s) ? s : 'stock';
+}
 
 /* Anything absent is defaulted rather than trusted, the same way readMap
    treats a deck saved before a field existed. A chart is read at three
@@ -550,7 +563,8 @@ export function readVoidMap(m) {
     turn: clamp(Math.round(num(src.turn)), 0, 9999),
     triggers: list(src.triggers, readVoidTrigger, MAX_VOID_TRIGGERS),
     backdrop: readBackdrop(src.backdrop),
-    motion: src.motion !== false
+    motion: src.motion !== false,
+    art: readVoidArt(src.art)
   };
 }
 

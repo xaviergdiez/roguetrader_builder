@@ -29,6 +29,8 @@ import {
   deckMoves, MOTION_FRAME_MS, VIDEO_FRAME_MS, MOTION_MAX_SQUARES, rainStreaks, drift, flicker, sparkArc, rush
 } from './motion.js';
 import { putLocalFile } from './localfiles.js';
+import GenerateFloor from './GenerateFloor.jsx';
+import { placeOver } from './genai.js';
 import useBackdropMedia from './useBackdropMedia.js';
 import { measureMedia } from './measureMedia.js';
 import { readUvtt, uvttToMap, UVTT_METRES_PER_SQUARE } from './uvtt.js';
@@ -3823,13 +3825,14 @@ export default function BattleMap({
     for (const c of squaresUnder(b, g.cols, g.rows)) floor[cellKey(c.x, c.y)] = true;
     return { cols: g.cols, rows: g.rows, floor };
   };
-  const choosePicture = async (file) => {
+  // `across`: a generated picture is made in the grid's shape and laid across it.
+  const choosePicture = async (file, { across = null } = {}) => {
     if (!file) return;
     const kind = backdropKindOf(file.type);
     if (!kind) { setPicNote('That is not a picture or a video the map can show: PNG, JPEG, WebP or GIF, MP4 or WebM.'); return; }
     const size = await measureFile(file, kind);
     if (!size) { setPicNote(`${file.name} would not open.`); return; }
-    const sq = picSquares(size);
+    const sq = across ? squaresFor(size, { across }) : picSquares(size);
     if (!sq) { setPicNote('Say how big the picture is first.'); return; }
     const id = newBackdropId();
     try { await putLocalFile(id, file, { name: file.name }); } catch {
@@ -3848,6 +3851,20 @@ export default function BattleMap({
   };
   // The same deck on a different computer: the file chosen again, under the
   // id the deck already carries.
+  /* What GenerateFloor.jsx hands back lands a while after it was asked for:
+     laid with the deck and the writer as they are THEN, not as they were. */
+  const genRef = useRef(null);
+  genRef.current = { m, patch, choosePicture };
+  const layGeneratedPicture = (file) => genRef.current.choosePicture(file, { across: genRef.current.m.cols });
+  const layGeneratedVideo = async (file, crop, from) => {
+    const id = newBackdropId();
+    try { await putLocalFile(id, file, { name: file.name }); } catch { setPicNote('This browser would not keep the clip.'); return; }
+    const { m: cur, patch: write } = genRef.current;
+    const b = cur.backdrop && from && cur.backdrop.id === from.id ? cur.backdrop : from;
+    write({ backdrop: readBackdrop({ id, kind: 'video', name: file.name, ...placeOver(b, crop), grid: b.grid }) });
+    setPicNote('The picture is moving: a looping clip in its place, over the part of it the clip was made from. Undo puts the still back.');
+  };
+
   const relinkPicture = async (file) => {
     if (!file || !m.backdrop) return;
     const kind = backdropKindOf(file.type);
@@ -4934,6 +4951,8 @@ export default function BattleMap({
               the rooms, sight and blasts all stop at them. Doors go on the square beside the doorway.
             </p>
           </>)}
+          <GenerateFloor target="deck" cols={m.cols} rows={m.rows} backdrop={m.backdrop} hintClass="rt-bm-hint"
+            mediaReady={mediaState === 'ready'} onPicture={layGeneratedPicture} onVideo={layGeneratedVideo} />
           {picNote ? <p className="rt-bm-hint" role="status">{picNote}</p> : null}
         </div>
       )}

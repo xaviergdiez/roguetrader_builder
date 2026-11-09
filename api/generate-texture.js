@@ -14,20 +14,22 @@
 //     shrinks it client-side, as it does for a portrait.
 
 import { requireUser } from "../lib/auth.js";
-import { buildTexturePrompt, buildSpritesPrompt } from "../lib/mapprompt.js";
+import {
+  buildTexturePrompt, buildSpritesPrompt, buildVoidSpritesPrompt, buildBackdropPrompt, IMAGE_ASPECTS
+} from "../lib/mapprompt.js";
 import { redis } from "../lib/storage.js";
 import { takeAllowance, giveBack, dailyLimit, limitMessage, secondsToReset } from "../lib/quota.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MODEL = "gemini-3.1-flash-image";
 
-async function callGeminiImage(prompt, apiKey) {
+async function callGeminiImage(prompt, apiKey, imageConfig = null) {
   const res = await fetch(`${GEMINI_BASE}/${MODEL}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { responseModalities: ["IMAGE"] }
+      generationConfig: { responseModalities: ["IMAGE"], ...(imageConfig ? { imageConfig } : {}) }
     })
   });
 
@@ -71,13 +73,25 @@ export default async function handler(req, res) {
     /* Two things this endpoint makes, from the same description: the floor,
        and the sixteen props that stand on it. One endpoint rather than two
        because this project is on a plan that allows twelve serverless
-       functions and is using eight; the shape of the call is identical and
+       functions (ten in use, with generate-video.js); the shape of the call is identical and
        only the wrapper around the description differs. */
+    /* And two more since: the void chart's own sheet of worlds, rocks and
+       ships, and a whole picture to lie under a deck or the chart, asked for
+       in the shape of what it covers and at 2K, since it is drawn across a
+       whole screen rather than tiled from a corner of one. */
     const body = req.body || {};
-    const prompt = body.kind === "sprites"
-      ? buildSpritesPrompt(body)
-      : buildTexturePrompt(body);
-    const { buf, mime } = await callGeminiImage(prompt, apiKey.trim());
+    let prompt;
+    let imageConfig = null;
+    if (body.kind === "sprites") prompt = buildSpritesPrompt(body);
+    else if (body.kind === "void_sprites") {
+      prompt = buildVoidSpritesPrompt(body);
+      imageConfig = { aspectRatio: "1:1", imageSize: "2K" };
+    } else if (body.kind === "backdrop") {
+      const aspect = IMAGE_ASPECTS.includes(body.aspect) ? body.aspect : "16:9";
+      prompt = buildBackdropPrompt({ ...body, aspect });
+      imageConfig = { aspectRatio: aspect, imageSize: "2K" };
+    } else prompt = buildTexturePrompt(body);
+    const { buf, mime } = await callGeminiImage(prompt, apiKey.trim(), imageConfig);
     res.setHeader("Content-Type", mime);
     res.setHeader("X-Prompt", encodeURIComponent(prompt.slice(0, 900)));
     return res.status(200).send(buf);

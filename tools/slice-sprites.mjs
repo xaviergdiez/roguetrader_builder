@@ -24,7 +24,8 @@ import { readdir, mkdir, writeFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import sharp from 'sharp';
 import {
-  SHEET_CELLS, SPRITE_SLOTS, SHEET_FOR_THEME, cellRect, keyBlack, cellCoverage, MIN_COVERAGE
+  SHEET_CELLS, SPRITE_SLOTS, SHEET_FOR_THEME, VOID_SLOTS, cellRect, keyBlack, keyCells, voidKeyOptions,
+  cellCoverage, MIN_COVERAGE
 } from '../src/spritesheet.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -42,6 +43,11 @@ const DRY = process.argv.includes('--dry');
 // Sheet file -> theme id, the other way round from the app's lookup.
 const THEME_FOR_SHEET = Object.fromEntries(
   Object.entries(SHEET_FOR_THEME).map(([theme, sheet]) => [sheet, theme]));
+/* The void chart's sheet, Void_sprite.*, is cut by its own slots into
+   tokens/void, with a set.json beside it: the chart asks for that one file to
+   learn whether a stock set is there at all, rather than sixteen pictures that
+   may not be (useVoidArt.js). */
+const VOID_SHEET = 'Void';
 
 const kb = (n) => (n / 1024).toFixed(0) + 'kB';
 
@@ -59,7 +65,7 @@ const kb = (n) => (n / 1024).toFixed(0) + 'kB';
    sharp's extract, because a sharp pipeline is single use: asking one for
    sixteen different crops gets you one crop and fifteen errors, and building
    sixteen pipelines decodes the same 2048px JPEG sixteen times. */
-async function cutCell(raw, sheetW, sheetH, index) {
+async function cutCell(raw, sheetW, sheetH, index, size = SIZE) {
   const r = cellRect(index, sheetW, sheetH);
   const cell = new Uint8ClampedArray(r.w * r.h * 4);
   for (let y = 0; y < r.h; y++) {
@@ -71,7 +77,7 @@ async function cutCell(raw, sheetW, sheetH, index) {
 
   const webp = await sharp(Buffer.from(cell.buffer, cell.byteOffset, cell.length),
     { raw: { width: r.w, height: r.h, channels: 4 } })
-    .resize(SIZE, SIZE, { fit: 'fill', kernel: 'lanczos3' })
+    .resize(size, size, { fit: 'fill', kernel: 'lanczos3' })
     .webp({ quality: QUALITY, alphaQuality: 90, effort: 6 })
     .toBuffer();
   return { webp, coverage };
@@ -93,8 +99,13 @@ async function main() {
 
   for (const file of sheets) {
     const name = file.replace(/_sprite\.(jpe?g|png)$/i, '');
-    const theme = THEME_FOR_SHEET[name];
+    const isVoid = name === VOID_SHEET;
+    const theme = isVoid ? 'void' : THEME_FOR_SHEET[name];
     if (!theme) { unknown.push(name); continue; }
+    const slots = isVoid ? VOID_SLOTS : SPRITE_SLOTS;
+    // A world can fill a third of the chart's height, so the void's tokens are
+    // cut larger than a deck's, which never draw past a few squares.
+    const size = isVoid ? Math.max(SIZE, 384) : SIZE;
 
     const path = join(SRC, file);
     const src = (await stat(path)).size;
@@ -107,8 +118,10 @@ async function main() {
       console.warn(`  ! ${file} is ${meta.width}x${meta.height}; cells will lose the odd pixel`);
     }
 
-    // The black into alpha, once, over the whole sheet.
-    keyBlack(raw, { w: meta.width, h: meta.height });
+    // The black into alpha, once, over the whole sheet; the void's cell by
+    // cell, each with its own band (voidKeyOptions in src/spritesheet.js).
+    if (isVoid) keyCells(raw, meta.width, meta.height, (i) => voidKeyOptions(VOID_SLOTS[i].role));
+    else keyBlack(raw, { w: meta.width, h: meta.height });
 
     const dir = join(OUT, theme);
     if (!DRY) await mkdir(dir, { recursive: true });
@@ -116,11 +129,14 @@ async function main() {
     let sheetBytes = 0;
     const flags = [];
     for (let i = 0; i < SHEET_CELLS; i++) {
-      const { webp, coverage } = await cutCell(raw, meta.width, meta.height, i);
-      const role = SPRITE_SLOTS[i].role;
+      const { webp, coverage } = await cutCell(raw, meta.width, meta.height, i, size);
+      const role = slots[i].role;
       if (coverage < MIN_COVERAGE) { flags.push(`${role} looks empty (${(coverage * 100).toFixed(1)}%)`); thin++; }
       if (!DRY) await writeFile(join(dir, role + '.webp'), webp);
       sheetBytes += webp.length;
+    }
+    if (isVoid && !DRY) {
+      await writeFile(join(dir, 'set.json'), JSON.stringify({ roles: slots.map((x) => x.role), size }) + '\n');
     }
     totalBytes += sheetBytes;
     console.log(`${theme.padEnd(20)} ${String(SHEET_CELLS).padStart(2)} tokens  ${kb(src).padStart(7)} -> ${kb(sheetBytes).padStart(6)}`);

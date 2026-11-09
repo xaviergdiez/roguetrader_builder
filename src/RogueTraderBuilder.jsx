@@ -2270,6 +2270,12 @@ const CSS = `
 .rt-vm-strikeact{display:flex;gap:6px;align-items:center;}
 .rt-vm-strikeact .rt-sel{flex:1;font-size:12.5px;padding:3px 6px;min-height:0;}
 .rt-vm-mover{display:flex;flex-direction:column;gap:5px;padding-top:6px;border-top:1px solid rgba(160,190,230,.18);}
+/* Generate a picture for under a map, and bring it to life (GenerateFloor.jsx). */
+.rt-vm-noships{color:#ffcf8a;}
+.rt-genfloor{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:8px;border-top:1px solid var(--brass-dim);}
+.rt-genfloor-h{font-family:var(--display);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-lit);}
+.rt-genfloor-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.rt-genfloor textarea.rt-field,.rt-genfloor input.rt-field{width:100%;box-sizing:border-box;}
 .rt-vm-sides{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .rt-vm-warns{margin:6px 0;padding-left:16px;color:#ffb38a;font-size:13px;}
 .rt-vm-body{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;}
@@ -3852,6 +3858,12 @@ export default function RogueTraderBuilder({ me, cloud }) {
     () => (gmOpen || voidWindow ? buildVoidRoster({ fleet, combat, blueprint, homebrew }) : []),
     [gmOpen, voidWindow, fleet, combat, blueprint, homebrew]
   );
+  // An enemy added from the void chart's own window, as the Fleet tab adds one.
+  const npcHulls = useMemo(() => allHulls(usableCustom(homebrew)).map((h) => ({ id: h.id, name: h.name, cls: h.cls })), [homebrew]);
+  const addNpcShip = (hullId) => {
+    const hull = hullById(hullId, usableCustom(homebrew));
+    if (hull) setFleet((f) => [...f, newNpcShip(hull, f)]);
+  };
 
   /* ---- saved void charts ----
      Kept in the homebrew library (see MAX_LIBRARY_BYTES in voidmap.js for why
@@ -5092,6 +5104,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
               phase={PHASE_LABELS[combat.phase]}
               onAdvance={() => gun.advancePhase({ onFired: onTriggers })}
               onTriggers={onTriggers} cues={triggerCues} handouts={triggerHandouts}
+              onAddShip={addNpcShip} hulls={npcHulls}
             />
           </>)}
         </MapWindow>
@@ -9700,6 +9713,24 @@ function shipProfile(ship, blueprint, custom, context = {}) {
   };
 }
 
+/* An NPC ship as the GM adds one, from a hull: one macrocannon battery to
+   start with, a full hull, numbered when there are several of the hull.
+   Shared by the dashboard's Fleet tab and the void chart, which offers the
+   same when its pickers are empty. */
+function newNpcShip(hull, fleet) {
+  const n = (fleet || []).filter((s) => s.hullId === hull.id).length;
+  return {
+    id: newId(),
+    hullId: hull.id,
+    name: n ? `${hull.name} ${n + 1}` : hull.name,
+    weapons: ['weap-macrocannon-mars'],
+    turretRating: hull.turrets,
+    voidShields: 1,
+    vitals: { hullIntegrity: hull.hullIntegrity, morale: 100, population: 100 },
+    evadingDoS: null
+  };
+}
+
 /* What the void chart needs to know about each ship: its name and class, its
    Speed, and how far each weapon reaches. The same profile the gunnery panel
    reads, so the rings on the chart and the range box cannot disagree. Computed
@@ -10393,17 +10424,7 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
   const addNpc = (hullId) => {
     const hull = hullById(hullId, usable);
     if (!hull) return;
-    const n = fleet.filter((s) => s.hullId === hullId).length;
-    setFleet([...fleet, {
-      id: newId(),
-      hullId,
-      name: n ? `${hull.name} ${n + 1}` : hull.name,
-      weapons: ['weap-macrocannon-mars'],
-      turretRating: hull.turrets,
-      voidShields: 1,
-      vitals: { hullIntegrity: hull.hullIntegrity, morale: 100, population: 100 },
-      evadingDoS: null
-    }]);
+    setFleet([...fleet, newNpcShip(hull, fleet)]);
   };
 
   const dropNpc = (id) => {
@@ -10680,7 +10701,8 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           onUseShot={(shot) => { gun.loadShot(shot); setVoidShot({ ...shot, at: Date.now() }); }}
           chartProps={{
             phase: PHASE_LABELS[combat.phase], onAdvance: advance,
-            onTriggers: triggerProps.onTriggers, cues: triggerProps.cues || [], handouts: triggerProps.handouts || []
+            onTriggers: triggerProps.onTriggers, cues: triggerProps.cues || [], handouts: triggerProps.handouts || [],
+            onAddShip: addNpc, hulls: allHulls(usable).map((h) => ({ id: h.id, name: h.name, cls: h.cls }))
           }}
         />
       </>)}

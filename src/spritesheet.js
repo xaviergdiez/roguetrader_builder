@@ -272,6 +272,90 @@ export function fixtureRole(kind, id, state = null, at = null) {
   return null;
 }
 
+/* ---- the void chart's sheet ----
+
+   Sixteen pictures for the void chart, asked for in this order by
+   VOID_SHEET_SLOTS in lib/mapprompt.js and held to it by mapprompt.check.mjs.
+   The stock set is cut by tools/slice-sprites.mjs into public/maps/tokens/void;
+   one the GM generates is cut in the browser (useVoidArt.js).
+
+   No `turn` here: the chart turns everything to its own rotation, course or
+   heading, so nothing is turned by position. */
+export const VOID_SLOTS = [
+  { slot: 0, role: 'world_rocky', name: 'Rocky world' },
+  { slot: 1, role: 'world_living', name: 'Living world' },
+  { slot: 2, role: 'world_ice', name: 'Ice world' },
+  { slot: 3, role: 'world_hell', name: 'Volcanic world' },
+  { slot: 4, role: 'gas_giant', name: 'Gas giant' },
+  { slot: 5, role: 'moon', name: 'Moon' },
+  { slot: 6, role: 'asteroid', name: 'Asteroid' },
+  { slot: 7, role: 'rock', name: 'Belt rock' },
+  { slot: 8, role: 'debris', name: 'Wreckage' },
+  { slot: 9, role: 'station', name: 'Station' },
+  { slot: 10, role: 'hulk', name: 'Space hulk' },
+  { slot: 11, role: 'ship_imperial', name: 'Imperial cruiser' },
+  { slot: 12, role: 'ship_raider', name: 'Raider' },
+  { slot: 13, role: 'torpedoes', name: 'Torpedo salvo' },
+  { slot: 14, role: 'attack_craft', name: 'Attack craft' },
+  { slot: 15, role: 'warp_rift', name: 'Warp rift' }
+];
+export const VOID_ROLES = VOID_SLOTS.map((s) => s.role);
+
+const hexHsl = (hex) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const hi = Math.max(r, g, b), lo = Math.min(r, g, b), l = (hi + lo) / 2;
+  if (hi === lo) return { h: 0, s: 0, l };
+  const d = hi - lo;
+  const s = l > 0.5 ? d / (2 - hi - lo) : d / (hi + lo);
+  const h = hi === r ? ((g - b) / d + (g < b ? 6 : 0)) : hi === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: h * 60, s, l };
+};
+
+/* Which world a planet is, from the colour the scene gave it (CLIMATE_TONE in
+   voidmap.js: burning, hot, temperate, cold, ice, or the grey of no air) or
+   the GM picked. Red and hot is the lava world, pale is ice, green-to-blue is
+   alive, and anything else is rock, tinted toward its colour so a hot desert
+   world reads ochre and an airless one grey. */
+export function worldRole(tone) {
+  const c = hexHsl(tone);
+  if (!c) return 'world_rocky';
+  if ((c.h < 25 || c.h > 340) && c.s > 0.45) return 'world_hell';
+  if (c.l > 0.6 && c.s < 0.55) return 'world_ice';
+  if (c.h >= 90 && c.h <= 200 && c.s > 0.2) return 'world_living';
+  return 'world_rocky';
+}
+
+/* The picture a body is drawn with, and how much of its own colour is laid
+   over it (0 to 1): a gas giant and a rock world take the scene's colour, a
+   world with a picture of its own colour does not. Null is "draw it as before"
+   (a contact is a ping, not a thing). */
+export function voidBodyArt(b) {
+  if (!b) return null;
+  if (b.kind === 'planet') {
+    const role = worldRole(b.tone);
+    return { role, tint: role === 'world_rocky' ? 0.45 : 0 };
+  }
+  if (b.kind === 'gas_giant') return { role: 'gas_giant', tint: 0.55 };
+  if (b.kind === 'moon') return { role: 'moon', tint: 0.2 };
+  if (['asteroid', 'station', 'hulk', 'torpedoes', 'attack_craft'].includes(b.kind)) return { role: b.kind, tint: 0 };
+  return null;
+}
+
+// What a field is strewn with, or drawn as. Null: the field's own drawing.
+export function voidFieldArt(kind) {
+  if (kind === 'asteroid_belt' || kind === 'asteroid_cluster') return 'rock';
+  if (kind === 'debris') return 'debris';
+  if (kind === 'warp_rift') return 'warp_rift';
+  return null;
+}
+
+// A ship token, by side: the Imperial cruiser for the players and their
+// friends, the raider for everyone else.
+export const voidShipArt = (side) => (side === 'enemy' ? 'ship_raider' : 'ship_imperial');
+
 /* ---- the grid ----
    Where a cell sits on a sheet of any size. The shipped sheets are 2048 and a
    generated one may be 1024, so nothing here may assume 512px cells; the only
@@ -313,8 +397,17 @@ export function cellRect(index, sheetW, sheetH = sheetW) {
    Pure black is still cleared wherever it is found, connected or not. That is
    what keeps an open doorway open, and the gaps between a railing's balusters
    and a grating's bars clear: those are holes, and a hole is rendered as true
-   #000 while a shadow inside a door is merely dark. */
-export function keyBlack(rgba, { lo = BLACK_LO, hi = BLACK_HI, w = 0, h = 0 } = {}) {
+   #000 while a shadow inside a door is merely dark.
+
+   GLOW, for art lit by its own light on black: a drive flame, a warp rift.
+   Its halo is bright enough to pass for solid art at HI, so it came out as an
+   opaque brown disc round every flame. With `glow` set, a strongly coloured
+   pixel the background can reach fades by its brightness all the way up to
+   `glow`, which is what a glow is: light, more or less of it, over whatever
+   is behind. Grey is never glow, so a dark hull edge stays solid. Off unless
+   asked for; the deck sheets do not ask. */
+export const GLOW_SATURATION = 0.4;
+export function keyBlack(rgba, { lo = BLACK_LO, hi = BLACK_HI, w = 0, h = 0, glow = 0 } = {}) {
   const span = Math.max(1, hi - lo);
   const n = rgba.length / 4;
   /* No dimensions given means a strip of pixels with no inside — every one of
@@ -334,7 +427,15 @@ export function keyBlack(rgba, { lo = BLACK_LO, hi = BLACK_HI, w = 0, h = 0 } = 
     const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
     return r > g ? (r > b ? r : b) : (g > b ? g : b);
   };
-  const push = (p) => { if (!open[p] && maxAt(p) < hi) { open[p] = 1; stack.push(p); } };
+  const glowAt = (p) => {
+    if (!glow) return false;
+    const i = p * 4;
+    const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+    const m = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    const lo2 = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    return m < glow && m > 0 && (m - lo2) / m >= GLOW_SATURATION;
+  };
+  const push = (p) => { if (!open[p] && (maxAt(p) < hi || glowAt(p))) { open[p] = 1; stack.push(p); } };
   for (let x = 0; x < width; x++) { push(x); push((height - 1) * width + x); }
   for (let y = 0; y < height; y++) { push(y * width); push(y * width + width - 1); }
   while (stack.length) {
@@ -361,10 +462,12 @@ export function keyBlack(rgba, { lo = BLACK_LO, hi = BLACK_HI, w = 0, h = 0 } = 
       rgba[i] = 0; rgba[i + 1] = 0; rgba[i + 2] = 0; rgba[i + 3] = 0;
       continue;
     }
+    // Light on black, reached from outside: as much of it as there is.
+    const g0 = open[p] && m >= hi && glowAt(p);
     // Dark, but walled in by art: this is the art's own shadow, not the
     // background showing through it.
-    if (m >= hi || !open[p]) { rgba[i + 3] = 255; continue; }
-    const a = (m - lo) / span;
+    if (!g0 && (m >= hi || !open[p])) { rgba[i + 3] = 255; continue; }
+    const a = g0 ? (m - lo) / Math.max(1, glow - lo) : (m - lo) / span;
     // Undo the premultiply: this pixel is the art's own colour faded toward
     // black by `a`, so dividing by `a` recovers the colour it was.
     rgba[i] = Math.min(255, Math.round(r / a));
@@ -373,6 +476,95 @@ export function keyBlack(rgba, { lo = BLACK_LO, hi = BLACK_HI, w = 0, h = 0 } = 
     rgba[i + 3] = Math.round(a * 255);
   }
   return rgba;
+}
+
+/* A sheet keyed cell by cell, each with its own band: the void sheet, where a
+   world wants a low floor (its dark limb is nearly black and must stay) and a
+   torpedo salvo wants its flames to glow. The cells are copied out, keyed with
+   the background round each one, and written back. */
+export function keyCells(rgba, sheetW, sheetH, optsFor) {
+  for (let i = 0; i < SHEET_CELLS; i++) {
+    const r = cellRect(i, sheetW, sheetH);
+    const cell = new Uint8ClampedArray(r.w * r.h * 4);
+    for (let y = 0; y < r.h; y++) {
+      const from = ((r.y + y) * sheetW + r.x) * 4;
+      cell.set(rgba.subarray(from, from + r.w * 4), y * r.w * 4);
+    }
+    const o = optsFor(i) || {};
+    keyBlack(cell, { ...o, w: r.w, h: r.h });
+    if (o.solid) fillSolid(cell, r.w, r.h);
+    for (let y = 0; y < r.h; y++) rgba.set(cell.subarray(y * r.w * 4, (y + 1) * r.w * 4), ((r.y + y) * sheetW + r.x) * 4);
+  }
+  return rgba;
+}
+
+/* A SOLID thing's silhouette, closed. A rock in space is lit from one side and
+   its shadows go as black as the sky, so the keying bites into its edge and
+   punches holes where a crater's shadow reaches the outside. Nothing can tell
+   that black from the sky's by its colour; but a rock has no holes, so the
+   outline is closed (grown and shrunk back by a few percent of the cell) and
+   what lies inside it is filled with the dark of the rock's own shadow. Only
+   for what is solid: a station's ring has real space between its spokes. */
+export function fillSolid(rgba, w, h, { radius = Math.max(2, Math.round(Math.min(w, h) * 0.025)), shade = [18, 16, 14] } = {}) {
+  const n = w * h;
+  const on = new Uint8Array(n);
+  for (let p = 0; p < n; p++) on[p] = rgba[p * 4 + 3] >= 128 ? 1 : 0;
+  // A square max (grow) then min (shrink), each as two one-dimensional passes.
+  const pass = (src, grow, horizontal) => {
+    const out = new Uint8Array(n);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let v = grow ? 0 : 1;
+        for (let k = -radius; k <= radius; k++) {
+          const xx = horizontal ? x + k : x, yy = horizontal ? y : y + k;
+          const inside = xx >= 0 && yy >= 0 && xx < w && yy < h;
+          const s = inside ? src[yy * w + xx] : 0;
+          if (grow ? s : !s) { v = grow ? 1 : 0; break; }
+        }
+        out[y * w + x] = v;
+      }
+    }
+    return out;
+  };
+  const closed = pass(pass(pass(pass(on, true, true), true, false), false, true), false, false);
+  // And whatever the outside cannot reach without crossing the outline is inside.
+  const outside = new Uint8Array(n);
+  const stack = [];
+  const push = (p) => { if (!outside[p] && !closed[p]) { outside[p] = 1; stack.push(p); } };
+  for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+  while (stack.length) {
+    const p = stack.pop();
+    const x = p % w, y = (p - x) / w;
+    if (x > 0) push(p - 1);
+    if (x < w - 1) push(p + 1);
+    if (y > 0) push(p - w);
+    if (y < h - 1) push(p + w);
+  }
+  for (let p = 0; p < n; p++) {
+    if (outside[p] || on[p]) continue;
+    const i = p * 4;
+    const a = rgba[i + 3] / 255;
+    // What little of the art is there shows over the shadow it sits in.
+    rgba[i] = Math.round(rgba[i] * a + shade[0] * (1 - a));
+    rgba[i + 1] = Math.round(rgba[i + 1] * a + shade[1] * (1 - a));
+    rgba[i + 2] = Math.round(rgba[i + 2] * a + shade[2] * (1 - a));
+    rgba[i + 3] = 255;
+  }
+  return rgba;
+}
+
+/* How each cell of the void sheet is keyed. Worlds and rocks are solid and
+   keep the deck sheets' band; what burns or glows fades by its light; what is
+   built has gaps that must stay open, and a slightly lower floor for its dark
+   plating. Measured on the shipped sheet against a coloured ground, the way
+   the deck band was. */
+export function voidKeyOptions(role) {
+  if (['torpedoes', 'attack_craft', 'ship_imperial', 'ship_raider', 'warp_rift'].includes(role)) {
+    return { lo: 8, hi: 34, glow: 235 };
+  }
+  if (['station', 'hulk', 'debris'].includes(role)) return { lo: 12, hi: 30 };
+  return { solid: true };
 }
 
 /* Is there anything in this cell worth keeping? A generated sheet can come

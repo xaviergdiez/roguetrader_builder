@@ -77,9 +77,11 @@ import {
 } from './shiproles.js';
 import {
   PHASES, PHASE_LABELS, nextPhase, initiativeOrder, toHit, hitsScored,
-  resolveAttack, applyCritical, applyEvent,
+  resolveAttack, applyCritical, applyEvent, criticalEffect,
   EXTENDED_ACTIONS, mayTakeAction, actionOutcome
 } from './voidcombat.js';
+import { partsOfBlueprint, partsOfNpc, critTargets, driveOf, shipPlan, labelOf } from './shipplan.js';
+import ShipPlan from './ShipPlan.jsx';
 import {
   ACTIONS as GROUND_ACTIONS, SIZE_MODIFIERS as GROUND_SIZES, GROUND_CONDITIONS,
   weaponProfile as gcWeaponProfile, armourProfile as gcArmourProfile, npcAttackRoll, resolveHits,
@@ -2272,6 +2274,28 @@ const CSS = `
 .rt-vm-mover{display:flex;flex-direction:column;gap:5px;padding-top:6px;border-top:1px solid rgba(160,190,230,.18);}
 /* Generate a picture for under a map, and bring it to life (GenerateFloor.jsx). */
 .rt-vm-noships{color:#ffcf8a;}
+/* The ship plan (ShipPlan.jsx): a cutaway inked in white on black. */
+.rt-plan{display:flex;flex-direction:column;gap:8px;}
+.rt-plan-title{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;font-family:var(--display);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--bone);}
+.rt-plan-tally{font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:none;color:var(--dim);}
+.rt-plan-svg{width:100%;height:auto;display:block;background:#020305;border:1px solid var(--brass-dim);}
+.rt-plan-room{cursor:pointer;outline:none;}
+.rt-plan-room:hover rect:first-of-type,.rt-plan-room:focus-visible rect:first-of-type{stroke:#f5c542;stroke-width:2.4;}
+.rt-plan-room.filler .rt-plan-label{fill:#7d8794;font-style:italic;}
+.rt-plan-label{fill:#e8ecf2;font-family:var(--serif, Georgia, serif);pointer-events:none;}
+.rt-plan-tag{font-family:var(--mono);letter-spacing:.08em;pointer-events:none;}
+.rt-plan-fire{animation:rt-plan-flicker 1.3s ease-in-out infinite alternate;pointer-events:none;}
+@keyframes rt-plan-flicker{from{opacity:.55;}to{opacity:.95;}}
+@media (prefers-reduced-motion: reduce){.rt-plan-fire{animation:none;opacity:.8;}}
+.rt-plan-legend{display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:12px;color:var(--dim);}
+.rt-plan-legend span{display:inline-flex;align-items:center;gap:5px;}
+.rt-plan-legend i{display:inline-block;width:14px;height:10px;border:1px solid #e8ecf2;}
+.rt-plan-legend i.fire{background:radial-gradient(#ffbe50,#ff3c14);border-color:#ffb15a;}
+.rt-plan-hint{margin-left:auto;font-style:italic;}
+.rt-plan-card{border:1px solid var(--brass-dim);background:var(--panel);padding:10px 12px;display:flex;flex-direction:column;gap:6px;}
+.rt-plan-card-h{font-family:var(--display);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lit);}
+.rt-plan-sub{margin:0;font-size:13px;color:var(--dim);}
+.rt-plan-actions{display:flex;flex-wrap:wrap;gap:6px;}
 .rt-genfloor{display:flex;flex-direction:column;gap:6px;margin-top:10px;padding-top:8px;border-top:1px solid var(--brass-dim);}
 .rt-genfloor-h{font-family:var(--display);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold-lit);}
 .rt-genfloor-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
@@ -4986,7 +5010,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
           onLore={() => setLoreOpen(true)}
           code={bridgeCode} setCode={setBridgeCode}
           characterName={name} charId={charId} shipRole={shipRole}
-          blueprint={blueprint} fleet={fleet} combat={combat} roster={roster}
+          blueprint={blueprint} homebrew={homebrew} fleet={fleet} combat={combat} roster={roster}
           card={crewCard}
           // For ground combat: mirrored onto the shared ship on join (see
           // mirrorPlayerWounds in lib/bridge.js), and read back afterward so
@@ -8213,7 +8237,7 @@ const QUICK_LINES = [
    against the station's fields. */
 
 function BridgePanelBase({ onLore, code, setCode, characterName, charId, shipRole,
-  blueprint, fleet, combat, roster, card, characteristics, charWounds,
+  blueprint, homebrew = null, fleet, combat, roster, card, characteristics, charWounds,
   insanity = 0, corruption = 0, onInsanity, onCorruption,
   onDynastyPf, onClose }) {
   const dialogRef = useRef(null);
@@ -8984,6 +9008,20 @@ function BridgePanelBase({ onLore, code, setCode, characterName, charId, shipRol
                 </span>
               </div>
 
+              {/* What the fight has done to her, compartment by compartment:
+                  the GM's criticals and fires, read off the shared vitals. */}
+              {(() => {
+                const bp = { ...((ship.blueprint && ship.blueprint.hullId) ? ship.blueprint : blueprint), custom: usableCustom(homebrew) };
+                const hull = hullById(bp.hullId, bp);
+                if (!hull) return null;
+                return (
+                  <details className="rt-bridgeplan">
+                    <summary className="rt-conds-h" style={{ cursor: 'pointer' }}>Ship plan</summary>
+                    <ShipPlan plan={shipPlan({ hull, parts: partsOfBlueprint(bp), vitals: ship.vitals })} title={bp.shipName || hull.name} />
+                  </details>
+                );
+              })()}
+
               {/* Read-only here — only the GM's dashboard can move these, via
                   the Inquisition/Mechanicus/Navy/Cold Trade standing events. */}
               <div className="rt-conds-h">Dynasty standing</div>
@@ -9693,7 +9731,9 @@ function shipProfile(ship, blueprint, custom, context = {}) {
       detection: s.detection,
       speed: s.speed,
       maxHull: hull.hullIntegrity,
-      weapons: (blueprint.weapons || []).map((w) => w.componentId)
+      weapons: (blueprint.weapons || []).map((w) => w.componentId),
+      // Every component aboard, for a critical to land on (shipplan.js).
+      parts: partsOfBlueprint(blueprint)
     };
   }
   // An NPC ship is hull-backed and has no blueprint to carry definitions, so
@@ -9709,7 +9749,8 @@ function shipProfile(ship, blueprint, custom, context = {}) {
     detection: hull.detection,
     speed: hull.speed,
     maxHull: hull.hullIntegrity,
-    weapons: ship.weapons || []
+    weapons: ship.weapons || [],
+    parts: partsOfNpc(ship, custom)
   };
 }
 
@@ -10029,13 +10070,21 @@ function useGunnery({ fleet, setFleet, combat, setCombat, blueprint, homebrew, b
      rolled here so voidcombat stays pure; `component` is picked here too,
      because only this side knows what the target has bolted on. */
 
+  /* Which component: any aboard that can be hit (the Tenebro-Maze cannot),
+     not only the guns, which was all this once knew of; and for Drive
+     Damaged, the drive, which used to be a random gun marked offline. The
+     ship plan shows where it landed. */
   const critOn = (vitals, profile, roll = d(10)) => {
-    const weapons = (profile && profile.weapons) || [];
+    const parts = (profile && profile.parts) || [];
+    const targets = critTargets(parts);
+    const eff = criticalEffect(roll);
+    const component = eff && eff.name === 'Drive Damaged' ? driveOf(parts)
+      : targets.length ? targets[Math.floor(Math.random() * targets.length)] : null;
     const res = applyCritical(vitals, roll, {
       d5: () => d(5),
       d10: () => d(10),
       d100: () => roll1d100(),
-      component: weapons.length ? weapons[Math.floor(Math.random() * weapons.length)] : null,
+      component,
       base: profile ? { detection: profile.detection, speed: profile.speed } : {}
     });
     if (res.unknown || !res.effect) return null;
@@ -10323,10 +10372,12 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
   // apart here. The ship half is the fleet and the gunnery resolver; the
   // character half is prepared under Encounters and RUN from the Bridge,
   // because it needs the live board of hostiles the table can see.
+  const [planShipId, setPlanShipId] = useState('player');
   const GM_TABS = [
     { id: 'fleet', label: 'Fleet', count: fleet.length },
     { id: 'void', label: 'Void combat', count: 0 },
     { id: 'voidmap', label: 'Void map', count: combat.void && combat.void.map ? 1 : 0 },
+    { id: 'plan', label: 'Ship plan', count: 0 },
     { id: 'events', label: 'Events', count: 0 },
     { id: 'encounters', label: 'Encounters', count: encounters.length },
     { id: 'endeavours', label: 'Endeavours', count: endeavours.length },
@@ -10688,6 +10739,57 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
       </div>
 
       </>)}
+      {gmTab === 'plan' && (() => {
+        /* THE SHIP PLAN (shipplan.js): any ship in the fight, cut into its
+           compartments, with what the criticals have done to each. Marking
+           one here writes the ship's vitals the way a critical does, so the
+           gunnery, the bridge and the plan all agree. */
+        const ship = byId(planShipId) || ships[0] || null;
+        if (!ship) return <p className="rt-vox-hint">No ships yet. The crew{'\u2019'}s ship appears once it has a hull on the Ship tab; add enemies on the Fleet tab.</p>;
+        const hull = ship.player ? hullById(blueprint.hullId, bpWithCustom) : hullById(ship.hullId, usable);
+        const parts = ship.player ? partsOfBlueprint(bpWithCustom) : partsOfNpc(ship, usable);
+        const p = profileOf(ship);
+        const name = p ? p.name : (ship.name || 'The ship');
+        const plan = hull ? shipPlan({ hull, parts, vitals: ship.vitals }) : null;
+        const partName = (id) => { const x = parts.find((q) => q.id === id); return x ? (x.category === 'weapon' ? x.name : labelOf(x)) : id; };
+        const setStatus = (id, status) => {
+          const cs = { ...((ship.vitals && ship.vitals.componentStatus) || {}) };
+          if (status === 'working') delete cs[id]; else cs[id] = status;
+          setVitals(ship.id, { componentStatus: cs });
+          say({ kind: 'event', text: `${name}: ${partName(id)} marked ${status}.` });
+        };
+        const setFire = (id, on) => {
+          const fires = ((ship.vitals && ship.vitals.fires) || []).filter((f) => f && f.location !== id);
+          setVitals(ship.id, { fires: on ? [...fires, { id: `fire-${Date.now().toString(36)}`, location: id }] : fires });
+          say({ kind: 'event', text: on ? `${name}: fire in the ${partName(id)}.` : `${name}: the fire in the ${partName(id)} is out.` });
+        };
+        const fires = (ship.vitals && ship.vitals.fires) || [];
+        return (<>
+          <div className="rt-sechead">
+            <h4>Ship plan</h4>
+            <label className="rt-shipsel">
+              <span className="rt-shipsel-k">Ship</span>
+              <select className="rt-sel" value={ship.id} aria-label="Ship to show" onChange={(e) => setPlanShipId(e.target.value)}>
+                {ships.map((sh) => { const q = profileOf(sh); return <option key={sh.id} value={sh.id}>{q ? q.name : (sh.name || sh.id)}{sh.player ? ' (the crew\u2019s)' : ''}</option>; })}
+              </select>
+            </label>
+          </div>
+          {plan ? (<>
+            <ShipPlan plan={plan} title={`${name}${hull && hull.name !== name ? ` \u00b7 ${hull.name}` : ''}`} editable onStatus={setStatus} onFire={setFire} />
+            {fires.length > 0 && (
+              <div className="rt-btnrow">
+                <button type="button" className="rt-btn ghost" onClick={() => { setVitals(ship.id, { fires: [] }); say({ kind: 'event', text: `${name}: every fire aboard is out.` }); }}>
+                  Put out every fire aboard
+                </button>
+              </div>
+            )}
+            <p className="rt-vox-hint">
+              Criticals land here: a component damaged or destroyed, the drive taken offline, a fire where it starts.
+              Mark a compartment by hand when the table decides something the dice did not.
+            </p>
+          </>) : <p className="rt-vox-hint">{ship.player ? 'The crew\u2019s ship has no hull yet: choose one on the Ship tab.' : 'This ship\u2019s hull is not in the catalogue.'}</p>}
+        </>);
+      })()}
       {gmTab === 'voidmap' && (<>
         <VoidPanel
           voidState={combat.void}
@@ -12103,6 +12205,11 @@ function ShipPanelBase({ blueprint, setBlueprint, homebrew, onEditHomebrew,
               )}
             </>
           )}
+
+          {/* Where everything just chosen sits aboard (shipplan.js): the same
+              plan the GM marks a critical on, and a boarding action lands in. */}
+          <div className="rt-conds-h">Ship plan</div>
+          <ShipPlan plan={shipPlan({ hull, parts: partsOfBlueprint(bp) })} title={bp.shipName || hull.name} />
         </>
       )}
 

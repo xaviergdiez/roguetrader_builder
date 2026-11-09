@@ -118,7 +118,7 @@ export const COMPONENTS = [
   C('comp-munitorum', 'Munitorum', 'supplemental', -2, 3, 2,
     { note: '+1d5 Macrocannon damage. +1 Space cost for explosions.' }),
   C('comp-tenebro-maze', 'Tenebro-Maze', 'supplemental', -1, 2, 2,
-    { note: '+10 Command against boarding. Cannot be critically hit.', unique: true }),
+    { note: '+10 Command against boarding. Cannot be critically hit.', unique: true, noCrit: true }),
   C('comp-smugglers-hold', "Smuggler's Hold", 'supplemental', -1, 2, 1,
     { note: '+50 Achievement Points for criminal objectives.' }),
   C('comp-flak-turrets', 'Flak Turrets', 'supplemental', -1, 1, 1,

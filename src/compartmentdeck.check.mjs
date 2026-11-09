@@ -35,6 +35,12 @@ assert.equal(kindOf(room((r) => /Tenebro/.test(r.name))).style, 'warren', 'the m
 assert.equal(kindOf({ label: 'Hangar Deck', name: 'Hangar Deck' }).theme, 'hangar_bay');
 assert.equal(kindOf({ label: 'Medicae Ward', name: 'Medicae Ward' }).theme, 'medicae');
 assert.equal(kindOf({}).theme, 'rogue_trader', 'anything else is a flagship deck');
+assert.equal(kindOf({ label: 'Navigator\u2019s sanctum' }).theme, 'command_deck');
+assert.equal(kindOf({ label: 'Cells' }).style, 'warren');
+assert.equal(kindOf({ label: 'Manufactorum' }).theme, 'forge_sanctum');
+assert.equal(kindOf({ label: 'Troop quarters' }).style, 'warren');
+assert.equal(kindOf({ label: 'Emperor\u2019s shrine' }).theme, 'command_deck', 'the shrine is a chapel');
+assert.equal(kindOf({ label: 'Astropathic choir' }).theme, 'cogitator_vault');
 
 // Sized by Space, shaped like the compartment.
 const small = deckSizeFor({ space: 0, w: 60, h: 40 });

@@ -1,7 +1,8 @@
 // Self-check for the ship plan. Run: node src/shipplan.check.mjs
 import assert from 'node:assert/strict';
 import {
-  partsOfBlueprint, partsOfNpc, npcEssentials, critTargets, driveOf, shipPlan, shapeFor, zoneOf, labelOf, STATUSES, fitLabel
+  partsOfBlueprint, partsOfNpc, npcEssentials, critTargets, driveOf, shipPlan, shapeFor, zoneOf, labelOf, STATUSES, fitLabel,
+  standardSpacesFor, STANDARD_SPACES, readPlanEdits, planEdited, keysFor, editRoom, resetRoom, addExtra, removeExtra, setShape, ZONE_IDS
 } from './shipplan.js';
 import { HULLS, hullById, ESSENTIAL_CATEGORIES } from './ship.js';
 
@@ -114,7 +115,7 @@ assert.ok(usedSpace < hull.space && holds && holds.zone === 'ventral' && /unused
 assert.ok(STATUSES.includes('destroyed'));
 
 // An empty zone is still hull: filled, not left out.
-const bare = shipPlan({ hull: hullById('hull-sword'), parts: partsOfNpc({ hullId: 'hull-sword', weapons: [] }, null) });
+const bare = shipPlan({ hull: hullById('hull-hazeroth'), parts: partsOfNpc({ hullId: 'hull-hazeroth', weapons: [] }, null) });
 assert.ok(bare.rooms.some((r) => r.filler && r.zone === 'lower' && r.label === 'Gun decks'), 'no broadsides: the gun decks are still there');
 assert.equal(bare.shape, 'escort');
 assert.ok(bare.rooms.find((r) => r.category === 'augurArray').zone === 'dorsal', 'an escort carries its augurs in the superstructure');
@@ -136,6 +137,92 @@ assert.ok(shipPlan({}).rooms.length > 5, 'no hull at all still draws a ship');
   // every room on a real plan that is big enough to read has a label
   const p = shipPlan({ hull: hullById('hull-lunar'), parts });
   for (const r of p.rooms) if (r.w >= 60 && r.h >= 28) assert.ok(fitLabel(r.label, r.w, r.h), `${r.label} (${r.w}x${r.h}) is labelled`);
+}
+
+/* ---- by size: the spaces a ship of its size is built with ---- */
+{
+  const names = (h) => standardSpacesFor(hullById(h)).map((x) => x.id);
+  assert.deepEqual(names('hull-hazeroth'), ['navigator', 'chapel'], 'a raider: a Navigator and a shrine');
+  assert.ok(names('hull-sword').includes('medicae') && !names('hull-sword').includes('astropath'), 'a frigate gains a medicae bay');
+  assert.ok(names('hull-dauntless').includes('astropath') && names('hull-dauntless').includes('manufactorum'), 'a light cruiser its choir and its manufactorum');
+  assert.equal(names('hull-lunar').length, STANDARD_SPACES.length, 'a cruiser all of them');
+  const small = shipPlan({ hull: hullById('hull-hazeroth'), parts: partsOfNpc({ hullId: 'hull-hazeroth', weapons: [] }, null) });
+  const big = shipPlan({ hull: hullById('hull-lunar'), parts });
+  assert.ok(big.rooms.length > small.rooms.length + 5, `a cruiser has more compartments: ${big.rooms.length} to ${small.rooms.length}`);
+  assert.ok(big.rooms.some((r) => r.kind === 'standard' && r.label === 'Astropathic choir'));
+}
+
+/* ---- the GM's own changes ---- */
+{
+  // Keys are what a compartment is, not where it sits in a list.
+  const keys = keysFor(parts);
+  assert.ok(keys.includes('ess:bridge') && keys.includes('gun:port:1') && keys.includes('gun:port:2') && keys.includes('sup:comp-munitorum:1'), keys.join(' '));
+  assert.equal(new Set(keys).size, keys.length, 'one key each');
+  const hull = hullById('hull-lunar');
+  const plan0 = shipPlan({ hull, parts });
+  assert.equal(planEdited(null), false);
+
+  let e = editRoom(null, 'ess:bridge', { label: 'Command throne' });
+  e = editRoom(e, 'sup:comp-munitorum:1', { zone: 'ventral', weight: 9 });
+  e = editRoom(e, 'std:cells', { hidden: true });
+  e = addExtra(e, { label: 'Trophy room', zone: 'dorsal', weight: 2, note: 'Xenos skulls.' });
+  e = setShape(e, 'transport');
+  assert.ok(planEdited(e));
+  const plan1 = shipPlan({ hull, parts, edits: e });
+  const room = (p, k) => p.rooms.find((r) => r.key === k);
+  assert.equal(room(plan1, 'ess:bridge').label, 'Command throne', 'renamed');
+  assert.equal(room(plan1, 'ess:bridge').defaultLabel, 'Bridge', 'and still knows what it was');
+  assert.equal(room(plan1, 'ess:bridge').category, 'bridge', 'and what it is: criticals still find it');
+  assert.equal(room(plan1, 'sup:comp-munitorum:1').zone, 'ventral', 'moved');
+  assert.equal(room(plan1, 'sup:comp-munitorum:1').weight, 9, 'and made bigger');
+  assert.ok(room(plan1, 'sup:comp-munitorum:1').edited);
+  assert.equal(room(plan1, 'std:cells'), undefined, 'a standard space hidden');
+  assert.deepEqual(plan1.hiddenSpaces.map((h) => h.key), ['std:cells'], 'and listed to bring back');
+  const trophy = plan1.rooms.find((r) => r.kind === 'extra');
+  assert.ok(trophy && trophy.label === 'Trophy room' && trophy.zone === 'dorsal' && trophy.note === 'Xenos skulls.', 'one of the GM\u2019s own');
+  assert.equal(plan1.shape, 'transport', 'the silhouette chosen');
+  // The superstructure grew to hold what was put in it, and nothing in it is a sliver.
+  const dorsal = (p) => p.zones.find((z) => z.zone === 'dorsal');
+  const plainT = shipPlan({ hull, parts, edits: setShape(null, 'transport') });
+  assert.ok(dorsal(plan1).w > dorsal(plainT).w, `a superstructure with more in it is longer: ${dorsal(plainT).w} -> ${dorsal(plan1).w}`);
+  for (const r of plan1.rooms) if (r.zone === 'dorsal' || r.zone === 'ventral') assert.ok(r.w >= 40, `${r.label} has room for its name: ${r.w}`);
+  const tower = plan1.zones.find((z) => z.zone === 'tower');
+  assert.ok(tower.x >= dorsal(plan1).x && tower.x + tower.w <= dorsal(plan1).x + dorsal(plan1).w, 'the tower stands on the superstructure');
+  // The zones never cross each other.
+  const zs = plan1.zones;
+  for (let i = 0; i < zs.length; i++) for (let j = i + 1; j < zs.length; j++) {
+    const a = zs[i], b2 = zs[j];
+    const ox = Math.min(a.x + a.w, b2.x + b2.w) - Math.max(a.x, b2.x), oy = Math.min(a.y + a.h, b2.y + b2.h) - Math.max(a.y, b2.y);
+    assert.ok(ox <= 0.5 || oy <= 0.5, `${a.zone} and ${b2.zone} do not overlap`);
+  }
+  assert.equal(plan0.shape, 'cruiser');
+  // No overlap, inside their zones, with every edit in.
+  for (const r of plan1.rooms) {
+    const z = plan1.zones.find((zz) => zz.zone === r.zone);
+    assert.ok(z && r.x >= z.x - 0.2 && r.x + r.w <= z.x + z.w + 0.2 && r.y >= z.y - 0.2 && r.y + r.h <= z.y + z.h + 0.2, `${r.label} inside`);
+  }
+  // A move to a zone the shape lacks lands somewhere it has.
+  const esc = shipPlan({ hull: hullById('hull-sword'), parts: partsOfNpc({ hullId: 'hull-sword', weapons: [] }, null), edits: editRoom(null, 'std:navigator', { zone: 'spire' }) });
+  assert.equal(esc.rooms.find((r) => r.key === 'std:navigator').zone, 'dorsal', 'an escort has no spire');
+  // Undo and remove.
+  const back = resetRoom(e, 'ess:bridge');
+  assert.equal(shipPlan({ hull, parts, edits: back }).rooms.find((r) => r.key === 'ess:bridge').label, 'Bridge', 'reset to what it was');
+  const tk = trophy.key;
+  const gone = removeExtra(e, tk);
+  assert.equal(shipPlan({ hull, parts, edits: gone }).rooms.some((r) => r.kind === 'extra'), false, 'one of the GM\u2019s own taken off');
+  const renamedExtra = editRoom(e, tk, { label: 'Hall of trophies' });
+  assert.equal(shipPlan({ hull, parts, edits: renamedExtra }).rooms.find((r) => r.key === tk).label, 'Hall of trophies');
+  assert.deepEqual(readPlanEdits(editRoom(editRoom(null, 'ess:bridge', { label: 'X' }), 'ess:bridge', { label: '' })).rooms, {}, 'an emptied change is no change');
+  // Read, never trusted.
+  const junk = readPlanEdits({ shape: 'battleship', rooms: { 'ess:bridge': { label: 'y'.repeat(99), zone: 'moon', weight: 999, hidden: 'yes' }, '../x': { label: 'a' } },
+    extra: [{ id: 'bad id', label: 'a' }, { id: 'xok1', label: '' }, { id: 'xok2', label: 'Fine', zone: 'nowhere', weight: -4 }] });
+  assert.equal(junk.shape, null);
+  assert.deepEqual(junk.rooms, { 'ess:bridge': { label: 'y'.repeat(40), weight: 30 } });
+  assert.deepEqual(junk.extra, [{ id: 'xok2', label: 'Fine', zone: 'upper', weight: 3, note: '' }]);
+  assert.ok(ZONE_IDS.includes('ventral'));
+  // A compartment the GM renamed keeps its name: no number added.
+  const two = editRoom(null, 'gun:port:2', { label: 'Port battery' });
+  assert.equal(shipPlan({ hull, parts, edits: two }).rooms.filter((r) => r.label === 'Port battery').length, 2, 'the GM\u2019s own name, as given');
 }
 
 console.log('shipplan.js OK');

@@ -38,6 +38,11 @@ const KINDS = [
   [(r) => /medic|infirm|sanitor|hospital|apothec/i.test(said(r)), K('medicae', 'decks', ['low'], ['cogitator'])],
   [(r) => /chapel|shrine|cathedral|temple|reliquar|ecclesi/i.test(said(r)), K('command_deck', 'hulk', ['pillar'], ['shrine'])],
   [(r) => /maze/i.test(said(r)), K('lower_decks', 'warren', ['low'], [])],
+  // The spaces every ship of a size has (shipplan.js), and what a GM adds.
+  [(r) => /navigator|sanctum|trophy|observator|gallery|stateroom|throne/i.test(said(r)), K('command_deck', 'decks', ['low', 'pillar'], ['shrine'])],
+  [(r) => /\bcells?\b|brig|prison|gaol/i.test(said(r)), K('lower_decks', 'warren', ['low'], [])],
+  [(r) => /manufactor|forge|workshop|teleport/i.test(said(r)), K('forge_sanctum', 'decks', ['machinery', 'tank'], ['cogitator'])],
+  [(r) => /troop|barrack|armsmen/i.test(said(r)), K('lower_decks', 'warren', ['crates', 'low'], [])],
   [(r) => /librar|cogitat|lab|archive|astropath/i.test(said(r)), K('cogitator_vault', 'decks', ['machinery'], ['cogitator', 'cogitator'])],
   [(r) => /hold|cargo|smuggl|storage|vault/i.test(said(r)), K('cargo_lanes', 'hulk', ['crates', 'crates', 'tank'], [])],
   // What the hull is where no component is.

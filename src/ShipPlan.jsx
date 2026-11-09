@@ -1,5 +1,8 @@
 import React, { useId, useMemo, useState } from 'react';
-import { fitLabel, STATUSES, STATUS_LABEL } from './shipplan.js';
+import {
+  fitLabel, STATUSES, STATUS_LABEL, ZONE_IDS, ZONE_LABEL, SHAPE_LABEL,
+  editRoom, resetRoom, addExtra, removeExtra, setShape, readPlanEdits, planEdited
+} from './shipplan.js';
 import { ESSENTIAL_LABELS } from './ship.js';
 
 /* A ship's plan, drawn (shipplan.js lays it out): the hull side-on in black
@@ -20,11 +23,24 @@ const FLAG = { adrift: 'Adrift', collapsed: 'Collapsed', blind: 'Blind', smashed
 
 /* `mapOf(room)`, when given, says whether a compartment has a deck of its
    own yet ({ deck, hint }), and `onMap(room)` makes it or opens it: the GM's
-   way from the plan to the battle map (compartmentdeck.js). */
-export default function ShipPlan({ plan, title = '', editable = false, onStatus = null, onFire = null, mapOf = null, onMap = null }) {
+   way from the plan to the battle map (compartmentdeck.js).
+
+   `edits` and `onEdits`, when given, make the LAYOUT the GM's to change
+   (shipplan.js): a compartment renamed, moved to another part of the hull,
+   made bigger or smaller, a standard space hidden, compartments of their own
+   added, the silhouette chosen. Where the damage can be marked too, the two
+   are separate modes, so a click meant to mark a fire never moves a room. */
+export default function ShipPlan({ plan, title = '', editable = false, onStatus = null, onFire = null, mapOf = null, onMap = null,
+  edits = null, onEdits = null }) {
   const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
   const [selKey, setSelKey] = useState(null);
+  const [mode, setMode] = useState(editable ? 'damage' : 'layout');
+  const [addName, setAddName] = useState('');
+  const [addZone, setAddZone] = useState('upper');
   const sel = plan.rooms.find((r) => r.key === selKey) || null;
+  const layout = Boolean(onEdits) && (mode === 'layout' || !editable);
+  const ed = readPlanEdits(edits);
+  const change = (next) => onEdits && onEdits(planEdited(next) ? next : null);
 
   const tally = useMemo(() => {
     const ids = new Map();
@@ -49,7 +65,16 @@ export default function ShipPlan({ plan, title = '', editable = false, onStatus 
 
   return (
     <div className="rt-plan">
-      {title && <div className="rt-plan-title">{title}<span className="rt-plan-tally">{sayTally}</span></div>}
+      {(title || (editable && onEdits)) && (
+        <div className="rt-plan-title">{title}<span className="rt-plan-tally">{sayTally}</span>
+          {editable && onEdits && (
+            <span className="rt-plan-modes" role="group" aria-label="What a click does">
+              <button type="button" className={'rt-btn' + (mode === 'damage' ? ' on' : ' ghost')} aria-pressed={mode === 'damage' ? 'true' : 'false'} onClick={() => setMode('damage')}>Damage</button>
+              <button type="button" className={'rt-btn' + (mode === 'layout' ? ' on' : ' ghost')} aria-pressed={mode === 'layout' ? 'true' : 'false'} onClick={() => setMode('layout')}>Layout</button>
+            </span>
+          )}
+        </div>
+      )}
       <svg className="rt-plan-svg" viewBox={`-30 -14 1040 ${plan.height + 28}`} role="group"
         aria-label={`${title || 'Ship'} plan: ${sayTally}`}>
         <defs>
@@ -123,10 +148,93 @@ export default function ShipPlan({ plan, title = '', editable = false, onStatus 
       <div className="rt-plan-legend" aria-hidden="true">
         {STATUSES.map((s) => <span key={s}><i style={{ background: FILL[s], borderColor: TAG[s] || '#e8ecf2' }} />{STATUS_LABEL[s]}</span>)}
         <span><i className="fire" />On fire</span>
-        <span className="rt-plan-hint">Click a compartment{editable ? ' to mark it' : ' for what it is'}.</span>
+        <span className="rt-plan-hint">Click a compartment{layout ? ' to rename, move or resize it' : editable ? ' to mark it' : ' for what it is'}.</span>
       </div>
 
-      {sel && (
+      {sel && layout && (
+        <div className="rt-plan-card">
+          <div className="rt-plan-card-h">{sel.label}{sel.edited ? <span className="rt-plan-sub"> {'\u00b7'} changed</span> : null}</div>
+          {sel.kind === 'spine' || sel.kind === 'filler' || sel.kind === 'free' ? (
+            <p className="rt-plan-sub">{sel.kind === 'free' ? 'The hull\u2019s unused Space: it shrinks as components are fitted.' : 'Hull with nothing in it. Move a compartment here, or add one of your own.'}</p>
+          ) : (<>
+            <div className="rt-plan-edit">
+              <label>Name
+                <input className="rt-field" maxLength={40} aria-label="Compartment name"
+                  value={sel.kind === 'extra' ? sel.label : ((ed.rooms[sel.key] && ed.rooms[sel.key].label) || '')}
+                  placeholder={sel.defaultLabel}
+                  onChange={(e) => change(editRoom(edits, sel.key, { label: e.target.value }))} />
+              </label>
+              <label>Where
+                <select className="rt-sel" aria-label="Where it goes" value={sel.zone}
+                  onChange={(e) => change(editRoom(edits, sel.key, { zone: e.target.value }))}>
+                  {ZONE_IDS.filter((z) => plan.zones.some((zz) => zz.zone === z)).map((z) => <option key={z} value={z}>{ZONE_LABEL[z]}</option>)}
+                </select>
+              </label>
+              <span className="rt-plan-size" role="group" aria-label="Size">
+                <button type="button" className="rt-btn ghost" aria-label="Smaller" disabled={sel.weight <= 1}
+                  onClick={() => change(editRoom(edits, sel.key, { weight: Math.max(1, (sel.weight || 1) - 1) }))}>{'\u2212'}</button>
+                <span className="rt-plan-sub">Size {sel.weight}</span>
+                <button type="button" className="rt-btn ghost" aria-label="Bigger" disabled={sel.weight >= 30}
+                  onClick={() => change(editRoom(edits, sel.key, { weight: Math.min(30, (sel.weight || 1) + 1) }))}>+</button>
+              </span>
+            </div>
+            {sel.kind === 'extra' && (
+              <textarea className="rt-field" rows={2} maxLength={300} aria-label="Compartment note" value={sel.note}
+                placeholder="What it is and what is in it."
+                onChange={(e) => change(editRoom(edits, sel.key, { note: e.target.value }))} />
+            )}
+            <div className="rt-plan-actions">
+              {sel.kind === 'standard' && (
+                <button type="button" className="rt-btn ghost" onClick={() => { change(editRoom(edits, sel.key, { hidden: true })); setSelKey(null); }}>Hide it</button>
+              )}
+              {sel.kind === 'extra' && (
+                <button type="button" className="rt-btn ghost" onClick={() => { change(removeExtra(edits, sel.key)); setSelKey(null); }}>Take it off the plan</button>
+              )}
+              {sel.edited && sel.kind !== 'extra' && (
+                <button type="button" className="rt-btn ghost" onClick={() => change(resetRoom(edits, sel.key))}>Back to how it was</button>
+              )}
+            </div>
+            <p className="rt-plan-sub">
+              {sel.kind === 'component' ? 'A component: it stays aboard wherever it is drawn, and criticals still find it.'
+                : sel.kind === 'standard' ? 'A space every ship of this size has. Hide it if this one does not.' : 'One of your own.'}
+            </p>
+          </>)}
+        </div>
+      )}
+
+      {layout && (
+        <div className="rt-plan-layout">
+          <label className="rt-plan-sub">Silhouette
+            <select className="rt-sel" aria-label="Silhouette" value={ed.shape || ''} onChange={(e) => change(setShape(edits, e.target.value))}>
+              <option value="">By its class</option>
+              {Object.entries(SHAPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </label>
+          <span className="rt-plan-add">
+            <input className="rt-field" maxLength={40} aria-label="New compartment" placeholder="A compartment of your own: Trophy room, Teleportarium\u2026"
+              value={addName} onChange={(e) => setAddName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && addName.trim()) { change(addExtra(edits, { label: addName.trim(), zone: addZone })); setAddName(''); } }} />
+            <select className="rt-sel" aria-label="Where the new one goes" value={addZone} onChange={(e) => setAddZone(e.target.value)}>
+              {ZONE_IDS.filter((z) => plan.zones.some((zz) => zz.zone === z)).map((z) => <option key={z} value={z}>{ZONE_LABEL[z]}</option>)}
+            </select>
+            <button type="button" className="rt-btn" disabled={!addName.trim()}
+              onClick={() => { change(addExtra(edits, { label: addName.trim(), zone: addZone })); setAddName(''); }}>Add</button>
+          </span>
+          {plan.hiddenSpaces.length > 0 && (
+            <span className="rt-plan-sub">Hidden: {plan.hiddenSpaces.map((h) => (
+              <button key={h.key} type="button" className="rt-plan-chip" title="Put it back"
+                onClick={() => change(editRoom(edits, h.key, { hidden: false }))}>{h.label} {'\u21ba'}</button>
+            ))}</span>
+          )}
+          {planEdited(edits) && (
+            <button type="button" className="rt-btn ghost" onClick={() => {
+              if (window.confirm('Put the whole plan back as the ship would be by itself? Every name, move and compartment of your own goes.')) { change(null); setSelKey(null); }
+            }}>Reset the plan</button>
+          )}
+        </div>
+      )}
+
+      {sel && !layout && (
         <div className="rt-plan-card">
           <div className="rt-plan-card-h">{sel.label}</div>
           {onMap && mapOf && (() => {
@@ -140,10 +248,11 @@ export default function ShipPlan({ plan, title = '', editable = false, onStatus 
               </div>
             );
           })()}
-          {sel.filler ? (
+          {sel.filler || !sel.id ? (
             <p className="rt-plan-sub">{sel.key === 'free' ? `${sel.name} of the hull: holds, stores and room to carry cargo.`
               : sel.key === 'spine' ? 'The spine that runs the length of the ship: freight lines, the artillery decks’ lifts and the long corridors every compartment opens off.'
-                : 'Part of the hull with no component of its own in it.'}</p>
+                : sel.kind === 'standard' || sel.kind === 'extra' ? `${sel.note || 'One of your own.'} Not a component, so no critical lands on it.`
+                  : 'Part of the hull with no component of its own in it.'}</p>
           ) : (<>
             <div className="rt-plan-sub">
               {sel.name}{sel.category && ESSENTIAL_LABELS[sel.category] && sel.label !== ESSENTIAL_LABELS[sel.category] ? ` · ${ESSENTIAL_LABELS[sel.category]}` : ''}

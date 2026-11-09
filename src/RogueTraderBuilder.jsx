@@ -2297,6 +2297,15 @@ const CSS = `
 .rt-plan-card-h{font-family:var(--display);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold-lit);}
 .rt-plan-sub{margin:0;font-size:13px;color:var(--dim);}
 .rt-plan-actions{display:flex;flex-wrap:wrap;gap:6px;}
+.rt-plan-modes{margin-left:auto;display:inline-flex;gap:4px;}
+.rt-plan-modes .rt-btn,.rt-plan-size .rt-btn{padding:4px 10px;font-size:11px;min-height:0;}
+.rt-plan-edit{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;}
+.rt-plan-edit label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--dim);}
+.rt-plan-size{display:inline-flex;gap:6px;align-items:center;}
+.rt-plan-layout{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:8px 10px;border:1px dashed var(--brass-dim);}
+.rt-plan-add{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;flex:1 1 360px;}
+.rt-plan-add .rt-field{flex:1 1 200px;}
+.rt-plan-chip{background:none;border:1px solid var(--brass-dim);color:var(--bone);padding:2px 8px;margin:0 3px;cursor:pointer;font-size:12px;}
 /* Named areas on the battle map (BattleMap.jsx, areas.js). */
 .rt-area-swatches{display:inline-flex;gap:4px;align-items:center;}
 .rt-area-swatch{width:20px;height:20px;border:1px solid rgba(255,255,255,.35);cursor:pointer;padding:0;}
@@ -5049,7 +5058,7 @@ export default function RogueTraderBuilder({ me, cloud }) {
       {gmOpen && (
         <GmPanel
           onLore={() => setLoreOpen(true)}
-          fleet={fleet} setFleet={setFleet}
+          fleet={fleet} setFleet={setFleet} setBlueprint={setBlueprint}
           combat={combat} setCombat={setCombat}
           blueprint={blueprint} bridgeCode={bridgeCode}
           homebrew={homebrew} setHomebrew={setHomebrew}
@@ -9032,7 +9041,7 @@ function BridgePanelBase({ onLore, code, setCode, characterName, charId, shipRol
                 return (
                   <details className="rt-bridgeplan">
                     <summary className="rt-conds-h" style={{ cursor: 'pointer' }}>Ship plan</summary>
-                    <ShipPlan plan={shipPlan({ hull, parts: partsOfBlueprint(bp), vitals: ship.vitals })} title={bp.shipName || hull.name} />
+                    <ShipPlan plan={shipPlan({ hull, parts: partsOfBlueprint(bp), vitals: ship.vitals, edits: bp.plan })} title={bp.shipName || hull.name} />
                   </details>
                 );
               })()}
@@ -10237,7 +10246,7 @@ const gunSurface = (g) => ({
   log: g.log.slice(0, 12)
 });
 
-function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, bridgeCode,
+function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, setBlueprint = () => {}, bridgeCode,
   homebrew, setHomebrew, mapWindow, setMapWindow, sharedMapTools, mapErr, setMapErr,
   voidRoster = [], voidWindow = false, setVoidWindow = () => {},
   voidWindowErr = '', setVoidWindowErr = () => {}, voidShot = null, setVoidShot = () => {}, gun, voidLib = null, mapLib = null,
@@ -10765,7 +10774,13 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
         const parts = ship.player ? partsOfBlueprint(bpWithCustom) : partsOfNpc(ship, usable);
         const p = profileOf(ship);
         const name = p ? p.name : (ship.name || 'The ship');
-        const plan = hull ? shipPlan({ hull, parts, vitals: ship.vitals }) : null;
+        // The GM's own changes to the layout, kept with the ship itself.
+        const edits = ship.player ? (blueprint && blueprint.plan) || null : ship.plan || null;
+        const setEdits = (next) => {
+          if (ship.player) setBlueprint((b) => ({ ...b, plan: next || undefined }));
+          else setFleet(fleet.map((f) => (f.id === ship.id ? { ...f, plan: next || undefined } : f)));
+        };
+        const plan = hull ? shipPlan({ hull, parts, vitals: ship.vitals, edits }) : null;
         const partName = (id) => { const x = parts.find((q) => q.id === id); return x ? (x.category === 'weapon' ? x.name : labelOf(x)) : id; };
         const setStatus = (id, status) => {
           const cs = { ...((ship.vitals && ship.vitals.componentStatus) || {}) };
@@ -10781,7 +10796,9 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
         const fires = (ship.vitals && ship.vitals.fires) || [];
         /* A compartment's own deck: found by its name in the library, made by
            the deck generator in the ground it is (compartmentdeck.js). */
-        const deckOfRoom = (room) => (mapLib && mapLib.decks.find((dk) => dk.name === deckNameFor(name, room))) || null;
+        // Found by its name, or by the name it had before the GM renamed it.
+        const deckOfRoom = (room) => (mapLib && mapLib.decks.find((dk) => dk.name === deckNameFor(name, room)
+          || (room.defaultLabel && dk.name === deckNameFor(name, { label: room.defaultLabel })))) || null;
         const mapOf = (room) => {
           const kind = kindOf(room);
           const size = deckSizeFor(room);
@@ -10809,7 +10826,7 @@ function GmPanelBase({ onLore, fleet, setFleet, combat, setCombat, blueprint, br
           </div>
           {plan ? (<>
             <ShipPlan plan={plan} title={`${name}${hull && hull.name !== name ? ` \u00b7 ${hull.name}` : ''}`} editable onStatus={setStatus} onFire={setFire}
-              mapOf={mapLib ? mapOf : null} onMap={mapLib ? mapRoom : null} />
+              mapOf={mapLib ? mapOf : null} onMap={mapLib ? mapRoom : null} edits={edits} onEdits={setEdits} />
             {fires.length > 0 && (
               <div className="rt-btnrow">
                 <button type="button" className="rt-btn ghost" onClick={() => { setVitals(ship.id, { fires: [] }); say({ kind: 'event', text: `${name}: every fire aboard is out.` }); }}>
@@ -12243,7 +12260,8 @@ function ShipPanelBase({ blueprint, setBlueprint, homebrew, onEditHomebrew,
           {/* Where everything just chosen sits aboard (shipplan.js): the same
               plan the GM marks a critical on, and a boarding action lands in. */}
           <div className="rt-conds-h">Ship plan</div>
-          <ShipPlan plan={shipPlan({ hull, parts: partsOfBlueprint(bp) })} title={bp.shipName || hull.name} />
+          <ShipPlan plan={shipPlan({ hull, parts: partsOfBlueprint(bp), edits: bp.plan })} title={bp.shipName || hull.name}
+            edits={bp.plan || null} onEdits={(next) => set({ plan: next || undefined })} />
         </>
       )}
 

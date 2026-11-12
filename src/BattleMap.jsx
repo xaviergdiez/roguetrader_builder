@@ -3429,17 +3429,20 @@ export default function BattleMap({
     // 6b3. Named areas (areas.js): on the GM's screens all of them, on the
     //      table's only those the GM has shown it, and there only on squares
     //      the party has seen, so a label never gives away a room in the dark.
+    //      The map's own window is the GM's while its Build tab is open, as
+    //      it is for trigger zones: that is where the deck is being made.
     {
-      const list = projecting ? areasForTable(m.areas) : m.areas;
+      const tableView = projecting && tab !== 'build';
+      const list = tableView ? areasForTable(m.areas) : m.areas;
       if (list.length) {
         ctx.save();
         const rgbaOf = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
         for (const a of list) {
-          const cells = projecting && shown ? a.cells.filter((k) => shown[k]) : a.cells;
+          const cells = tableView && shown ? a.cells.filter((k) => shown[k]) : a.cells;
           const pts = cells.map(parseKey).filter((c) => c && c.x >= c0 && c.x <= c1 && c.y >= r0 && c.y <= r1);
           if (!pts.length) continue;
           const col = areaColour(a.colour);
-          const on = !projecting && mode === 'area' && a.id === areaId;
+          const on = !tableView && mode === 'area' && a.id === areaId;
           ctx.fillStyle = rgbaOf(col, on ? 0.3 : 0.16);
           for (const c of pts) ctx.fillRect(c.x * px, c.y * px, px, px);
           const inSet = new Set(cells);
@@ -3460,7 +3463,7 @@ export default function BattleMap({
             ctx.font = `600 ${fs}px "Cinzel", "EB Garamond", Georgia, serif`;
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             const tx = lc.x * px + px / 2, ty = lc.y * px + px / 2;
-            const label = a.name + (!projecting && a.deck ? ' \u25b8' : '');
+            const label = a.name + (!tableView && a.deck ? ' \u25b8' : '');
             const tw = ctx.measureText(label).width;
             ctx.fillStyle = 'rgba(4,6,10,0.74)';
             ctx.fillRect(tx - tw / 2 - 6, ty - fs * 0.72, tw + 12, fs * 1.44);
@@ -3472,12 +3475,14 @@ export default function BattleMap({
       }
     }
 
-    // 6b4. The sketch, while the Sketch tool is in hand and never on the
-    //      table's screen: the picture it is traced or read from, faint, under
-    //      it all; how it was read (each room outlined and named, each passage
-    //      dotted along the squares it was drawn through, a lock as a red bar),
-    //      then the strokes themselves over it, then the stroke being drawn.
-    if (mode === 'sketch' && !projecting) {
+    // 6b4. The sketch, while the Sketch tool is in hand, on the GM's screen
+    //      or in the map's own window while its Build tab is open (where the
+    //      GM may be drawing it), never while it is played: the picture it is
+    //      traced or read from, faint, under it all; how it was read (each
+    //      room outlined and named, each passage dotted along the squares it
+    //      was drawn through, a lock as a red bar), then the strokes
+    //      themselves over it, then the stroke being drawn.
+    if (mode === 'sketch' && (!projecting || tab === 'build')) {
       ctx.save();
       if (sketchPic && sketchPic.show) {
         const { x, y, across } = sketchPic.place;

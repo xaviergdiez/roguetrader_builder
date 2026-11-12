@@ -1235,7 +1235,13 @@ export function regionAt(map, pos) {
 
 /* What a door joins: the door, and every region that touches it. Both sides,
    not just the far one — a GM opening a bulkhead from an unexplored
-   corridor should not have to click twice to see where they are standing. */
+   corridor should not have to click twice to see where they are standing.
+
+   A DOOR RIGHT BEHIND IT is part of what it shows: a double door, or two
+   bulkheads with no corridor between them (a short corridor gets a door at
+   each mouth). The second door is seen, and goes no further, so it can be
+   opened in its turn; left in the dark, it could never be clicked, and the
+   deck stopped there. */
 export function regionsAroundDoor(map, pos) {
   const m = readMap(map);
   if (!pos || !m.floor[cellKey(pos.x, pos.y)]) return [];
@@ -1244,7 +1250,11 @@ export function regionsAroundDoor(map, pos) {
   for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
     const x = pos.x + dx, y = pos.y + dy;
     const k = cellKey(x, y);
-    if (!m.floor[k] || isDoorAt(m, x, y) || wallBetween(m, pos.x, pos.y, dx, dy)) continue;
+    if (!m.floor[k] || wallBetween(m, pos.x, pos.y, dx, dy)) continue;
+    if (isDoorAt(m, x, y)) {
+      if (!seen.has(k)) { seen.add(k); out.push({ x, y }); }
+      continue;
+    }
     for (const c of regionAt(m, { x, y })) {
       const ck = cellKey(c.x, c.y);
       if (seen.has(ck)) continue;
@@ -1852,10 +1862,12 @@ export function playDoor(map, pos, to = null) {
 
   if (m.viewpoint) {
     const reach = openReach(m, m.viewpoint);
+    // The squares either side of it the party can stand on: floor, or the
+    // open doorway of a door just before it (the first of a double door).
     const sides = [[0, -1], [1, 0], [0, 1], [-1, 0]]
       .filter(([dx, dy]) => !wallBetween(m, pos.x, pos.y, dx, dy))
       .map(([dx, dy]) => ({ x: pos.x + dx, y: pos.y + dy }))
-      .filter((c) => m.floor[cellKey(c.x, c.y)] && !m.doors[cellKey(c.x, c.y)]);
+      .filter((c) => { const ck = cellKey(c.x, c.y); return m.floor[ck] && (!m.doors[ck] || m.doors[ck].state === 'open'); });
     /* THE PARTY COMES TO THE DOOR, and stops at it.
 
        What is beyond a door is only SHOWN if it can be reached from where the

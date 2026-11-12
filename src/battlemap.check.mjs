@@ -2066,6 +2066,27 @@ console.log('battlemap.js OK (%d themes, %dx%d default grid)',
   for (const [x, y] of [[5, 8], [2, 5], [2, 3]]) lp = readMap({ ...lp, ...playDoor(lp, { x, y }, 'open') });
   lp = readMap({ ...lp, ...playDoor(lp, { x: 2, y: 3 }, 'closed') });
   assert.ok(seen(lp, 2, 1), 'a room with another open way in stays lit when one door shuts');
+
+  // A double door: two doors with nothing between them, as a two-square
+  // corridor gets from the generator (a door at each room's mouth).
+  const dd = {};
+  for (let x = 0; x <= 3; x++) for (let y = 0; y <= 2; y++) dd[`${x},${y}`] = true;    // B
+  for (let x = 6; x <= 9; x++) for (let y = 0; y <= 2; y++) dd[`${x},${y}`] = true;    // C
+  dd['4,1'] = true; dd['5,1'] = true;
+  const ddBase = readMap({ cols: 12, rows: 6, fog: true, floor: dd, start: { x: 1, y: 1 },
+    doors: { '4,1': { ...shut }, '5,1': { ...shut } } });
+  let dm = readMap({ ...ddBase, ...startPlay(ddBase) });
+  assert.ok(seen(dm, 4, 1) && !seen(dm, 5, 1), 'a double door: the first door is seen from the room');
+  dm = step(dm, 4, 1, 'open');
+  assert.ok(seen(dm, 5, 1), 'opening it shows the second door, so it can be opened in turn');
+  assert.ok(!seen(dm, 7, 1), 'and not yet the room behind it');
+  dm = step(dm, 5, 1, 'open');
+  assert.ok(seen(dm, 7, 1) && seen(dm, 9, 2), 'opening the second shows the room beyond');
+  assert.deepEqual(dm.viewpoint, { x: 4, y: 1 }, 'the party is at the second door, in the first one\'s doorway');
+  dm = step(dm, 5, 1, 'closed');
+  assert.ok(!seen(dm, 7, 1) && seen(dm, 1, 1) && seen(dm, 5, 1), 'shutting the second takes the room beyond back, and nothing else');
+  dm = step(dm, 4, 1, 'closed');
+  assert.ok(seen(dm, 1, 1) && seen(dm, 4, 1), 'shutting the first leaves the party\'s room');
 }
 
 

@@ -1,7 +1,11 @@
 // Self-check for the sketch plan and the stroke reader. Run: node src/sketchplan.check.mjs
 import assert from 'node:assert/strict';
-import { readSketch, readStroke, readPlan, simplify, distanceToStroke, MAX_STROKES } from './sketchplan.js';
-import { planFromStrokes, roomFromLoop, cellsAlong, describePlan, BOX_FILL } from './sketchread.js';
+import { readSketch, readStroke, readPlan, readExample, simplify, distanceToStroke, MAX_STROKES } from './sketchplan.js';
+import {
+  planFromStrokes, roomFromLoop, cellsAlong, describePlan, BOX_FILL, placePicture, moveStrokes, strokesFromReading
+} from './sketchread.js';
+import { readReading } from '../lib/sketchprompt.js';
+import { deckFromPlan } from './plandeck.js';
 
 // A hand-drawn rectangle: corners a little round, the line a little shaky.
 const rect = (x, y, w, h) => {
@@ -110,6 +114,86 @@ const strokes = [
   const loop = planFromStrokes([{ pen: 'room', pts: rect(2, 2, 6, 5) }, { pen: 'passage', pts: [[3, 3], [10, 10], [4, 4]] }]);
   assert.equal(loop.links.length, 0);
   assert.ok(loop.unclear.some((u) => /comes back/.test(u)));
+}
+
+/* ---- what a photograph adds to a stroke and a sketch ---- */
+{
+  const room = readStroke({ pen: 'room', name: '  Bridge\u0007  deck ', pts: rect(1, 1, 4, 4) });
+  assert.equal(room.name, 'Bridge deck', 'a room may be named');
+  assert.equal(readStroke({ pen: 'passage', name: 'x', pts: [[1, 1], [2, 2]] }).name, undefined, 'only a room');
+  assert.equal(readStroke({ pen: 'passage', detail: 'open', pts: [[1, 1], [2, 2]] }).detail, 'open', 'a passage may be open');
+  assert.equal(readStroke({ pen: 'passage', detail: 'secret', pts: [[1, 1], [2, 2]] }).detail, null);
+  assert.equal(readStroke({ pen: 'mark', mark: 'fixture', detail: 'turret', unsure: true, pts: [[1, 1]] }).unsure, true, 'a mark may be unsure');
+  assert.equal(readStroke({ pen: 'mark', mark: 'fixture', unsure: 'yes', pts: [[1, 1]] }).unsure, undefined);
+  assert.equal(readExample({ rows: ['####', '#..#', '#.+#', '####'], doorKind: '<b>' }).doorKind, 'hatch');
+  const ex = readSketch({ strokes: [], example: { rows: ['#####', '#...#', '#.+.#', '#####'], merge: 99 } });
+  assert.ok(ex, 'an example alone is a sketch worth keeping');
+  assert.equal(ex.example.merge, 40, 'merging held to forty squares');
+  const sk = readSketch({ strokes: [{ pen: 'room', pts: rect(1, 1, 4, 4) }], notes: ['  turret?  ', 4, 'x'.repeat(300)] });
+  assert.deepEqual(sk.notes.map((n) => n.length), [7, 200], 'notes kept short and only words');
+  assert.deepEqual(readSketch({ strokes: [], plan: { rooms: [{ id: 'a', box: [1, 1, 3, 3] }] }, notes: ['x'] }).notes, [], 'no strokes, no notes');
+  const plan = planFromStrokes([
+    { id: 'a', pen: 'room', name: 'Breach', pts: rect(2, 2, 5, 5) },
+    { id: 'b', pen: 'room', pts: rect(14, 2, 5, 5) },
+    { id: 'c', pen: 'passage', detail: 'open', pts: [[6, 4], [15, 4]] },
+    { id: 'd', pen: 'mark', mark: 'fixture', detail: 'turret', unsure: true, pts: [[10.5, 5.6]] },
+    { id: 'e', pen: 'mark', mark: 'fixture', detail: 'shrine', unsure: true, pts: [[16, 4]] },
+    { id: 'f', pen: 'mark', mark: 'start', pts: [[3, 3]] }
+  ], { cols: 30, rows: 20 });
+  assert.equal(plan.rooms[0].name, 'Breach');
+  assert.equal(plan.links[0].kind, 'open', 'an open passage is read open');
+  assert.deepEqual(plan.fixtures, [{ type: 'turret', at: [10, 5], confirmed: false }], 'a fixture in no room stands where it was drawn, unsure');
+  assert.equal(plan.rooms[1].fixtures[0].confirmed, false);
+  assert.match(describePlan(plan), /1 open, the start in Breach\./, 'named rooms by their names');
+  const d = deckFromPlan(plan, { cols: 30, rows: 20, seed: 'F1' });
+  const turret = Object.entries(d.markers).find(([, m]) => m.type === 'turret');
+  assert.ok(turret && turret[1].label === '?', 'the corridor\'s fixture is on the deck, marked unsure');
+  const [tx, ty] = turret[0].split(',').map(Number);
+  assert.ok(Math.hypot(tx - 10, ty - 5) <= 3.2, 'near where it was drawn: ' + turret[0]);
+  assert.equal(Object.keys(d.doors).length, 0, 'an open passage has no doors');
+}
+
+/* ---- a picture laid on the grid, and read into strokes ---- */
+{
+  const whole = placePicture(1.5, { cols: 32, rows: 22 });
+  assert.deepEqual(whole, { x: 1, y: 1, across: 30 }, 'a wide picture fills the grid\'s width inside a margin');
+  const tall = placePicture(0.5, { cols: 32, rows: 22 });
+  assert.equal(tall.across, 10, 'a tall one its height: 20 squares down is 10 across');
+  const reading = readReading({
+    grid: { cols: 0, rows: 0 },
+    rooms: [
+      { id: 'breach', name: 'BREACH', shape: 'rect', box: [400, 100, 600, 300], tags: ['start'] },
+      { id: 'reactor', name: 'REACTOR', shape: 'ellipse', box: [100, 500, 400, 800], note: 'fire!' },
+      { id: 'hold', name: 'HOLD', shape: 'polygon', box: [600, 500, 900, 800], points: [[600, 500], [600, 800], [900, 800], [900, 650], [750, 650], [750, 500]] }
+    ],
+    fixtures: [{ type: 'turret', at: [500, 400], confirmed: false }],
+    links: [
+      { from: 'breach', to: 'reactor', kind: 'locked', via: [[500, 400], [250, 400]] },
+      { from: 'breach', to: 'hold', kind: 'open', via: [] },
+      { from: 'reactor', to: 'hold', kind: 'crawl', via: [] }
+    ],
+    unclear: ['the hold might be two rooms']
+  });
+  const place = placePicture(1, { cols: 30, rows: 30 }, reading);
+  assert.ok(place.across > 28, 'the part with something on it fills the grid: ' + place.across);
+  const { strokes: got, notes } = strokesFromReading(reading, place, 1);
+  assert.deepEqual(got.map((st) => st.pen), [...got.map((st) => st.pen)].sort((p, q) => ['room', 'passage', 'mark'].indexOf(p) - ['room', 'passage', 'mark'].indexOf(q)), 'rooms, then passages, then marks');
+  const read = planFromStrokes(got.map(readStroke), { cols: 30, rows: 30 });
+  assert.deepEqual(read.rooms.map((r) => [r.name, r.shape]), [['BREACH', 'box'], ['REACTOR', 'blob'], ['HOLD', 'blob']], 'a rectangle a compartment, an oval and an L chambers');
+  assert.deepEqual(read.links.map((l) => [l.from, l.to, l.kind]), [['r1', 'r2', 'locked'], ['r1', 'r3', 'open']], 'the lock drawn across its passage, the open one open');
+  assert.deepEqual(read.rooms[0].tags, ['start']);
+  assert.deepEqual(read.rooms[1].hazards, ['fire'], 'fire! in the reactor is fire');
+  assert.ok(read.rooms[1].fixtures.some((f) => f.type === 'vent') && read.rooms[2].fixtures.some((f) => f.type === 'vent'), 'a crawlway a vent in each room');
+  assert.deepEqual(read.fixtures.map((f) => [f.type, f.confirmed]), [['turret', false]], 'the turret in the corridor, unsure');
+  assert.deepEqual(read.unclear, [], 'everything read lands somewhere: ' + read.unclear.join(' / '));
+  assert.ok(notes.includes('the hold might be two rooms') && notes.some((n) => /crawlway from REACTOR to HOLD/.test(n)), notes.join(' / '));
+  // Moved with the picture: half the size, from another corner.
+  const to = { x: 3, y: 4, across: place.across / 2 };
+  const moved = moveStrokes(got, place, to);
+  const [x0, y0] = got[0].pts[0], [mx, my] = moved[0].pts[0];
+  assert.ok(Math.abs(mx - (3 + (x0 - place.x) / 2)) < 0.02 && Math.abs(my - (4 + (y0 - place.y) / 2)) < 0.02, 'every point moves and scales with it');
+  assert.deepEqual(moveStrokes(moved, to, place).map((st) => st.pts.map(([x, y]) => [Math.round(x), Math.round(y)])),
+    got.map((st) => st.pts.map(([x, y]) => [Math.round(x), Math.round(y)])), 'and back');
 }
 
 console.log('sketchplan.js and sketchread.js OK');

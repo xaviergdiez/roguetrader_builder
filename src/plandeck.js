@@ -20,6 +20,9 @@
    DOORS go in the mouths: a bulkhead in the decks, a narrow passage in the
    caves; a locked passage's far door sealed; an open one none at all.
 
+   MARKS go where they were marked; a fixture drawn in no room (a turret at a
+   junction) on the floor nearest it, which is the corridor it stands in.
+
    THE REST of the grid can be filled with rooms by the ordinary generator
    (mapgen.js's growDeck), joined to what was drawn.
 
@@ -234,6 +237,20 @@ export function deckFromPlan(plan, { cols, rows, layout = 'decks', seed, fill = 
       const k = nearestIn(cells, f.at[0], f.at[1]);
       if (k) markers[k] = { type: f.type, label: f.confirmed === false ? '?' : '' };
     }
+  }
+  // Fixtures drawn in no room: on the nearest floor to where they were drawn,
+  // most likely the corridor they were drawn in.
+  for (const f of plan.fixtures || []) {
+    if (!markerIds.includes(f.type)) { unplaced.push(`A fixture "${f.type}" is not one the map knows.`); continue; }
+    let best = null, d = 10;
+    for (const k of Object.keys(map.floor)) {
+      if (map.doors[k] || markers[k]) continue;
+      const [x, y] = pk(k);
+      const dd = (x - f.at[0]) ** 2 + (y - f.at[1]) ** 2;
+      if (dd < d) { d = dd; best = k; }
+    }
+    if (best) markers[best] = { type: f.type, label: f.confirmed === false ? '?' : '' };
+    else unplaced.push(`A ${f.type} drawn away from any floor was left out.`);
   }
   return {
     floor: map.floor, doors: map.doors, markers, hazards, start,

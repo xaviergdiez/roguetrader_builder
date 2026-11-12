@@ -7,6 +7,7 @@
    minute, and put the parts back together. */
 
 import { nearestAspect, VIDEO_ASPECTS, aspectRatio } from '../lib/mapprompt.js';
+import { readReading } from '../lib/sketchprompt.js';
 import { keyCells, voidKeyOptions, VOID_SLOTS } from './spritesheet.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -35,6 +36,12 @@ function decode(blob) {
 
 const canvasBlob = (c, type, quality) => new Promise((resolve, reject) =>
   c.toBlob((b) => (b ? resolve(b) : reject(new Error('The browser would not encode it.'))), type, quality));
+
+const base64Of = (blob) => new Promise((resolve) => {
+  const fr = new FileReader();
+  fr.onload = () => resolve(String(fr.result).replace(/^data:[^,]*,/, ''));
+  fr.readAsDataURL(blob);
+});
 
 /* A picture for under a map, in the map's own shape (the nearest the model
    makes): `cols` by `rows` squares or VU. A File, so it goes down the same
@@ -67,12 +74,34 @@ export async function framedForVideo(blob) {
   g.imageSmoothingQuality = 'high';
   g.drawImage(img, cx, cy, cw, ch, 0, 0, c.width, c.height);
   const jpeg = await canvasBlob(c, 'image/jpeg', 0.88);
-  const data = await new Promise((resolve) => {
-    const fr = new FileReader();
-    fr.onload = () => resolve(String(fr.result).replace(/^data:[^,]*,/, ''));
-    fr.readAsDataURL(jpeg);
-  });
+  const data = await base64Of(jpeg);
   return { data, aspect, crop: { fx: cx / w, fy: cy / h, fw: cw / w, fh: ch / h } };
+}
+
+/* A picture of a map to lay under the sketch and read: made no bigger than
+   1600 px across, which is plenty to read handwriting and small to send, as a
+   JPEG. Answers it decoded (to draw), as base64 (to send) and its shape. */
+export async function pictureForSketch(file) {
+  const src = await decode(file);
+  const w = src.naturalWidth, h = src.naturalHeight;
+  if (!w || !h) throw new Error('That picture would not open.');
+  const k = Math.min(1, 1600 / Math.max(w, h));
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * k); c.height = Math.round(h * k);
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(src, 0, 0, c.width, c.height);
+  const jpeg = await canvasBlob(c, 'image/jpeg', 0.86);
+  return { img: await decode(jpeg), data: await base64Of(jpeg), aspect: w / h, name: file.name || 'picture' };
+}
+
+/* The picture read into a sketch plan by the vision model, on the server
+   (lib/sketchprompt.js), and read again here: nothing that comes back over
+   the network is trusted. */
+export async function readSketchPicture({ data, source, note = '' }) {
+  const res = await post('/api/generate-texture', { kind: 'read_sketch', image: data, mime: 'image/jpeg', source, note });
+  const body = await res.json();
+  return readReading(body && body.reading);
 }
 
 /* A deck's plan for the image model: white where there is floor, black where

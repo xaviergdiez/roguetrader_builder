@@ -2602,6 +2602,15 @@ const CSS = `
 .rt-bm-cropside input[type=range]{width:160px;}
 /* The seed has to be readable at a glance: it is the one thing on this panel
    worth writing down, and a box that cuts "TDU998" to "TDU" defeats it. */
+/* A part of a tool's panel kept folded until it is wanted, so the deck
+   below it keeps its height while the GM draws on it. */
+.rt-bm-more{margin-top:10px;border-top:1px solid rgba(212,175,55,.25);padding-top:6px;}
+.rt-bm-more > summary{cursor:pointer;list-style:none;font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--gold);padding:4px 0;}
+.rt-bm-more > summary::-webkit-details-marker{display:none;}
+.rt-bm-more > summary::before{content:"▸ ";color:var(--brass);}
+.rt-bm-more[open] > summary::before{content:"▾ ";}
+.rt-bm-more > summary .rt-bm-hint{text-transform:none;letter-spacing:0;margin-left:8px;}
 .rt-bm-gen .rt-bm-num input.rt-field{width:112px;font-family:ui-monospace,monospace;
   letter-spacing:0.06em;}
 /* A section heading that carries its own action, so the field below it can

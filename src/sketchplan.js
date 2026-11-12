@@ -8,19 +8,26 @@
    THE SKETCH is what the GM drew, kept on the deck beside its seed so the deck
    can always be made again:
 
-     { strokes, layout, fill, seed }
+     { strokes, layout, fill, seed, notes, example }
 
    A stroke is { id, pen, mark, detail, pts }: the pen it was drawn with
    (room, passage or mark), for a mark which one (start, objective, lock,
-   hazard, fixture) and its detail (which hazard, which fixture), and its
-   points in squares, fractions and all. The pens are the GM's choice, so the
-   reader never has to guess what a stroke is meant to be.
+   hazard, fixture) and its detail (which hazard, which fixture; for a
+   passage, 'open' when it has no doors), and its points in squares,
+   fractions and all. A room may have a `name` and a mark may be `unsure`,
+   both read from a photograph (strokesFromReading). The pens are the GM's
+   choice, so the reader never has to guess what a stroke is meant to be.
+
+   `notes` are what the photograph's reader said it could not be sure of,
+   kept to show the GM. `example` is the small painted example a deck is
+   grown from (wfc.js), which makes no plan: { rows, doorKind, merge, name }.
 
    THE PLAN is what the strokes say, read by sketchread.js:
 
-     rooms  [{ id, shape: 'box' | 'blob', box: [x, y, w, h], cells, tags,
+     rooms  [{ id, name, shape: 'box' | 'blob', box: [x, y, w, h], cells, tags,
               hazards, fixtures }]
      links  [{ id, from, to, kind: 'door' | 'locked' | 'open', path }]
+     fixtures [{ type, at, confirmed }]: those in no room, in a corridor
      unclear [what could not be read, said in words]
 
    A box is a compartment, a blob a chamber or a cavern; `cells` are a blob's
@@ -62,6 +69,11 @@ const word = (v, list) => (list.some((x) => x.id === v) ? v : null);
 const ID = /^[a-z][a-z0-9]{1,40}$/;
 const KEY = /^-?\d{1,4},-?\d{1,4}$/;
 const DETAIL = /^[a-z_]{1,24}$/;
+const text = (v, n) => (typeof v === 'string' ? v.replace(/[\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n) : '');
+export const PASSAGE_KINDS = [
+  { id: 'door', name: 'With doors', note: 'A door where it meets each room.' },
+  { id: 'open', name: 'Open', note: 'No doors: the rooms it joins open into it.' }
+];
 
 let seq = 0;
 export const newStrokeId = () => 's' + Date.now().toString(36) + (seq++).toString(36);
@@ -79,12 +91,38 @@ export function readStroke(v) {
     if (pts.length >= MAX_POINTS) break;
   }
   if (!pts.length) return null;
+  const name = pen === 'room' ? text(v.name, 40) : '';
   return {
     id: typeof v.id === 'string' && ID.test(v.id) ? v.id : newStrokeId(),
     pen,
     mark: pen === 'mark' ? (word(v.mark, MARKS) || 'objective') : null,
-    detail: pen === 'mark' && typeof v.detail === 'string' && DETAIL.test(v.detail) ? v.detail : null,
+    detail: pen === 'mark' && typeof v.detail === 'string' && DETAIL.test(v.detail) ? v.detail
+      : pen === 'passage' && v.detail === 'open' ? 'open' : null,
+    ...(name ? { name } : {}),
+    ...(pen === 'mark' && v.unsure === true ? { unsure: true } : {}),
     pts
+  };
+}
+
+/* The example a deck is grown from (wfc.js, which narrows the door kind to
+   one the map knows): rows of '#' wall, '.' floor and '+' door, all one
+   length, 4 to 26 a side, with some floor. Anything else is no example. */
+export const EXAMPLE_MIN = 4;
+export const EXAMPLE_MAX = 26;
+export const MERGE_DEFAULT = 6;
+export function readExample(v) {
+  if (!v || typeof v !== 'object' || !Array.isArray(v.rows)) return null;
+  const rows = v.rows.filter((r) => typeof r === 'string');
+  if (rows.length !== v.rows.length || rows.length < EXAMPLE_MIN || rows.length > EXAMPLE_MAX) return null;
+  const w = rows[0].length;
+  if (w < EXAMPLE_MIN || w > EXAMPLE_MAX || rows.some((r) => r.length !== w || /[^#.+]/.test(r))) return null;
+  if (!rows.some((r) => r.includes('.'))) return null;
+  const merge = Math.round(Number(v.merge));
+  return {
+    rows,
+    doorKind: typeof v.doorKind === 'string' && DETAIL.test(v.doorKind) ? v.doorKind : 'hatch',
+    merge: Number.isFinite(merge) ? Math.min(40, Math.max(0, merge)) : MERGE_DEFAULT,
+    name: text(v.name, 40)
   };
 }
 
@@ -98,18 +136,24 @@ export function readSketch(v) {
     if (strokes.length >= MAX_STROKES) break;
   }
   const plan = v.plan ? readPlan(v.plan) : null;
-  if (!strokes.length && !(plan && plan.rooms.length)) return null;
+  const example = readExample(v.example);
+  if (!strokes.length && !(plan && plan.rooms.length) && !example) return null;
   return {
     strokes,
-    // A plan that did not come from strokes (a photograph read, an import) is
-    // kept as it was read; one from strokes is read again from them.
+    // A plan that did not come from strokes (an import) is kept as it was
+    // read; one from strokes is read again from them.
     plan: strokes.length ? null : plan,
     layout: word(v.layout, LAYOUTS) || 'decks',
     fill: v.fill === true,
-    seed: typeof v.seed === 'string' ? v.seed.slice(0, 40) : ''
+    seed: typeof v.seed === 'string' ? v.seed.slice(0, 40) : '',
+    notes: strokes.length ? (Array.isArray(v.notes) ? v.notes : []).map((nt) => text(nt, 200)).filter(Boolean).slice(0, 30) : [],
+    example
   };
 }
 
+const readFixtures = (list, max) => (Array.isArray(list) ? list : []).filter((f) => f && typeof f.type === 'string' && DETAIL.test(f.type)
+  && Array.isArray(f.at) && f.at.length === 2 && f.at.every((x) => num(x) != null))
+  .slice(0, max).map((f) => ({ type: f.type, at: [Math.floor(num(f.at[0])), Math.floor(num(f.at[1]))], confirmed: f.confirmed !== false }));
 const cellsOf = (list) => [...new Set((Array.isArray(list) ? list : []).filter((k) => typeof k === 'string' && KEY.test(k)))];
 
 export function readPlan(v) {
@@ -126,12 +170,10 @@ export function readPlan(v) {
     if (shape === 'blob' && !cells.length) continue;
     ids.add(r.id);
     rooms.push({
-      id: r.id, shape, box, cells,
+      id: r.id, ...(text(r.name, 40) ? { name: text(r.name, 40) } : {}), shape, box, cells,
       tags: [...new Set((Array.isArray(r.tags) ? r.tags : []).filter((t) => t === 'start' || t === 'objective'))],
       hazards: [...new Set((Array.isArray(r.hazards) ? r.hazards : []).filter((h) => typeof h === 'string' && DETAIL.test(h)))].slice(0, 4),
-      fixtures: (Array.isArray(r.fixtures) ? r.fixtures : []).filter((f) => f && typeof f.type === 'string' && DETAIL.test(f.type)
-        && Array.isArray(f.at) && f.at.length === 2 && f.at.every((x) => num(x) != null))
-        .slice(0, 12).map((f) => ({ type: f.type, at: [Math.floor(num(f.at[0])), Math.floor(num(f.at[1]))], confirmed: f.confirmed !== false }))
+      fixtures: readFixtures(r.fixtures, 12)
     });
     if (rooms.length >= MAX_ROOMS) break;
   }
@@ -151,7 +193,7 @@ export function readPlan(v) {
     if (links.length >= MAX_LINKS) break;
   }
   const unclear = (Array.isArray(src.unclear) ? src.unclear : []).filter((u) => typeof u === 'string').map((u) => u.slice(0, 200)).slice(0, 30);
-  return { rooms, links, unclear };
+  return { rooms, links, fixtures: readFixtures(src.fixtures, 30), unclear };
 }
 
 /* A stroke made lighter before it is kept: points closer than `eps` squares to

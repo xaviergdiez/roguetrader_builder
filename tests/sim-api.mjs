@@ -101,6 +101,23 @@ globalThis.fetch = async (url, opts) => {
     return json({ id, status: 'completed', steps: [{ type: 'model_output', content: [{ type: 'video', mime_type: 'video/mp4', data: CLIP.toString('base64') }] }] });
   }
   if (geminiFails) return new Response('boom', { status: 500 });
+  // A picture read into a plan answers in words: a reading, with a thought
+  // before it and some of it wrong, as a model's can be.
+  const asked = opts && opts.body ? JSON.parse(opts.body) : {};
+  if (asked.generationConfig && asked.generationConfig.responseMimeType === 'application/json') {
+    const pic = asked.contents[0].parts.find((p) => p.inlineData);
+    if (!pic || !asked.contents[0].parts[0].text.includes('[y, x]')) return json({ error: { message: 'sim: not a reading request' } }, 400);
+    const reading = {
+      grid: { cols: 0, rows: 0 },
+      rooms: [
+        { id: 'breach', name: 'BREACH', shape: 'rect', box: [400, 100, 600, 300], tags: ['start'], hazards: ['lava'] },
+        { id: 'bridge', name: 'BRIDGE', shape: 'rect', box: [100, 600, 400, 900], tags: ['objective'], note: 'gas!' }
+      ],
+      links: [{ from: 'breach', to: 'bridge', kind: 'locked', via: [] }, { from: 'breach', to: 'void', kind: 'door' }],
+      unclear: ['the bridge door may be two']
+    };
+    return json({ candidates: [{ content: { parts: [{ text: 'looking…', thought: true }, { text: JSON.stringify(reading) }] } }] });
+  }
   return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: PIXEL } }] } }] }),
     { status: 200, headers: { 'content-type': 'application/json' } });
 };

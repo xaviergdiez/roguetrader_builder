@@ -17,6 +17,9 @@ import { requireUser } from "../lib/auth.js";
 import {
   buildTexturePrompt, buildSpritesPrompt, buildVoidSpritesPrompt, buildBackdropPrompt, IMAGE_ASPECTS
 } from "../lib/mapprompt.js";
+import {
+  buildSketchReadPrompt, readReading, READING_SCHEMA, READ_IMAGE_TYPES, MAX_READ_IMAGE_CHARS
+} from "../lib/sketchprompt.js";
 import { redis } from "../lib/storage.js";
 import { takeAllowance, giveBack, dailyLimit, limitMessage, secondsToReset } from "../lib/quota.js";
 
@@ -24,6 +27,11 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // A deck's plan is a black and white PNG a few tens of KB; this is generous.
 const MAX_MASK_CHARS = 1_500_000;
 const MODEL = "gemini-3.1-flash-image";
+// Reading a picture of a map is looking, not drawing: a model that answers in
+// words (JSON), and sees well enough to place a room on a photographed page.
+// Thinking kept low: on a test sketch it read the same as thinking hard, in
+// eight seconds rather than thirty.
+const READ_MODEL = "gemini-3.8-flash";
 
 async function callGeminiImage(prompt, apiKey, imageConfig = null, images = []) {
   const res = await fetch(`${GEMINI_BASE}/${MODEL}:generateContent?key=${apiKey}`, {
@@ -50,6 +58,37 @@ async function callGeminiImage(prompt, apiKey, imageConfig = null, images = []) 
   };
 }
 
+/* A picture of a map read into a plan (lib/sketchprompt.js): the words, then
+   the picture, and the answer asked for as JSON in the plan's shape. */
+async function callGeminiRead(prompt, apiKey, image, mime) {
+  const res = await fetch(`${GEMINI_BASE}/${READ_MODEL}:generateContent?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: mime, data: image } }] }],
+      generationConfig: {
+        responseMimeType: "application/json", responseSchema: READING_SCHEMA, thinkingConfig: { thinkingLevel: "low" }
+      }
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gemini ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const text = (data.candidates?.[0]?.content?.parts || []).filter((p) => p.text && !p.thought).map((p) => p.text).join("");
+  if (!text) throw new Error("Gemini returned no reading");
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("The picture could not be read into a plan");
+  }
+}
+
+const readableImage = (body) => typeof body.image === "string" && body.image.length > 0
+  && body.image.length <= MAX_READ_IMAGE_CHARS && /^[A-Za-z0-9+/=]+$/.test(body.image)
+  && READ_IMAGE_TYPES.includes(body.mime);
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -63,6 +102,11 @@ export default async function handler(req, res) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || !apiKey.trim()) {
     return res.status(503).json({ error: "GEMINI_API_KEY is not configured on this deployment" });
+  }
+
+  // A picture to read that is not one is refused before anything is spent.
+  if (req.body && req.body.kind === "read_sketch" && !readableImage(req.body)) {
+    return res.status(400).json({ error: "Send the picture as a JPEG, PNG or WebP of no more than about 3 MB." });
   }
 
   // The daily allowance: this spends the owner's money on every call.
@@ -83,6 +127,13 @@ export default async function handler(req, res) {
        in the shape of what it covers and at 2K, since it is drawn across a
        whole screen rather than tiled from a corner of one. */
     const body = req.body || {};
+    /* And a fifth that makes nothing: a picture of a map, read into a sketch
+       plan for the battle map's Sketch tool. It is answered in JSON, and
+       counted against the same allowance, because it spends the same key. */
+    if (body.kind === "read_sketch") {
+      const raw = await callGeminiRead(buildSketchReadPrompt(body), apiKey.trim(), body.image, body.mime);
+      return res.status(200).json({ reading: readReading(raw) });
+    }
     let prompt;
     let imageConfig = null;
     const images = [];

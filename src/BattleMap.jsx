@@ -32,11 +32,13 @@ import { putLocalFile } from './localfiles.js';
 import {
   AREA_COLOURS, areaColour, newArea, areaById, areaAt, paintArea, updateArea, removeArea, labelCell, areasForTable
 } from './areas.js';
-import { PENS, MARKS, LAYOUTS, readStroke, simplify, distanceToStroke, newStrokeId } from './sketchplan.js';
-import { planFromStrokes, describePlan } from './sketchread.js';
+import { PENS, MARKS, LAYOUTS, PASSAGE_KINDS, readStroke, simplify, distanceToStroke, newStrokeId } from './sketchplan.js';
+import { planFromStrokes, describePlan, placePicture, moveStrokes, strokesFromReading } from './sketchread.js';
 import { deckFromPlan } from './plandeck.js';
+import { STOCK_EXAMPLES, stockExample, readExample, exampleFromMap, deckFromExample } from './wfc.js';
+import { SKETCH_SOURCES, MAX_READ_NOTE } from '../lib/sketchprompt.js';
 import GenerateFloor from './GenerateFloor.jsx';
-import { placeOver, deckPlanMask } from './genai.js';
+import { placeOver, deckPlanMask, pictureForSketch, readSketchPicture } from './genai.js';
 import useBackdropMedia from './useBackdropMedia.js';
 import { measureMedia } from './measureMedia.js';
 import { readUvtt, uvttToMap, UVTT_METRES_PER_SQUARE } from './uvtt.js';
@@ -1232,10 +1234,20 @@ export default function BattleMap({
   const [sketchMark, setSketchMark] = useState('start');
   const [sketchHazard, setSketchHazard] = useState('fire');
   const [sketchFixture, setSketchFixture] = useState('cogitator');
+  const [sketchPassage, setSketchPassage] = useState('door');
   const [sketchMsg, setSketchMsg] = useState('');
   const strokeRef = useRef(null);
   const [strokeTick, setStrokeTick] = useState(0);
-  const sketch = m.sketch || { strokes: [], plan: null, layout: 'decks', fill: false, seed: '' };
+  /* A picture under the sketch (genai.js's pictureForSketch): to trace, or to
+     have read into strokes. Only while the tool is in hand, and never kept
+     with the deck; what is read from it is. `place` is where it lies on the
+     grid: its corner in squares, and how many squares across. */
+  const [sketchPic, setSketchPic] = useState(null);
+  const [sketchPicSource, setSketchPicSource] = useState('sketch');
+  const [sketchPicNote, setSketchPicNote] = useState('');
+  const [sketchPicBusy, setSketchPicBusy] = useState(false);
+  const sketchFileRef = useRef(null);
+  const sketch = m.sketch || { strokes: [], plan: null, layout: 'decks', fill: false, seed: '', notes: [], example: null };
   // What the strokes say, read again whenever they change (sketchread.js).
   const sketchPlan = useMemo(() => sketch.plan || planFromStrokes(sketch.strokes, { cols: m.cols, rows: m.rows }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1797,7 +1809,7 @@ export default function BattleMap({
      pointer has moved an eighth of a square, finished on the release (here or
      anywhere in the window), made lighter and kept on the deck's sketch. The
      eraser takes off the stroke nearest the click. */
-  const setSketch = (next) => patch({ sketch: next && (next.strokes.length || next.plan) ? next : null });
+  const setSketch = (next) => patch({ sketch: next && (next.strokes.length || next.plan || next.example) ? next : null });
   const startStroke = (f) => {
     if (!f) return;
     if (sketchPen === 'erase') {
@@ -1828,7 +1840,8 @@ export default function BattleMap({
     const st = readStroke({
       id: newStrokeId(), pen: cur.pen, pts,
       mark: cur.pen === 'mark' ? sketchMark : null,
-      detail: cur.pen === 'mark' ? (sketchMark === 'hazard' ? sketchHazard : sketchMark === 'fixture' ? sketchFixture : null) : null
+      detail: cur.pen === 'mark' ? (sketchMark === 'hazard' ? sketchHazard : sketchMark === 'fixture' ? sketchFixture : null)
+        : cur.pen === 'passage' && sketchPassage === 'open' ? 'open' : null
     });
     if (st) { setSketchMsg(''); setSketch({ ...sketch, strokes: [...sketch.strokes, st] }); }
   };
@@ -3460,12 +3473,18 @@ export default function BattleMap({
     }
 
     // 6b4. The sketch, while the Sketch tool is in hand and never on the
-    //      table's screen: how it was read (each room outlined and named, each
-    //      passage dotted along the squares it was drawn through, a lock as a
-    //      red bar), then the strokes themselves over it, then the stroke being
-    //      drawn.
+    //      table's screen: the picture it is traced or read from, faint, under
+    //      it all; how it was read (each room outlined and named, each passage
+    //      dotted along the squares it was drawn through, a lock as a red bar),
+    //      then the strokes themselves over it, then the stroke being drawn.
     if (mode === 'sketch' && !projecting) {
       ctx.save();
+      if (sketchPic && sketchPic.show) {
+        const { x, y, across } = sketchPic.place;
+        ctx.globalAlpha = 0.55;
+        ctx.drawImage(sketchPic.img, x * px, y * px, across * px, (across / sketchPic.aspect) * px);
+        ctx.globalAlpha = 1;
+      }
       const fs = Math.max(10, Math.floor(px * 0.36));
       ctx.font = `600 ${fs}px ui-monospace, Menlo, monospace`;
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
@@ -3493,7 +3512,7 @@ export default function BattleMap({
           ctx.stroke();
         }
         ctx.setLineDash([]);
-        const tag = r.id + (r.tags.includes('start') ? ' start' : '') + (r.tags.includes('objective') ? ' objective' : '')
+        const tag = (r.name || r.id) + (r.tags.includes('start') ? ' start' : '') + (r.tags.includes('objective') ? ' objective' : '')
           + (r.hazards.length ? ` ${r.hazards.join(',')}` : '');
         ctx.fillStyle = 'rgba(4,6,10,0.75)';
         ctx.fillRect(r.box[0] * px + 3, r.box[1] * px + 3, ctx.measureText(tag).width + 8, fs + 6);
@@ -3501,7 +3520,7 @@ export default function BattleMap({
         ctx.fillText(tag, r.box[0] * px + 7, r.box[1] * px + 6);
       }
       for (const l of sketchPlan.links) {
-        ctx.fillStyle = l.kind === 'locked' ? 'rgba(255,106,90,0.8)' : 'rgba(90,200,230,0.7)';
+        ctx.fillStyle = l.kind === 'locked' ? 'rgba(255,106,90,0.8)' : l.kind === 'open' ? 'rgba(120,230,150,0.75)' : 'rgba(90,200,230,0.7)';
         for (const [x, y] of l.path) {
           ctx.beginPath(); ctx.arc(x * px + px / 2, y * px + px / 2, Math.max(2, px * 0.09), 0, Math.PI * 2); ctx.fill();
         }
@@ -3518,7 +3537,7 @@ export default function BattleMap({
           const [x, y] = st.pts[0];
           ctx.beginPath(); ctx.arc(x * px, y * px, px * 0.32, 0, Math.PI * 2); ctx.stroke();
           ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.fillText(({ start: 'S', objective: 'O', lock: 'L', hazard: 'H', fixture: 'F' })[st.mark] || '?', x * px, y * px);
+          ctx.fillText((({ start: 'S', objective: 'O', lock: 'L', hazard: 'H', fixture: 'F' })[st.mark] || '?') + (st.unsure ? '?' : ''), x * px, y * px);
           ctx.textAlign = 'left'; ctx.textBaseline = 'top';
           return;
         }
@@ -3846,7 +3865,7 @@ export default function BattleMap({
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick, caught,
       tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab, mediaTick, hoverEdge, moving, trigId,
-      picOpen, picHover, areaId, strokeTick, sketchPlan]);
+      picOpen, picHover, areaId, strokeTick, sketchPlan, sketchPic]);
 
   // Scrolling and resizing the stage move the window over the deck.
   useEffect(() => {
@@ -4303,6 +4322,94 @@ export default function BattleMap({
     });
     setSketchMsg(`Built ${d.rooms} room${d.rooms === 1 ? '' : 's'} from the sketch (seed ${seed}).`
       + (d.unplaced.length ? ` ${d.unplaced.join(' ')}` : ''));
+  };
+
+  /* A picture under the sketch: laid to fill the grid, to trace for nothing,
+     or read (one of the day's images) into strokes that take the place of
+     what is drawn, laid where the picture lies. Moving the picture moves the
+     sketch with it, so what was traced or read stays on what it came from. */
+  const chooseSketchPicture = async (file) => {
+    if (!file) return;
+    try {
+      const pic = await pictureForSketch(file);
+      setSketchPic({ ...pic, place: placePicture(pic.aspect, { cols: m.cols, rows: m.rows }), show: true });
+      setSketchMsg('The picture is under the sketch. Trace it with the pens, or have it read.');
+    } catch (e) {
+      setSketchMsg(e.message || 'That picture would not open.');
+    }
+  };
+  const readSketchPic = async () => {
+    if (!sketchPic || sketchPicBusy) return;
+    setSketchPicBusy(true);
+    setSketchMsg('Reading the picture… about ten seconds.');
+    try {
+      const reading = await readSketchPicture({ data: sketchPic.data, source: sketchPicSource, note: sketchPicNote });
+      if (!reading.rooms.length) {
+        setSketchMsg(`No rooms could be read from it.${reading.unclear.length ? ' ' + reading.unclear.join(' ') : ''}`);
+        return;
+      }
+      if (sketch.strokes.length && !await confirmInMap({
+        title: 'Replace the sketch?',
+        body: 'What was read from the picture takes the place of the strokes drawn here. Undo brings them back.',
+        yes: 'Replace it'
+      })) { setSketchMsg(''); return; }
+      const place = placePicture(sketchPic.aspect, { cols: m.cols, rows: m.rows }, reading);
+      const got = strokesFromReading(reading, place, sketchPic.aspect);
+      setSketchPic((p) => p && { ...p, place, show: true });
+      setSketch({ ...sketch, strokes: got.strokes.map(readStroke).filter(Boolean), plan: null, notes: got.notes });
+      const nr = reading.rooms.length, nl = reading.links.length;
+      setSketchMsg(`Read ${nr} room${nr === 1 ? '' : 's'} and ${nl} way${nl === 1 ? '' : 's'} between them`
+        + `${reading.title ? ` from “${reading.title}”` : ''}. Check them against the picture and put right what is wrong with the`
+        + ' pens, then Generate from sketch.');
+    } catch (e) {
+      setSketchMsg(e.message || 'The picture could not be read.');
+    } finally {
+      setSketchPicBusy(false);
+    }
+  };
+  const placeSketchPic = (field, value) => {
+    if (!sketchPic) return;
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    const from = sketchPic.place;
+    const to = { ...from, [field]: field === 'across' ? Math.min(MAX_GRID * 2, Math.max(2, n)) : Math.max(-MAX_GRID, Math.min(MAX_GRID, n)) };
+    setSketchPic({ ...sketchPic, place: to });
+    if (sketch.strokes.length) setSketch({ ...sketch, strokes: moveStrokes(sketch.strokes, from, to) });
+  };
+
+  /* Growing the deck from an example (wfc.js): the example is kept on the
+     sketch, so the deck can be grown again from it with another seed after
+     this one has been replaced. */
+  const takeExample = (choice) => {
+    const ex = choice === 'painted' ? exampleFromMap(m) : readExample(stockExample(choice));
+    if (!ex) return;
+    if (ex.error) { setSketchMsg(ex.error); return; }
+    setSketch({ ...sketch, example: ex });
+    setSketchMsg(`${ex.name || 'The example'} is the example: ${ex.rows[0].length - 2} × ${ex.rows.length - 2} squares. Grow the deck from it.`);
+  };
+  const growFromExample = async () => {
+    const ex = sketch.example;
+    if (!ex) return;
+    if (Object.keys(m.floor).length && !await confirmInMap({
+      title: 'Replace the deck?',
+      body: 'A deck grown from the example takes the place of what is drawn here. The ground, the grid size, the calibration and'
+        + ' the example are kept. Undo brings this deck back.',
+      yes: 'Grow it'
+    })) return;
+    const seed = (sketch.seed || '').trim() || newSeed();
+    const d = deckFromExample(ex, { cols: m.cols, rows: m.rows, seed });
+    if (d.error) { setSketchMsg(d.error); return; }
+    patch({
+      floor: d.floor, doors: d.doors, markers: {}, hazards: {}, start: null,
+      cover: {}, contacts: {}, explored: {}, viewpoint: null, walls: {},
+      sketch: { ...sketch, seed }
+    });
+    setSketchMsg(`Grew ${d.rooms} room${d.rooms === 1 ? '' : 's'} from ${ex.name || 'the example'} (seed ${seed}), from ${d.patterns} patterns`
+      + (d.joined ? `; ${d.joined} island${d.joined === 1 ? '' : 's'} joined by a corridor` : '')
+      + (d.split ? `; ${d.split} wide opening${d.split === 1 ? '' : 's'} given a door` : '')
+      + (d.merged ? `; ${d.merged} small room${d.merged === 1 ? '' : 's'} opened into the next` : '') + '.'
+      + (d.clipped ? ` Grown over the first ${d.cols} × ${d.rows} squares of the grid.` : '')
+      + (d.share > 0.5 ? ' It came out open, one room more than half of it: try another seed.' : ''));
   };
 
   const rollDeck = async () => {
@@ -5347,6 +5454,11 @@ export default function BattleMap({
               <button key={pn.id} type="button" title={pn.note} aria-pressed={sketchPen === pn.id ? 'true' : 'false'}
                 className={'rt-btn' + (sketchPen === pn.id ? ' on' : ' ghost')} onClick={() => setSketchPen(pn.id)}>{pn.name}</button>
             ))}
+            {sketchPen === 'passage' && (
+              <select value={sketchPassage} aria-label="Which passage" onChange={(e) => setSketchPassage(e.target.value)}>
+                {PASSAGE_KINDS.map((pk) => <option key={pk.id} value={pk.id} title={pk.note}>{pk.name}</option>)}
+              </select>
+            )}
             {sketchPen === 'mark' && (<>
               <select value={sketchMark} aria-label="Which mark" onChange={(e) => setSketchMark(e.target.value)}>
                 {MARKS.map((mk) => <option key={mk.id} value={mk.id} title={mk.note}>{mk.name}</option>)}
@@ -5368,6 +5480,9 @@ export default function BattleMap({
             <strong>Read as:</strong> {describePlan(sketchPlan)}
             {sketchPlan.unclear.length > 0 && <>{' '}Not sure of: {sketchPlan.unclear.join(' ')}</>}
           </p>
+          {sketch.notes && sketch.notes.length > 0 && (
+            <p className="rt-bm-hint"><strong>From the picture:</strong> {sketch.notes.join(' · ')}</p>
+          )}
           <div className="rt-bm-bar">
             <label className="rt-bm-num"><span>Layout</span>
               <select value={sketch.layout} aria-label="Layout" onChange={(e) => setSketch({ ...sketch, layout: e.target.value })}
@@ -5379,18 +5494,110 @@ export default function BattleMap({
               onChange={(e) => setSketch({ ...sketch, fill: e.target.checked })} /><span>Fill the rest of the grid</span></label>
             <label className="rt-bm-num"><span>Seed</span>
               <input className="rt-field" style={{ width: 90 }} value={sketch.seed} placeholder="random" aria-label="Sketch seed"
-                disabled={!sketch.strokes.length && !sketch.plan}
+                disabled={!sketch.strokes.length && !sketch.plan && !sketch.example}
                 onChange={(e) => setSketch({ ...sketch, seed: e.target.value.toUpperCase().slice(0, 40) })} />
             </label>
           </div>
           <div className="rt-bm-bar">
             <button type="button" className="rt-btn" disabled={!sketchPlan.rooms.length} onClick={generateFromSketch}>Generate from sketch</button>
-            <button type="button" className="rt-btn ghost" disabled={!sketch.strokes.length}
+            <button type="button" className="rt-btn ghost" disabled={!sketch.strokes.length && !sketch.example}
               onClick={() => setSketch({ ...sketch, seed: newSeed() })}>New seed</button>
             <button type="button" className="rt-btn ghost" disabled={!sketch.strokes.length && !sketch.plan}
-              onClick={() => { setSketch(null); setSketchMsg('Sketch cleared. Undo brings it back.'); }}>Clear the sketch</button>
+              onClick={() => { setSketch({ ...sketch, strokes: [], plan: null, notes: [] }); setSketchMsg('Sketch cleared. Undo brings it back.'); }}>Clear the sketch</button>
           </div>
           {sketchMsg && <p className="rt-bm-hint" role="status">{sketchMsg}</p>}
+
+          <details className="rt-bm-more" open={Boolean(sketchPic)}>
+          <summary>From a picture<span className="rt-bm-hint">a photographed plan, or a map to copy</span></summary>
+          <p className="rt-bm-hint">
+            A photograph of a plan drawn on paper, or a map from a book or a game: it lies under the sketch to trace with the
+            pens, or it can be read into strokes for you to check and correct. The picture is not kept with the deck; what is
+            traced or read from it is.
+          </p>
+          <div className="rt-bm-bar">
+            <input ref={sketchFileRef} type="file" accept="image/*" hidden aria-label="A picture to sketch from"
+              onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; chooseSketchPicture(f); }} />
+            <button type="button" className="rt-btn ghost" onClick={() => sketchFileRef.current && sketchFileRef.current.click()}>
+              {sketchPic ? 'Another picture…' : 'Choose a picture…'}
+            </button>
+            {sketchPic && (<>
+              <label className="rt-bm-num"><input type="checkbox" checked={sketchPic.show}
+                onChange={(e) => setSketchPic({ ...sketchPic, show: e.target.checked })} /><span>Show it</span></label>
+              <button type="button" className="rt-btn ghost" onClick={() => setSketchPic(null)}>Put it away</button>
+            </>)}
+          </div>
+          {sketchPic && (<>
+            <div className="rt-bm-bar">
+              <label className="rt-bm-num"><span>It is</span>
+                <select value={sketchPicSource} aria-label="What the picture is" onChange={(e) => setSketchPicSource(e.target.value)}>
+                  {SKETCH_SOURCES.map((sc) => <option key={sc.id} value={sc.id} title={sc.note}>{sc.name}</option>)}
+                </select>
+              </label>
+              <input className="rt-field" style={{ flex: '1 1 200px' }} value={sketchPicNote} maxLength={MAX_READ_NOTE}
+                aria-label="What it is" placeholder="What it is, if it helps: deck 3 of a Rak'Gol hulk…"
+                onChange={(e) => setSketchPicNote(e.target.value)} />
+            </div>
+            <div className="rt-bm-bar">
+              <button type="button" className="rt-btn" disabled={sketchPicBusy} onClick={readSketchPic}>
+                {sketchPicBusy ? 'Reading…' : 'Read it'}
+              </button>
+              <span className="rt-bm-hint">Rooms, the ways between them, starts, objectives, locks, hazards and fixtures. One of the day{'’'}s images.</span>
+            </div>
+            <div className="rt-bm-bar" role="group" aria-label="Where the picture lies">
+              <label className="rt-bm-num"><span>Squares across</span>
+                <input className="rt-field" type="number" step="1" style={{ width: 70 }} aria-label="Picture squares across"
+                  value={Math.round(sketchPic.place.across * 10) / 10} onChange={(e) => placeSketchPic('across', e.target.value)} /></label>
+              <label className="rt-bm-num"><span>Left</span>
+                <input className="rt-field" type="number" step="1" style={{ width: 60 }} aria-label="Picture left"
+                  value={Math.round(sketchPic.place.x * 10) / 10} onChange={(e) => placeSketchPic('x', e.target.value)} /></label>
+              <label className="rt-bm-num"><span>Top</span>
+                <input className="rt-field" type="number" step="1" style={{ width: 60 }} aria-label="Picture top"
+                  value={Math.round(sketchPic.place.y * 10) / 10} onChange={(e) => placeSketchPic('y', e.target.value)} /></label>
+              <span className="rt-bm-hint">The sketch moves with it.</span>
+            </div>
+          </>)}
+
+          </details>
+
+          <details className="rt-bm-more" open={Boolean(sketch.example)}>
+          <summary>Grow from an example<span className="rt-bm-hint">a warren or a ruin, grown from a few painted rooms</span></summary>
+          <p className="rt-bm-hint">
+            Paint a few rooms the way the whole deck should look (up to 24 squares a side, on an empty deck) or take a stock
+            one, and the deck is grown from it: rooms the size you painted them, walls as thick, doors the way they sit. It copies
+            the texture, not a plan, so it suits warrens and ruins; for a deck with a shape in mind, draw it above.
+          </p>
+          <div className="rt-bm-bar">
+            <button type="button" className="rt-btn ghost" disabled={!Object.keys(m.floor).length}
+              onClick={() => takeExample('painted')}>Take what is painted</button>
+            <select value="" aria-label="A stock example" onChange={(e) => { if (e.target.value) takeExample(e.target.value); }}>
+              <option value="">or a stock example…</option>
+              {STOCK_EXAMPLES.map((ex) => <option key={ex.id} value={ex.id} title={ex.note}>{ex.name}</option>)}
+            </select>
+          </div>
+          {sketch.example && (() => {
+            const ex = sketch.example;
+            const sq = 6;
+            return (<>
+              <div className="rt-bm-bar">
+                <svg width={ex.rows[0].length * sq} height={ex.rows.length * sq} role="img"
+                  aria-label={`The example, ${ex.rows[0].length - 2} by ${ex.rows.length - 2} squares`} style={{ background: '#05070b', borderRadius: 3 }}>
+                  {ex.rows.flatMap((row, y) => [...row].map((ch, x) => (ch === '#' ? null
+                    : <rect key={`${x},${y}`} x={x * sq} y={y * sq} width={sq} height={sq} fill={ch === '+' ? '#e8a33d' : '#7f93a8'} />)))}
+                </svg>
+                <span className="rt-bm-hint">{ex.name || 'Example'}: {ex.rows[0].length - 2} × {ex.rows.length - 2} squares; doors:{' '}
+                  {(DOOR_KINDS.find((dk) => dk.id === ex.doorKind) || { name: ex.doorKind }).name.toLowerCase()}.</span>
+              </div>
+              <div className="rt-bm-bar">
+                <label className="rt-bm-num"><span>Merge rooms smaller than</span>
+                  <input className="rt-field" type="number" min="0" max="40" step="1" style={{ width: 60 }} aria-label="Merge rooms smaller than"
+                    value={ex.merge} onChange={(e) => setSketch({ ...sketch, example: readExample({ ...ex, merge: e.target.value }) || ex })} />
+                  <span>squares</span></label>
+                <button type="button" className="rt-btn" onClick={growFromExample}>Grow the deck</button>
+                <button type="button" className="rt-btn ghost" onClick={() => setSketch({ ...sketch, example: null })}>Drop the example</button>
+              </div>
+            </>);
+          })()}
+          </details>
         </div>
       )}
 

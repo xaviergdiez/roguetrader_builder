@@ -32,8 +32,11 @@ import { putLocalFile } from './localfiles.js';
 import {
   AREA_COLOURS, areaColour, newArea, areaById, areaAt, paintArea, updateArea, removeArea, labelCell, areasForTable
 } from './areas.js';
+import { PENS, MARKS, LAYOUTS, readStroke, simplify, distanceToStroke, newStrokeId } from './sketchplan.js';
+import { planFromStrokes, describePlan } from './sketchread.js';
+import { deckFromPlan } from './plandeck.js';
 import GenerateFloor from './GenerateFloor.jsx';
-import { placeOver } from './genai.js';
+import { placeOver, deckPlanMask } from './genai.js';
 import useBackdropMedia from './useBackdropMedia.js';
 import { measureMedia } from './measureMedia.js';
 import { readUvtt, uvttToMap, UVTT_METRES_PER_SQUARE } from './uvtt.js';
@@ -93,6 +96,7 @@ const MODES = [
   { id: 'marker', label: 'Marker', icon: 'marker' },
   { id: 'trigger', label: 'Trigger zones', icon: 'trigger' },
   { id: 'area', label: 'Named areas', icon: 'area' },
+  { id: 'sketch', label: 'Sketch', icon: 'sketch' },
   { id: 'overlay', label: 'Overlay', icon: 'overlay' },
   { id: 'measure', label: 'Measure', icon: 'measure' }
 ];
@@ -107,7 +111,7 @@ const MODES = [
    deck. It lives on Play only. */
 /* Light is on both: a deck is built with its dark corridors, and the lumens
    go out mid-session. */
-const BUILD_TOOLS = ['stamp', 'paint', 'ground', 'erase', 'door', 'wall', 'cover', 'hazard', 'obscure', 'light', 'marker', 'trigger', 'area', 'measure'];
+const BUILD_TOOLS = ['sketch', 'stamp', 'paint', 'ground', 'erase', 'door', 'wall', 'cover', 'hazard', 'obscure', 'light', 'marker', 'trigger', 'area', 'measure'];
 const PLAY_TOOLS = ['fog', 'start', 'contact', 'noise', 'light', 'trigger', 'area', 'overlay', 'measure'];
 
 /* Markers that are part of the deck rather than laid on it mid-session: a
@@ -221,6 +225,7 @@ const ICONS = {
   wall: <><rect x="3" y="6" width="18" height="12" /><path d="M3 12h18M9 6v6M15 12v6" /></>,
   trigger: <><path d="M4 4h16v16H4z" strokeDasharray="3 2.5" /><path d="M12 8v5M12 16v.5" /></>,
   area: <><path d="M3 5h9v6h9v8H3z" /><path d="M7 9h2M7 13h6" /></>,
+  sketch: <><path d="M4 20l4-1 11-11-3-3L5 16z" /><path d="M14 6l3 3" /></>,
   picture: <><rect x="3" y="5" width="18" height="14" /><path d="M3 16l5-5 4 4 3-3 6 6" /><circle cx="16" cy="9" r="1.5" /></>,
   cover: <><rect x="4" y="5" width="16" height="14" /><path d="M4 5l16 14M20 5L4 19" /></>,
   hazard: <><path d="M12 3l10 18H2z" /><path d="M12 10v5M12 18v.5" /></>,
@@ -1219,6 +1224,22 @@ export default function BattleMap({
   const [areaId, setAreaId] = useState(null);
   const areaStrokeRef = useRef(null);
   const [areaNote, setAreaNote] = useState('');
+  /* THE SKETCH (sketchplan.js): the pen in hand, the stroke being drawn (in
+     squares, fractions and all, kept in a ref and redrawn by a tick so a
+     stroke does not write the deck at every point), and what was said about
+     the last Generate. */
+  const [sketchPen, setSketchPen] = useState('room');
+  const [sketchMark, setSketchMark] = useState('start');
+  const [sketchHazard, setSketchHazard] = useState('fire');
+  const [sketchFixture, setSketchFixture] = useState('cogitator');
+  const [sketchMsg, setSketchMsg] = useState('');
+  const strokeRef = useRef(null);
+  const [strokeTick, setStrokeTick] = useState(0);
+  const sketch = m.sketch || { strokes: [], plan: null, layout: 'decks', fill: false, seed: '' };
+  // What the strokes say, read again whenever they change (sketchread.js).
+  const sketchPlan = useMemo(() => sketch.plan || planFromStrokes(sketch.strokes, { cols: m.cols, rows: m.rows }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [m.sketch, m.cols, m.rows]);
   const sprungRef = useRef(null);
   useEffect(() => {
     if (sprung && sprung.length && sprungRef.current) reveal(sprungRef.current, { from: 0.98 });
@@ -1772,6 +1793,55 @@ export default function BattleMap({
      works on the deck as it is now. */
   const dragPictureRef = useRef(null);
   dragPictureRef.current = dragPicture;
+  /* Drawing a stroke: started on the press, a point added each time the
+     pointer has moved an eighth of a square, finished on the release (here or
+     anywhere in the window), made lighter and kept on the deck's sketch. The
+     eraser takes off the stroke nearest the click. */
+  const setSketch = (next) => patch({ sketch: next && (next.strokes.length || next.plan) ? next : null });
+  const startStroke = (f) => {
+    if (!f) return;
+    if (sketchPen === 'erase') {
+      let best = null, d = 0.7;
+      for (const st of sketch.strokes) { const g = distanceToStroke(st, f.x, f.y); if (g < d) { d = g; best = st; } }
+      if (best) setSketch({ ...sketch, strokes: sketch.strokes.filter((st) => st.id !== best.id) });
+      return;
+    }
+    strokeRef.current = { pen: sketchPen, pts: [[f.x, f.y]] };
+    setStrokeTick((t) => t + 1);
+  };
+  const moveStroke = (f) => {
+    const cur = strokeRef.current;
+    if (!cur || !f) return;
+    const [lx, ly] = cur.pts[cur.pts.length - 1];
+    if (Math.hypot(f.x - lx, f.y - ly) < 0.12) return;
+    cur.pts.push([f.x, f.y]);
+    setStrokeTick((t) => t + 1);
+  };
+  const finishStroke = () => {
+    const cur = strokeRef.current;
+    if (!cur) return;
+    strokeRef.current = null;
+    setStrokeTick((t) => t + 1);
+    const pts = simplify(cur.pts, 0.12);
+    if (cur.pen === 'room' && pts.length < 3) { setSketchMsg('A room is a loop: draw round it.'); return; }
+    if (cur.pen === 'passage' && pts.length < 2) { setSketchMsg('A passage is a line from one room to another.'); return; }
+    const st = readStroke({
+      id: newStrokeId(), pen: cur.pen, pts,
+      mark: cur.pen === 'mark' ? sketchMark : null,
+      detail: cur.pen === 'mark' ? (sketchMark === 'hazard' ? sketchHazard : sketchMark === 'fixture' ? sketchFixture : null) : null
+    });
+    if (st) { setSketchMsg(''); setSketch({ ...sketch, strokes: [...sketch.strokes, st] }); }
+  };
+  const finishStrokeRef = useRef(finishStroke);
+  finishStrokeRef.current = finishStroke;
+  useEffect(() => {
+    if (mode !== 'sketch') return undefined;
+    const w = win || window;
+    const up = () => finishStrokeRef.current();
+    w.addEventListener('mouseup', up);
+    return () => w.removeEventListener('mouseup', up);
+  }, [mode, win]);
+
   const startPictureDrag = (kind, from) => {
     picDragRef.current = { kind, from, start: { ...m.backdrop } };
     const w = win || window;
@@ -3074,6 +3144,27 @@ export default function BattleMap({
            the same leaf and the difference decides whether the party can walk
            through. So the state keeps its colour, as a frame around the art
            rather than the bar that was the whole drawing before. */
+        /* A cave's neck (caverns.js) has no leaf: open, it is a dashed
+           threshold, enough to see the cavern ends there; shut, it is a
+           rockfall. */
+        if (kind === 'passage') {
+          ctx.save();
+          if (state === 'open') {
+            ctx.setLineDash([px * 0.12, px * 0.1]);
+            ctx.strokeStyle = 'rgba(46,204,113,0.75)';
+            ctx.lineWidth = Math.max(1.5, px * 0.05);
+            ctx.strokeRect(x0 + px * 0.14, y0 + px * 0.14, px * 0.72, px * 0.72);
+          } else {
+            ctx.fillStyle = 'rgba(122,112,100,0.95)';
+            for (const [fx, fy, fr] of [[0.3, 0.35, 0.16], [0.62, 0.3, 0.13], [0.5, 0.62, 0.19], [0.24, 0.7, 0.11], [0.76, 0.66, 0.12]]) {
+              ctx.beginPath(); ctx.arc(x0 + px * fx, y0 + px * fy, px * fr, 0, Math.PI * 2); ctx.fill();
+            }
+            ctx.strokeStyle = stateColour; ctx.lineWidth = Math.max(1.5, px * 0.05);
+            ctx.strokeRect(x0 + 1, y0 + 1, px - 2, px - 2);
+          }
+          ctx.restore();
+          return;
+        }
         /* An airlock is a door that can open onto nothing, and it is ringed in
            hazard stripes so nobody opens one by mistake. */
         const lockStripes = () => {
@@ -3366,6 +3457,80 @@ export default function BattleMap({
         }
         ctx.restore();
       }
+    }
+
+    // 6b4. The sketch, while the Sketch tool is in hand and never on the
+    //      table's screen: how it was read (each room outlined and named, each
+    //      passage dotted along the squares it was drawn through, a lock as a
+    //      red bar), then the strokes themselves over it, then the stroke being
+    //      drawn.
+    if (mode === 'sketch' && !projecting) {
+      ctx.save();
+      const fs = Math.max(10, Math.floor(px * 0.36));
+      ctx.font = `600 ${fs}px ui-monospace, Menlo, monospace`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      for (const r of sketchPlan.rooms) {
+        const tint = r.tags.includes('start') ? '90,200,120' : r.tags.includes('objective') ? '241,196,15' : '232,194,90';
+        ctx.fillStyle = `rgba(${tint},0.12)`;
+        ctx.strokeStyle = `rgba(${tint},0.85)`;
+        ctx.lineWidth = Math.max(1.5, px * 0.05);
+        ctx.setLineDash([px * 0.18, px * 0.12]);
+        if (r.shape === 'box') {
+          const [bx, by, bw, bh] = r.box;
+          ctx.fillRect(bx * px, by * px, bw * px, bh * px);
+          ctx.strokeRect(bx * px, by * px, bw * px, bh * px);
+        } else {
+          const inSet = new Set(r.cells);
+          ctx.beginPath();
+          for (const k of r.cells) {
+            const [cx, cy] = k.split(',').map(Number);
+            ctx.fillRect(cx * px, cy * px, px, px);
+            if (!inSet.has(cx + ',' + (cy - 1))) { ctx.moveTo(cx * px, cy * px); ctx.lineTo(cx * px + px, cy * px); }
+            if (!inSet.has(cx + ',' + (cy + 1))) { ctx.moveTo(cx * px, cy * px + px); ctx.lineTo(cx * px + px, cy * px + px); }
+            if (!inSet.has((cx - 1) + ',' + cy)) { ctx.moveTo(cx * px, cy * px); ctx.lineTo(cx * px, cy * px + px); }
+            if (!inSet.has((cx + 1) + ',' + cy)) { ctx.moveTo(cx * px + px, cy * px); ctx.lineTo(cx * px + px, cy * px + px); }
+          }
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        const tag = r.id + (r.tags.includes('start') ? ' start' : '') + (r.tags.includes('objective') ? ' objective' : '')
+          + (r.hazards.length ? ` ${r.hazards.join(',')}` : '');
+        ctx.fillStyle = 'rgba(4,6,10,0.75)';
+        ctx.fillRect(r.box[0] * px + 3, r.box[1] * px + 3, ctx.measureText(tag).width + 8, fs + 6);
+        ctx.fillStyle = `rgb(${tint})`;
+        ctx.fillText(tag, r.box[0] * px + 7, r.box[1] * px + 6);
+      }
+      for (const l of sketchPlan.links) {
+        ctx.fillStyle = l.kind === 'locked' ? 'rgba(255,106,90,0.8)' : 'rgba(90,200,230,0.7)';
+        for (const [x, y] of l.path) {
+          ctx.beginPath(); ctx.arc(x * px + px / 2, y * px + px / 2, Math.max(2, px * 0.09), 0, Math.PI * 2); ctx.fill();
+        }
+        if (l.kind === 'locked' && l.path.length) {
+          const [mx, my] = l.path[Math.floor(l.path.length / 2)];
+          ctx.fillStyle = '#ff6a5a';
+          ctx.fillRect(mx * px + px * 0.15, my * px + px * 0.38, px * 0.7, px * 0.24);
+        }
+      }
+      const drawStroke = (st, colour, width) => {
+        ctx.strokeStyle = colour; ctx.fillStyle = colour; ctx.lineWidth = width;
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        if (st.pen === 'mark' && st.pts.length <= 2) {
+          const [x, y] = st.pts[0];
+          ctx.beginPath(); ctx.arc(x * px, y * px, px * 0.32, 0, Math.PI * 2); ctx.stroke();
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(({ start: 'S', objective: 'O', lock: 'L', hazard: 'H', fixture: 'F' })[st.mark] || '?', x * px, y * px);
+          ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+          return;
+        }
+        ctx.beginPath();
+        st.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * px, y * px) : ctx.moveTo(x * px, y * px)));
+        if (st.pen === 'room' && st.pts.length > 2 && st !== strokeRef.current) ctx.closePath();
+        ctx.stroke();
+      };
+      const PEN_COLOUR = { room: 'rgba(255,214,120,0.95)', passage: 'rgba(120,220,255,0.95)', mark: 'rgba(255,140,200,0.95)' };
+      for (const st of sketch.strokes) drawStroke(st, PEN_COLOUR[st.pen], Math.max(2, px * 0.07));
+      if (strokeRef.current) drawStroke({ ...strokeRef.current, mark: sketchMark }, '#ffffff', Math.max(2.5, px * 0.09));
+      ctx.restore();
     }
 
     // 6c. Contacts. The fight is played with miniatures, so these are not
@@ -3681,7 +3846,7 @@ export default function BattleMap({
   }, [m, px, theme, hover, mode, tileId, rotation, brush, overlay, origin, aim, weapon, coneAngle, projecting,
       measureFrom, measureTo, measurement, showZones, showCalibration, seeable, shown, textureTick, caught,
       tokenTick, noiseKind, zoom, showOptions, startCells, lightScope, tab, mediaTick, hoverEdge, moving, trigId,
-      picOpen, picHover]);
+      picOpen, picHover, areaId, strokeTick, sketchPlan]);
 
   // Scrolling and resizing the stage move the window over the deck.
   useEffect(() => {
@@ -4114,6 +4279,30 @@ export default function BattleMap({
       `${out.built ? `Built ${out.rooms} rooms and laid ` : 'Laid '}${c.squares.toLocaleString()} squares in ${c.regions} regions from ${c.grounds} ground${c.grounds === 1 ? '' : 's'}`
       + `${c.foliage ? `, ${c.foliage} of foliage` : ''}${c.cover ? `, ${c.cover} of cover` : ''}`
       + `${c.hazards ? `, ${c.hazards} of hazard` : ''}${c.band ? ', and a ' + (terrainRead.band ? terrainRead.band.kind : 'band') : ''}. Seed ${out.seed}.`);
+  };
+
+  /* The deck from the sketch (plandeck.js), in place of what is drawn:
+     the ground, the grid, the calibration, the picture floor, the trigger
+     zones, the areas and the sketch itself are kept, everything that stood on
+     the old deck goes, and Undo brings it all back. The seed is kept on the
+     sketch, so the same sketch makes the same deck again. */
+  const generateFromSketch = async () => {
+    if (!sketchPlan.rooms.length) { setSketchMsg('Draw a room first: a loop with the Room pen.'); return; }
+    if (Object.keys(m.floor).length && !await confirmInMap({
+      title: 'Replace the deck?',
+      body: 'The sketch is built in place of what is drawn here. The ground, the grid size, the calibration and the'
+        + ' sketch are kept. Undo brings this deck back.',
+      yes: 'Generate it'
+    })) return;
+    const seed = (sketch.seed || '').trim() || newSeed();
+    const d = deckFromPlan(sketchPlan, { cols: m.cols, rows: m.rows, layout: sketch.layout, seed, fill: sketch.fill });
+    patch({
+      floor: d.floor, doors: d.doors, markers: d.markers, hazards: d.hazards, start: d.start,
+      cover: {}, contacts: {}, explored: {}, viewpoint: null, walls: {},
+      sketch: { ...sketch, seed }
+    });
+    setSketchMsg(`Built ${d.rooms} room${d.rooms === 1 ? '' : 's'} from the sketch (seed ${seed}).`
+      + (d.unplaced.length ? ` ${d.unplaced.join(' ')}` : ''));
   };
 
   const rollDeck = async () => {
@@ -5064,7 +5253,8 @@ export default function BattleMap({
             </p>
           </>)}
           <GenerateFloor target="deck" cols={m.cols} rows={m.rows} backdrop={m.backdrop} hintClass="rt-bm-hint"
-            mediaReady={mediaState === 'ready'} onPicture={layGeneratedPicture} onVideo={layGeneratedVideo} />
+            mediaReady={mediaState === 'ready'} onPicture={layGeneratedPicture} onVideo={layGeneratedVideo}
+            planMask={{ has: () => Object.keys(m.floor).length > 0, make: () => deckPlanMask(m) }} />
           {picNote ? <p className="rt-bm-hint" role="status">{picNote}</p> : null}
         </div>
       )}
@@ -5141,6 +5331,68 @@ export default function BattleMap({
           </div>
         );
       })()}
+
+      {mode === 'sketch' && (
+        <div className="rt-bm-gen">
+          <div className="rt-sechead"><h4>Sketch</h4></div>
+          <p className="rt-bm-hint">
+            Show the map what you mean. Draw each room as a loop with the Room pen (a loop that fills its corners is a
+            compartment, a rounder one a chamber), each passage as a line from one room to another, and mark what
+            matters. Generate from sketch builds the deck: rooms where you drew them, corridors along your lines, doors
+            where they meet. The sketch stays with the deck so it can be made again, and is left behind when the deck is
+            published for play.
+          </p>
+          <div className="rt-bm-bar" role="group" aria-label="Pen">
+            {PENS.map((pn) => (
+              <button key={pn.id} type="button" title={pn.note} aria-pressed={sketchPen === pn.id ? 'true' : 'false'}
+                className={'rt-btn' + (sketchPen === pn.id ? ' on' : ' ghost')} onClick={() => setSketchPen(pn.id)}>{pn.name}</button>
+            ))}
+            {sketchPen === 'mark' && (<>
+              <select value={sketchMark} aria-label="Which mark" onChange={(e) => setSketchMark(e.target.value)}>
+                {MARKS.map((mk) => <option key={mk.id} value={mk.id} title={mk.note}>{mk.name}</option>)}
+              </select>
+              {sketchMark === 'hazard' && (
+                <select value={sketchHazard} aria-label="Which hazard" onChange={(e) => setSketchHazard(e.target.value)}>
+                  {HAZARD_TYPES.map((hz) => <option key={hz.id} value={hz.id}>{hz.name}</option>)}
+                </select>
+              )}
+              {sketchMark === 'fixture' && (
+                <select value={sketchFixture} aria-label="Which fixture" onChange={(e) => setSketchFixture(e.target.value)}>
+                  {MARKER_TYPES.filter((mt) => ['cogitator', 'turret', 'shrine', 'vent', 'objective', 'deploy'].includes(mt.id))
+                    .map((mt) => <option key={mt.id} value={mt.id}>{mt.name}</option>)}
+                </select>
+              )}
+            </>)}
+          </div>
+          <p className="rt-bm-hint" role="status">
+            <strong>Read as:</strong> {describePlan(sketchPlan)}
+            {sketchPlan.unclear.length > 0 && <>{' '}Not sure of: {sketchPlan.unclear.join(' ')}</>}
+          </p>
+          <div className="rt-bm-bar">
+            <label className="rt-bm-num"><span>Layout</span>
+              <select value={sketch.layout} aria-label="Layout" onChange={(e) => setSketch({ ...sketch, layout: e.target.value })}
+                disabled={!sketch.strokes.length && !sketch.plan}>
+                {LAYOUTS.map((ly) => <option key={ly.id} value={ly.id} title={ly.note}>{ly.name}</option>)}
+              </select>
+            </label>
+            <label className="rt-bm-num"><input type="checkbox" checked={sketch.fill} disabled={!sketch.strokes.length && !sketch.plan}
+              onChange={(e) => setSketch({ ...sketch, fill: e.target.checked })} /><span>Fill the rest of the grid</span></label>
+            <label className="rt-bm-num"><span>Seed</span>
+              <input className="rt-field" style={{ width: 90 }} value={sketch.seed} placeholder="random" aria-label="Sketch seed"
+                disabled={!sketch.strokes.length && !sketch.plan}
+                onChange={(e) => setSketch({ ...sketch, seed: e.target.value.toUpperCase().slice(0, 40) })} />
+            </label>
+          </div>
+          <div className="rt-bm-bar">
+            <button type="button" className="rt-btn" disabled={!sketchPlan.rooms.length} onClick={generateFromSketch}>Generate from sketch</button>
+            <button type="button" className="rt-btn ghost" disabled={!sketch.strokes.length}
+              onClick={() => setSketch({ ...sketch, seed: newSeed() })}>New seed</button>
+            <button type="button" className="rt-btn ghost" disabled={!sketch.strokes.length && !sketch.plan}
+              onClick={() => { setSketch(null); setSketchMsg('Sketch cleared. Undo brings it back.'); }}>Clear the sketch</button>
+          </div>
+          {sketchMsg && <p className="rt-bm-hint" role="status">{sketchMsg}</p>}
+        </div>
+      )}
 
       {mode === 'area' && (() => {
         const cur = areaId ? areaById(m.areas, areaId) : null;
@@ -6123,6 +6375,7 @@ export default function BattleMap({
             if (picOpen) { const h = picHit(fracFromEvent(e)); if (h !== picHover) setPicHover(h); }
             if (spaceRef.current || panOnRef.current || rHeldRef.current) return;   // panning, or turning the map
             if (e.buttons === 1 && mode === 'wall') { strokeWall(e, false); return; }
+            if (mode === 'sketch') { if (e.buttons === 1) moveStroke(fracFromEvent(e)); return; }
             if (e.buttons === 1 && (mode === 'paint' || mode === 'erase' || mode === 'ground' || mode === 'obscure'
               || (mode === 'light' && lightScope === 'brush') || (mode === 'trigger' && tab === 'build')
               || (mode === 'area' && tab === 'build'))) {
@@ -6146,6 +6399,7 @@ export default function BattleMap({
               if (hit) { startPictureDrag(hit, f); return; }
             }
             if (e.button === 0 && mode === 'wall') { strokeWall(e, true); return; }
+            if (e.button === 0 && mode === 'sketch') { startStroke(fracFromEvent(e)); return; }
             if (e.button === 0) applyAt(posFromEvent(e), false, e.shiftKey, e.altKey, e.ctrlKey || e.metaKey);
           }}
           style={{ cursor: picHover === 'size' ? 'nwse-resize' : picHover === 'move' ? 'move'

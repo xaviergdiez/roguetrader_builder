@@ -16,10 +16,15 @@ import { ENVIRONMENTS, MAX_DESCRIBE } from '../lib/mapprompt.js';
    starts: a clip takes a minute, the GM may close this panel or change the
    map meanwhile, and what it lands on has to be the map as it is then. The
    parent's callbacks must therefore read their own latest map. */
-export default function GenerateFloor({ target, cols, rows, backdrop, mediaReady, onPicture, onVideo, hintClass = 'rt-vm-sub' }) {
+/* `planMask`, given for a deck, makes the deck's plan to send with the
+   request (genai.js), so the picture follows the deck's walls; `has()` says
+   whether the deck has floor to follow yet. */
+export default function GenerateFloor({ target, cols, rows, backdrop, mediaReady, onPicture, onVideo, hintClass = 'rt-vm-sub', planMask = null }) {
   const [describe, setDescribe] = useState('');
   const [motion, setMotion] = useState('');
   const [environment, setEnvironment] = useState('ship');
+  const [followWalls, setFollowWalls] = useState(true);
+  const canFollow = Boolean(planMask && planMask.has());
   const [busy, setBusy] = useState(null);
   const [status, setStatus] = useState('');
   const [err, setErr] = useState('');
@@ -35,7 +40,8 @@ export default function GenerateFloor({ target, cols, rows, backdrop, mediaReady
   const picture = async () => {
     setErr(''); setBusy('picture'); setStatus('Generating the picture… about twenty seconds');
     try {
-      const file = await generatePicture({ target, describe, environment: isVoid ? '' : environment, cols, rows });
+      const mask = canFollow && followWalls ? planMask.make() : null;
+      const file = await generatePicture({ target, describe, environment: isVoid ? '' : environment, cols, rows, mask });
       await cb.current.onPicture(file);
       say(setStatus)('');
     } catch (e) {
@@ -72,6 +78,12 @@ export default function GenerateFloor({ target, cols, rows, backdrop, mediaReady
           ? 'What the sky is: a red nebula like an open wound, the limb of a gas giant along the bottom… (blank for a starfield)'
           : 'What the place is, in your words: a flooded reactor hall, a chapel nave with toppled pews… (blank for the place above)'}
         onChange={(e) => setDescribe(e.target.value)} />
+      {canFollow && (
+        <label className="rt-genfloor-row" title="The deck's plan goes with the request, so its rooms and corridors are painted where the deck has floor">
+          <input type="checkbox" checked={followWalls} onChange={(e) => setFollowWalls(e.target.checked)} />
+          Follow the deck{'\u2019'}s walls
+        </label>
+      )}
       <div className="rt-genfloor-row">
         <button type="button" className="rt-btn" disabled={Boolean(busy)} onClick={picture}>
           {busy === 'picture' ? 'Generating…' : 'Generate a picture'}

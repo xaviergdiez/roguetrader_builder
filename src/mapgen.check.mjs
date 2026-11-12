@@ -1,5 +1,6 @@
 // Self-check for the deck generator. Run: node src/mapgen.check.mjs
 import assert from 'node:assert/strict';
+import { DOOR_KINDS } from './battlemap.js';
 import {
   generateDeck, DECK_STYLES, styleById, makeRng, hashSeed, newSeed
 } from './mapgen.js';
@@ -160,8 +161,9 @@ const flood = (floor, start) => {
       // A door off the deck is a door onto nothing. readMap keeps doors and
       // floor apart, so nothing else would notice.
       assert.ok(d.floor[k], `${d.style}/${d.seed}: a door at ${k} is not on the floor`);
-      assert.ok(['bulkhead', 'hatch'].includes(door.kind), 'a known door kind');
-      assert.equal(door.state, 'closed', 'a deck nobody has walked starts shut');
+      assert.ok(DOOR_KINDS.some((dk) => dk.id === door.kind), 'a known door kind');
+      // A cave's neck has nothing to shut (shut, it is a rockfall), so it starts open.
+      assert.equal(door.state, door.kind === 'passage' ? 'open' : 'closed', 'a deck nobody has walked starts shut');
       assert.ok(styleById(d.style).doorKinds.includes(door.kind),
         `${d.style} used a door kind it does not have`);
     }

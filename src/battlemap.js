@@ -31,6 +31,7 @@ import { spriteRole } from './spritesheet.js';
 import { readBackdrop } from './backdrop.js';
 import { readTriggers, rearmAll } from './triggers.js';
 import { readAreas } from './areas.js';
+import { readSketch } from './sketchplan.js';
 
 /* ------------------------------ themes ------------------------------ */
 
@@ -353,6 +354,9 @@ export const EMPTY_MAP = {
   // Squares given a name, a colour and a note: the parts of a picture laid
   // under the deck, a station's modules (see areas.js).
   areas: [],
+  // What the GM drew to make it (sketchplan.js): kept so the deck can be
+  // made again, and left behind when it is published for play.
+  sketch: null,
   /* PER-CELL GROUND. One deck is rarely one terrain: a boarding action runs
      from the ice outside to the deck plate inside, and an agri-world fight
      crosses ploughed soil, an irrigation ditch and the rockcrete apron.
@@ -488,7 +492,12 @@ export const DOOR_KINDS = [
      it is a hole in the ship, and everything behind it is pulled toward it
      exactly as it would be toward a breach (see ventField). */
   { id: 'airlock', name: 'Airlock', ap: 16,
-    note: 'Opened on the hull, it vents everything behind it like a breach.' }
+    note: 'Opened on the hull, it vents everything behind it like a breach.' },
+  /* A cave's neck (caverns.js): no leaf to shut, but the fog stops at it as
+     at any doorway, which is what lets a cave be explored a cavern at a time.
+     Shut, it is a rockfall: blocked until it is cleared. */
+  { id: 'passage', name: 'Narrow passage', ap: 8,
+    note: 'A cave\u2019s neck. Nothing to shut, but the fog stops at it; shut, it is a rockfall to dig through.' }
 ];
 export const doorKindById = (id) =>
   DOOR_KINDS.find((d) => d.id === id) || DOOR_KINDS[0];
@@ -1017,7 +1026,8 @@ export function readMap(m) {
     backdrop: readBackdrop(src.backdrop),
     motion: src.motion !== false,
     triggers: readTriggers(src.triggers),
-    areas: readAreas(src.areas)
+    areas: readAreas(src.areas),
+    sketch: readSketch(src.sketch)
   };
 }
 
@@ -1999,7 +2009,9 @@ export function publishMap(saved) {
     markers: Object.fromEntries(Object.entries(s.map.markers).map(([k, v]) =>
       [k, v.type === 'cogitator' && v.state === 'open' ? { ...v, state: 'locked' } : v])),
     // Every trap set again: last session's sprung tripwire is tonight's.
-    triggers: rearmAll(s.map.triggers)
+    triggers: rearmAll(s.map.triggers),
+    // The sketch made the deck; the table plays the deck.
+    sketch: null
   };
 }
 
@@ -2282,6 +2294,16 @@ function turnContent(m, t) {
       ...a,
       cells: a.cells.map(parseKey).filter(Boolean).map((p) => at(p.x, p.y)).filter(inGrid).map((q) => cellKey(q.x, q.y))
     })),
+    /* The sketch turns too, as points rather than squares: a point at the
+       corner of a square goes where that corner goes. */
+    sketch: m.sketch ? {
+      ...m.sketch,
+      strokes: m.sketch.strokes.map((st) => ({ ...st, pts: st.pts.map(([px0, py0]) => {
+        const rx = px0 - b.x0, ry = py0 - b.y0;
+        const q = t === 1 ? [h - ry, rx] : t === 3 ? [ry, w - rx] : [w - rx, h - ry];
+        return [Math.round((nx0 + q[0]) * 100) / 100, Math.round((ny0 + q[1]) * 100) / 100];
+      }) }))
+    } : null,
     /* A thin wall is an EDGE, and turning moves which side of its square it
        is on: a quarter turn clockwise stands an east side on the south, and
        a south side becomes the west one — the east side of the square

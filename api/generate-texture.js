@@ -21,14 +21,17 @@ import { redis } from "../lib/storage.js";
 import { takeAllowance, giveBack, dailyLimit, limitMessage, secondsToReset } from "../lib/quota.js";
 
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+// A deck's plan is a black and white PNG a few tens of KB; this is generous.
+const MAX_MASK_CHARS = 1_500_000;
 const MODEL = "gemini-3.1-flash-image";
 
-async function callGeminiImage(prompt, apiKey, imageConfig = null) {
+async function callGeminiImage(prompt, apiKey, imageConfig = null, images = []) {
   const res = await fetch(`${GEMINI_BASE}/${MODEL}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
+      // The words first, then any image they talk about (a deck's plan).
+      contents: [{ parts: [{ text: prompt }, ...images.map((data) => ({ inlineData: { mimeType: "image/png", data } }))] }],
       generationConfig: { responseModalities: ["IMAGE"], ...(imageConfig ? { imageConfig } : {}) }
     })
   });
@@ -82,16 +85,21 @@ export default async function handler(req, res) {
     const body = req.body || {};
     let prompt;
     let imageConfig = null;
+    const images = [];
     if (body.kind === "sprites") prompt = buildSpritesPrompt(body);
     else if (body.kind === "void_sprites") {
       prompt = buildVoidSpritesPrompt(body);
       imageConfig = { aspectRatio: "1:1", imageSize: "2K" };
     } else if (body.kind === "backdrop") {
       const aspect = IMAGE_ASPECTS.includes(body.aspect) ? body.aspect : "16:9";
-      prompt = buildBackdropPrompt({ ...body, aspect });
+      // The deck's plan, if sent: a PNG, black and white, small.
+      const mask = typeof body.mask === "string" && body.mask.length <= MAX_MASK_CHARS && /^[A-Za-z0-9+/=]+$/.test(body.mask)
+        ? body.mask : null;
+      prompt = buildBackdropPrompt({ ...body, aspect, masked: Boolean(mask) });
       imageConfig = { aspectRatio: aspect, imageSize: "2K" };
+      if (mask) images.push(mask);
     } else prompt = buildTexturePrompt(body);
-    const { buf, mime } = await callGeminiImage(prompt, apiKey.trim(), imageConfig);
+    const { buf, mime } = await callGeminiImage(prompt, apiKey.trim(), imageConfig, images);
     res.setHeader("Content-Type", mime);
     res.setHeader("X-Prompt", encodeURIComponent(prompt.slice(0, 900)));
     return res.status(200).send(buf);

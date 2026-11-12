@@ -163,6 +163,8 @@ export const tokenDirFor = (theme) => (SHEET_FOR_THEME[theme] ? TOKENS_BORROWED[
 export function spriteRole(kind, id, state = null, at = null) {
   if (kind === 'door') {
     if (id === 'hatch') return 'hatch';
+    // A cave's neck has no leaf to picture: it is drawn as a threshold.
+    if (id === 'passage') return null;
     return state === 'open' ? 'door_open' : 'door_closed';
   }
   if (kind === 'cover') {

@@ -56,9 +56,12 @@ ok(new Set(Object.values(SHEET_FOR_THEME)).size === MAP_THEMES.length,
 /* ---- what the app asks for, it can get ----
    The point of this block is that the two vocabularies cannot drift apart
    silently. Add a cover type and this says which picture it has not got. */
+// A cave's narrow passage has no leaf to picture: it is drawn as a threshold.
+const DRAWN_DOORS = new Set(['passage']);
 for (const k of DOOR_KINDS) {
   for (const st of DOOR_STATES) {
     const role = spriteRole('door', k.id, st);
+    if (DRAWN_DOORS.has(k.id)) { ok(role === null, `door ${k.id} is drawn, not a token (got ${role})`); continue; }
     ok(SPRITE_ROLES.includes(role), `door ${k.id}/${st} -> a real role (got ${role})`);
   }
 }

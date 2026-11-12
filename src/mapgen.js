@@ -26,6 +26,7 @@
    Pure, and seeded. See mapgen.check.mjs. */
 
 import { cellKey, parseKey, readMap, keepClean, MIN_GRID, MAX_GRID } from './battlemap.js';
+import { generateCaverns } from './caverns.js';
 
 /* ------------------------------- the seed -------------------------------
 
@@ -95,6 +96,15 @@ export const DECK_STYLES = [
     note: 'Few large chambers joined by long wandering runs. Open ground and dead ends.',
     minLeaf: 11, margin: [1, 3], depth: 3, doorKinds: ['bulkhead', 'hatch'],
     straightness: 0.6
+  },
+  /* Natural caves (caverns.js), cut into caverns at their narrow necks, each
+     neck a narrow passage the fog stops at. The partition numbers are the
+     hulk's, for building rooms around a cave already painted. */
+  {
+    id: 'caverns', name: 'Caverns',
+    note: 'Natural caves, cut into caverns at their narrow necks. Each neck is a narrow passage the fog stops at.',
+    minLeaf: 11, margin: [1, 3], depth: 3, doorKinds: ['passage'],
+    straightness: 0.5
   }
 ];
 
@@ -265,6 +275,10 @@ export function generateDeck({ cols, rows, style, seed } = {}) {
   const w = clampGrid(cols, 30);
   const h = clampGrid(rows, 20);
   const s = seed == null || seed === '' ? newSeed() : seed;
+  if (st.id === 'caverns') {
+    const cave = generateCaverns({ cols: w, rows: h, seed: s });
+    return { floor: cave.floor, doors: cave.doors, rooms: cave.rooms, seed: s, style: st.id, cols: w, rows: h };
+  }
   const rng = makeRng(s);
 
   // One square of margin all round, so the outermost rooms have a wall

@@ -39,9 +39,9 @@ const canvasBlob = (c, type, quality) => new Promise((resolve, reject) =>
 /* A picture for under a map, in the map's own shape (the nearest the model
    makes): `cols` by `rows` squares or VU. A File, so it goes down the same
    road as one the GM chose from disk. */
-export async function generatePicture({ target, describe = '', environment = '', cols, rows }) {
+export async function generatePicture({ target, describe = '', environment = '', cols, rows, mask = null }) {
   const aspect = nearestAspect(cols, rows);
-  const res = await post('/api/generate-texture', { kind: 'backdrop', target, describe, environment, aspect });
+  const res = await post('/api/generate-texture', { kind: 'backdrop', target, describe, environment, aspect, ...(mask ? { mask } : {}) });
   const blob = await res.blob();
   const type = blob.type || 'image/png';
   const ext = /jpe?g/.test(type) ? 'jpg' : /webp/.test(type) ? 'webp' : 'png';
@@ -73,6 +73,30 @@ export async function framedForVideo(blob) {
     fr.readAsDataURL(jpeg);
   });
   return { data, aspect, crop: { fx: cx / w, fy: cy / h, fw: cw / w, fh: ch / h } };
+}
+
+/* A deck's plan for the image model: white where there is floor, black where
+   there is none, framed exactly as the generated picture will be laid (as
+   many squares across as the grid, in the picture's shape, from the top-left
+   corner), so what the model paints on white lands on the deck's floor. A
+   PNG as base64, or null for a deck with no floor yet. */
+export function deckPlanMask({ cols, rows, floor }) {
+  const keys = Object.keys(floor || {});
+  if (!keys.length) return null;
+  const ratio = aspectRatio(nearestAspect(cols, rows));
+  const W = 1024, H = Math.round(W / ratio);
+  const sq = W / cols;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#fff';
+  for (const k of keys) {
+    const [x, y] = k.split(',').map(Number);
+    if (y * sq >= H) continue;
+    g.fillRect(Math.floor(x * sq), Math.floor(y * sq), Math.ceil(sq), Math.ceil(sq));
+  }
+  return c.toDataURL('image/png').replace(/^data:[^,]*,/, '');
 }
 
 // Where a clip made from part of a picture lies: over that part.
